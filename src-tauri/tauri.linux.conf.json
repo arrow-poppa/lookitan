@@ -1,6 +1,6 @@
 {
   "bundle": {
-    "targets": ["deb", "appimage"],
+    "targets": ["deb", "rpm", "appimage"],
     "resources": {
       "resources/ort/libonnxruntime.so": "ort/libonnxruntime.so",
       "resources/models/*": "models/"
@@ -12,6 +12,15 @@
           "libxcb-randr0",
           "libgbm1",
           "libegl1"
+        ],
+        "desktopTemplate": "linux/lookitan.desktop"
+      },
+      "rpm": {
+        "depends": [
+          "pipewire-libs",
+          "libxcb",
+          "mesa-libgbm",
+          "mesa-libEGL"
         ],
         "desktopTemplate": "linux/lookitan.desktop"
       }

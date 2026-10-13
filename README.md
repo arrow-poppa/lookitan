@@ -9,7 +9,9 @@ the word with OCR and shows dictionary entries and an AI explanation in a pop-up
 - **Your own AI:** OpenAI, Gemini, DeepSeek or any OpenAI-compatible endpoint (OpenRouter,
   Ollama, LM Studio), with your key, your model, and your own prompt and system prompt.
 - **Optional Google Lens OCR:** a cloud engine you can switch to in Settings › OCR.
-- **Windows and Linux:** Windows 10/11, Linux X11, and KDE Plasma 6 on Wayland.
+- **Windows and Linux:** Windows 10/11, Linux X11, and KDE Plasma 6 on Wayland. Packages for
+  Windows (`.exe`, `.msi`), Fedora and openSUSE (`.rpm`), Debian and Ubuntu (`.deb`), and any
+  distribution (`.AppImage`).
 
 Lookitan reproduces the behavior of the Lookupper app with its own code. It contains no code,
 branding or assets from Lookupper.
@@ -24,6 +26,7 @@ Download the installer for your system from
 | System | File |
 | --- | --- |
 | Windows | `Lookitan_*_x64-setup.exe` (or `.msi`) |
+| Fedora, openSUSE | `Lookitan-*.x86_64.rpm` (`sudo dnf install ./Lookitan-*.x86_64.rpm`) |
 | Debian, Ubuntu, KDE neon | `lookitan_*_amd64.deb` |
 | Other Linux | `Lookitan_*_amd64.AppImage` |
 
@@ -40,8 +43,8 @@ two things there:
 
 - It loads a small KWin script that reports the pointer position over D-Bus.
 - It captures the region through `org.kde.KWin.ScreenShot2`. KWin allows this without a dialog
-  when Lookitan is installed from the `.deb`, because the package's `.desktop` file declares the
-  interface.
+  when Lookitan is installed from the `.rpm` or `.deb`, because the package's `.desktop` file
+  declares the interface.
 
 For the shortcut, add a custom one in **System Settings › Shortcuts › Add New › Command** that
 runs:
