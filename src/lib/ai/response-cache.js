@@ -56,12 +56,15 @@ export class AiResponseCache {
             return existing.promise;
         }
         const pending = {controller: new AbortController(), cancelled: false, full: '', listeners: new Set(onChunk ? [onChunk] : []), promise: null};
+        this._pending.set(key, pending);
         pending.promise = (async () => {
             try {
                 const text = await start(pending.controller.signal, (delta, full) => {
+                    if (pending.cancelled) { return; }
                     pending.full = full;
                     for (const l of pending.listeners) { l(delta, full); }
                 });
+                pending.controller.signal.throwIfAborted();
                 if (!pending.cancelled && this._pending.get(key) === pending) {
                     this._cache.set(key, {text, timestamp: Date.now()});
                 }
@@ -70,7 +73,6 @@ export class AiResponseCache {
                 if (this._pending.get(key) === pending) { this._pending.delete(key); }
             }
         })();
-        this._pending.set(key, pending);
         return pending.promise;
     }
 

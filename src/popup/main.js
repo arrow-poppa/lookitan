@@ -1,11 +1,11 @@
 // Lookup popup. Sections follow the dictionary order from the Dictionaries tab: the AI word card,
 // the context translator and the MDict dictionaries. Top-right: save the word and add it to Anki.
 
-import {listen} from '@tauri-apps/api/event';
+import {emit, listen} from '@tauri-apps/api/event';
 import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib/api.js';
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {fillLanguages, parseCard} from '../lib/ai/word-card.js';
+import {fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, createConnection, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
@@ -20,12 +20,13 @@ let dicts = [];
 let state = null;
 let pinned = false;
 let zoom = Number(localStorage.getItem('zoom') || '1') || 1;
+let renderSequence = 0;
 /** Shared by every lookup while the popup lives, like the fork's generator cache. */
 const responses = new AiResponseCache();
 
 /** Cache key: everything that changes the answer, as the fork's options context + term + sentence. */
-function aiKey(kind, prompt, lookup = state) {
-    return responses.key([kind, ai.provider, ai[ai.provider]?.model || '', ai.temperature, ai.systemPrompt || '', prompt, lookup.payload.word, lookup.payload.sentence || '']);
+function aiKey(kind, prompt, lookup = state, options = ai) {
+    return responses.key([kind, options, prompt, lookup.payload.word, lookup.payload.sentence || '']);
 }
 
 function applyZoom() {
@@ -72,7 +73,7 @@ function speak(text) {
 
 // ------------------------------------------------------------------ AI word card
 
-function renderCard(body, card) {
+function renderCard(body, card, pending = false) {
     const p = state.payload;
     const headword = card.headword || p.word;
     const chips = [];
@@ -86,12 +87,11 @@ function renderCard(body, card) {
         ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
         ${card.translation ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
-        <button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button>
-        <div class="explanation ai-text" hidden></div>
-        ${p.sentence ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markWord(p.sentence, p.word)}</div></details>` : ''}`;
+        ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><div class="explanation ai-text" hidden></div>`}
+        ${!pending && p.sentence ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markWord(p.sentence, p.word)}</div></details>` : ''}`;
     body.querySelector('.speak')?.addEventListener('click', () => speak(headword));
     body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => ev.currentTarget.classList.remove('hidden-tr'));
-    body.querySelector('.explain-btn').addEventListener('click', () => void runExplain(body.querySelector('.explanation')));
+    body.querySelector('.explain-btn')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation')));
 }
 
 async function runExplain(target) {
@@ -116,15 +116,22 @@ async function runExplain(target) {
 
 async function runCard(body, force = false) {
     const lookup = state;
+    const options = ai;
+    lookup.aiPending = true;
+    void refreshAnkiButton();
     body.innerHTML = shimmer();
     try {
-        const prompt = fillLanguages(ai.cardPrompt, settings);
-        const key = aiKey('card', prompt, lookup);
+        const prompt = fillLanguages(options.cardPrompt, settings);
+        const key = aiKey('card', prompt, lookup, options);
         lookup.keys.add(key);
-        // The card is JSON, so it is shown once complete rather than streamed.
         const text = await responses.run(key,
-            (signal) => explain({...ai, streamResponse: false}, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt}),
-            undefined, {force});
+            (signal, onChunk) => explain(options, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
+            (_delta, full) => {
+                if (state !== lookup) { return; }
+                const partial = parseCardProgress(full);
+                if (partial) { renderCard(body, partial, true); }
+                else if (!full.includes('{')) { body.innerHTML = `<div class="ai-text">${renderMarkdown(full)}</div>`; }
+            }, {force});
         if (state !== lookup) { return; }
         const card = parseCard(text);
         if (card) {
@@ -134,10 +141,12 @@ async function runCard(body, force = false) {
             lookup.explanation = text;
             body.innerHTML = `<div class="ai-text">${renderMarkdown(text)}</div>`;
         }
-        void refreshAnkiButton();
         if (settings.saveWordsAutomatically && !lookup.savedId) { void saveWord(); }
     } catch (e) {
         if (state === lookup && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
+    } finally {
+        lookup.aiPending = false;
+        if (state === lookup) { void refreshAnkiButton(); }
     }
 }
 
@@ -185,26 +194,25 @@ function renderMdictSections() {
     }
 }
 
-async function glossaries() {
-    if (state.glossaries) { return state.glossaries; }
+async function glossaries(lookup = state) {
+    if (lookup.glossaries) { return lookup.glossaries; }
     const out = [];
     const seen = new Set();
-    for (const e of state.payload.entries || []) {
+    for (const e of lookup.payload.entries || []) {
         if (seen.has(e.dictId) || out.length >= 3) { continue; }
         seen.add(e.dictId);
         try { out.push({name: e.dictName, html: await api.entryHtml(e.dictId, e.entry)}); } catch (_e) { /* skip */ }
     }
-    state.glossaries = out;
+    lookup.glossaries = out;
     return out;
 }
 
 // ------------------------------------------------------------------ saving and Anki
 
-async function saveWord() {
-    const lookup = state;
+async function saveWord(lookup = state, lookupSettings = settings) {
     if (!lookup || !lookup.payload.word) { return; }
-    await glossaries();
-    const card = cardFromLookup(lookup, settings);
+    await glossaries(lookup);
+    const card = cardFromLookup(lookup, lookupSettings);
     if (lookup.savedId) { card.id = lookup.savedId; }
     if (lookup.payload.recognition) {
         const img = await api.captureImage(lookup.payload.recognition, 'sentence').catch(() => null);
@@ -222,18 +230,18 @@ function setSaveIcon(saved) {
     $('btn-save').title = saved ? 'Palavra salva' : 'Salvar palavra';
 }
 
-function noteContext() {
+function noteContext(lookup = state, options = anki) {
     return {
-        word: state.payload.word,
-        headword: state.aiCard?.headword || state.payload.entries?.[0]?.headword,
-        sentence: state.payload.sentence,
-        glossaries: state.glossaries || [],
-        aiCard: state.aiCard || {},
-        aiExplanation: state.explanation,
-        contextTranslation: state.contextTranslation,
-        title: state.payload.app?.title,
-        query: state.payload.word,
-        screenshot: async () => (state.payload.recognition ? api.captureImage(state.payload.recognition, anki.screenshotArea || 'sentence') : null),
+        word: lookup.payload.word,
+        headword: lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword,
+        sentence: lookup.payload.sentence,
+        glossaries: lookup.glossaries || [],
+        aiCard: lookup.aiCard || {},
+        aiExplanation: lookup.explanation,
+        contextTranslation: lookup.contextTranslation,
+        title: lookup.payload.app?.title,
+        query: lookup.payload.word,
+        screenshot: async () => (lookup.payload.recognition ? api.captureImage(lookup.payload.recognition, options.screenshotArea || 'sentence') : null),
     };
 }
 
@@ -241,73 +249,108 @@ function setAnki(mode, title) {
     const b = $('btn-anki');
     b.hidden = mode === 'hidden';
     b.dataset.mode = mode;
-    b.innerHTML = icon(mode === 'exists' || mode === 'added' ? 'check' : 'plus');
+    b.innerHTML = icon(mode === 'configure' ? 'settings' : mode === 'exists' || mode === 'added' ? 'check' : 'plus');
     b.classList.toggle('on', mode === 'exists' || mode === 'added');
-    b.disabled = mode === 'busy';
+    b.disabled = mode === 'busy' || mode === 'generating';
     b.title = title || '';
+    b.setAttribute('aria-label', title || 'Anki');
+}
+
+function ankiStatus(message = '', error = false) {
+    const target = $('anki-status');
+    target.hidden = !message;
+    target.textContent = message;
+    target.classList.toggle('error', error);
 }
 
 async function refreshAnkiButton() {
-    if (!anki.enable || !isFormatReady(anki) || !state?.payload.word) { setAnki('hidden'); return; }
-    if (state.ankiNoteId) { setAnki('added', 'Adicionada ao Anki — clique para abrir'); return; }
+    const lookup = state;
+    const options = anki;
+    if (!options.enable || !lookup?.payload.word) { setAnki('hidden'); ankiStatus(); return; }
+    if (!isFormatReady(options)) {
+        setAnki('configure', 'Configurar o Anki');
+        ankiStatus('Escolha o baralho, o tipo de nota e os campos em Configurações › Anki.');
+        return;
+    }
+    ankiStatus();
+    if (lookup.ankiNoteId) { setAnki('added', 'Adicionada ao Anki — clique para abrir'); return; }
+    if (lookup.aiPending) { setAnki('generating', 'Aguarde a geração do card para adicionar ao Anki'); return; }
     setAnki('add', 'Adicionar ao Anki');
-    if (!anki.checkForDuplicates) { return; }
+    if (!options.checkForDuplicates) { return; }
     try {
-        const conn = createConnection(anki);
-        const note = await buildNote(noteContext(), anki, null);
+        const conn = createConnection(options);
+        const note = await buildNote(noteContext(lookup, options), options, null);
         note.options.allowDuplicate = false;
         const [canAdd] = await conn.canAddNotes([note]);
+        if (state !== lookup || lookup.ankiNoteId || lookup.aiPending || $('btn-anki').dataset.mode === 'busy') { return; }
         if (!canAdd) {
-            setAnki(anki.duplicateBehavior === 'prevent' ? 'exists' : 'add',
-                anki.duplicateBehavior === 'prevent' ? 'Já está no Anki — clique para abrir' : 'Já existe uma nota parecida; clique para adicionar outra');
-            state.duplicate = true;
+            setAnki(options.duplicateBehavior === 'prevent' ? 'exists' : 'add',
+                options.duplicateBehavior === 'prevent' ? 'Já está no Anki — clique para abrir' : 'Já existe uma nota parecida; clique para adicionar outra');
+            lookup.duplicate = true;
         }
     } catch (e) {
+        if (state !== lookup || lookup.ankiNoteId || lookup.aiPending || $('btn-anki').dataset.mode === 'busy') { return; }
         setAnki('add', `Anki: ${e?.message || e}`);
+        ankiStatus(`Anki: ${e?.message || e}`, true);
     }
 }
 
 async function onAnkiClick() {
     const mode = $('btn-anki').dataset.mode;
-    const conn = createConnection(anki);
+    if (mode === 'configure') {
+        try {
+            await api.openSettings();
+            await emit('navigate-settings', {section: 'anki'});
+        } catch (e) { ankiStatus(`Não foi possível abrir as configurações: ${e?.message || e}`, true); }
+        return;
+    }
+    if (mode === 'busy' || mode === 'generating' || mode === 'hidden' || !state?.payload.word) { return; }
+    const lookup = state;
+    const options = anki;
+    const lookupSettings = settings;
+    const conn = createConnection(options);
     if (mode === 'added' || mode === 'exists') {
         try {
-            if (state.ankiNoteId) {
-                await conn.guiBrowseNote(state.ankiNoteId);
+            if (lookup.ankiNoteId) {
+                await conn.guiBrowseNote(lookup.ankiNoteId);
             } else {
-                const note = await buildNote(noteContext(), anki, null);
+                const note = await buildNote(noteContext(lookup, options), options, null);
                 const [ids] = await conn.findNoteIds([note]);
                 if (ids && ids.length) { await conn.guiBrowseNotes(ids); }
             }
-        } catch (_e) { /* Anki closed */ }
+        } catch (e) { if (state === lookup) { ankiStatus(`Anki: ${e?.message || e}`, true); } }
         return;
     }
     setAnki('busy', 'Adicionando…');
+    ankiStatus();
     try {
-        await glossaries();
-        const note = await buildNote(noteContext(), anki, conn);
+        await glossaries(lookup);
+        const note = await buildNote(noteContext(lookup, options), options, conn);
         const id = await conn.addNote(note);
         if (id === null) { throw new Error('o Anki recusou a nota'); }
-        if (anki.suspendNewCards) {
+        if (options.suspendNewCards) {
             const cards = await conn.findCardsForNote(id);
             await conn.suspendCards(cards);
         }
-        state.ankiNoteId = id;
-        setAnki('added', 'Adicionada ao Anki — clique para abrir');
-        if (state.savedId) { void saveWord(); }
+        lookup.ankiNoteId = id;
+        if (state === lookup) { setAnki('added', 'Adicionada ao Anki — clique para abrir'); }
+        if (lookup.savedId) { void saveWord(lookup, lookupSettings); }
     } catch (e) {
-        setAnki('add', `Erro: ${e?.message || e}`);
+        if (state === lookup) { setAnki('add', `Erro: ${e?.message || e}`); ankiStatus(`Anki: ${e?.message || e}`, true); }
     }
 }
 
 // ------------------------------------------------------------------ render
 
 async function render(payload) {
+    const sequence = ++renderSequence;
     const all = await loadAllSettings();
+    const dictionaries = await api.listDictionaries();
+    if (sequence !== renderSequence) { return; }
     settings = all.settings;
     ai = all.ai;
     anki = all.anki;
-    dicts = await api.listDictionaries();
+    dicts = dictionaries;
     state = {payload, keys: new Set()};
     if (ai.cancelPendingRequests !== false) {
         // Keep a request for this same word and sentence running; drop the others.
@@ -322,6 +365,7 @@ async function render(payload) {
     $('query').value = payload.word || '';
     $('notice').hidden = !payload.notice;
     $('notice').textContent = payload.notice || '';
+    ankiStatus();
     const meta = [];
     if (payload.engine) { meta.push(payload.engine); }
     if (payload.ocrMs) { meta.push(`${payload.ocrMs} ms`); }
@@ -414,3 +458,12 @@ document.addEventListener('keydown', (ev) => {
 });
 applyZoom();
 void listen('lookup', (event) => { void render(event.payload); });
+void listen('settings-changed', async () => {
+    try {
+        const all = await loadAllSettings();
+        settings = all.settings;
+        ai = all.ai;
+        anki = all.anki;
+        await refreshAnkiButton();
+    } catch (e) { ankiStatus(`Configurações: ${e?.message || e}`, true); }
+});

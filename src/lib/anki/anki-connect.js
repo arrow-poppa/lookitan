@@ -482,52 +482,61 @@ export class AnkiConnect {
         /** @type {import('anki').MessageBody} */
         const body = {action, params, version: this._localVersion};
         if (this._apiKey !== null) { body.key = this._apiKey; }
-        let response;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
         try {
-            if (this._server === null) { throw new Error('Server URL is null'); }
-            response = await fetch(this._server, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(body),
-            });
-        } catch (e) {
-            const error = new ExtensionError('Anki connection failure');
-            error.data = {action, params, originalError: e};
-            throw error;
-        }
-
-        if (!response.ok) {
-            const error = new ExtensionError(`Anki connection error: ${response.status}`);
-            error.data = {action, params, status: response.status};
-            throw error;
-        }
-
-        let responseText = null;
-        /** @type {unknown} */
-        let result;
-        try {
-            responseText = await response.text();
-            result = parseJson(responseText);
-        } catch (e) {
-            const error = new ExtensionError('Invalid Anki response');
-            error.data = {action, params, status: response.status, responseText, originalError: e};
-            throw error;
-        }
-
-        if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
-            const apiError = /** @type {import('core').SerializableObject} */ (result).error;
-            if (typeof apiError !== 'undefined') {
-                // eslint-disable-next-line @typescript-eslint/no-base-to-string
-                const error = new ExtensionError(`Anki error: ${apiError}`);
-                // eslint-disable-next-line @typescript-eslint/no-base-to-string
-                error.data = {action, params, status: response.status, apiError: typeof apiError === 'string' ? apiError : `${apiError}`};
+            let response;
+            try {
+                if (this._server === null) { throw new Error('Server URL is null'); }
+                response = await fetch(this._server, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(body),
+                    signal: controller.signal,
+                    connectTimeout: 5000,
+                });
+            } catch (e) {
+                const error = new ExtensionError(controller.signal.aborted ? 'Tempo de conexão com o Anki esgotado (5 s)' :
+                    `Falha na conexão com o Anki: ${e?.message || e}`);
+                error.data = {action, params, originalError: e};
                 throw error;
             }
-        }
 
-        return result;
+            if (!response.ok) {
+                const error = new ExtensionError(`Anki connection error: ${response.status}`);
+                error.data = {action, params, status: response.status};
+                throw error;
+            }
+
+            let responseText = null;
+            /** @type {unknown} */
+            let result;
+            try {
+                responseText = await response.text();
+                result = parseJson(responseText);
+            } catch (e) {
+                const error = new ExtensionError(controller.signal.aborted ? 'Tempo de conexão com o Anki esgotado (5 s)' : 'Invalid Anki response');
+                error.data = {action, params, status: response.status, responseText, originalError: e};
+                throw error;
+            }
+
+            if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+                const apiError = /** @type {import('core').SerializableObject} */ (result).error;
+                if (typeof apiError !== 'undefined' && apiError !== null) {
+                    // eslint-disable-next-line @typescript-eslint/no-base-to-string
+                    const error = new ExtensionError(`Anki error: ${apiError}`);
+                    // eslint-disable-next-line @typescript-eslint/no-base-to-string
+                    error.data = {action, params, status: response.status, apiError: typeof apiError === 'string' ? apiError : `${apiError}`};
+                    throw error;
+                }
+                // Protocol 5+ wraps successful replies; older servers return the result directly.
+                if ('result' in result && 'error' in result) { return result.result; }
+            }
+
+            return result;
+        } finally { clearTimeout(timeout); }
     }
 
     /**

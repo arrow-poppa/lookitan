@@ -35,6 +35,12 @@ async function main() {
     void listen('engine-status', () => { void refreshStatus().catch(reportError); }).catch(reportError);
     void listen('dictionaries-changed', () => { void refreshDicts().catch(reportError); }).catch(reportError);
     void listen('words-changed', () => { void refreshWords().catch(reportError); }).catch(reportError);
+    void listen('navigate-settings', (event) => {
+        showTab('settings');
+        if (event.payload?.section === 'anki') {
+            document.getElementById('anki-settings')?.scrollIntoView?.({behavior: 'smooth', block: 'start'});
+        }
+    }).catch(reportError);
     void listen('settings-changed', async () => {
         // The back end adds app profiles on its own; keep them without losing local edits.
         try {

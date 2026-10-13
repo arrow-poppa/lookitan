@@ -32,7 +32,8 @@ function createProvider(ai) {
  * @param {{signal: AbortSignal, prompt?: string, onChunk?: (delta: string, full: string) => void}} options
  * @returns {Promise<string>}
  */
-export async function explain(ai, term, sentence, {signal, prompt, onChunk}) {
+export async function explain(ai, term, sentence, {signal, prompt, onChunk} = {}) {
+    if (signal?.aborted) { throw signal.reason || new DOMException('Request cancelled', 'AbortError'); }
     const provider = createProvider(ai);
     if (!provider.isConfigured()) {
         throw new Error('Configure an AI provider in Settings › AI.');
@@ -40,29 +41,33 @@ export async function explain(ai, term, sentence, {signal, prompt, onChunk}) {
     const template = prompt || ai.customPrompt || '';
     const system = typeof ai.systemPrompt === 'string' ? ai.systemPrompt : '';
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
-    const abort = () => timeout.abort();
-    signal.addEventListener('abort', abort, {once: true});
+    const timer = setTimeout(() => timeout.abort(new DOMException('AI request timed out', 'TimeoutError')), REQUEST_TIMEOUT_MS);
+    const abort = () => timeout.abort(signal.reason);
+    signal?.addEventListener('abort', abort, {once: true});
     try {
         if (ai.streamResponse === true && provider.supportsStreaming()) {
             let received = false;
             try {
-                return await provider.generateExplanationStream(term, sentence, template, system, timeout.signal, (delta, full) => {
+                const text = await provider.generateExplanationStream(term, sentence, template, system, timeout.signal, (delta, full) => {
+                    timeout.signal.throwIfAborted();
                     received = true;
                     onChunk?.(delta, full);
                 });
+                timeout.signal.throwIfAborted();
+                if (received) { return text; }
             } catch (error) {
-                if (received || timeout.signal.aborted) {
+                if (received || timeout.signal.aborted || [401, 403, 429].includes(error?.status)) {
                     throw error;
                 }
             }
         }
         const text = await provider.generateExplanation(term, sentence, template, system, timeout.signal);
+        timeout.signal.throwIfAborted();
         onChunk?.(text, text);
         return text;
     } finally {
         clearTimeout(timer);
-        signal.removeEventListener('abort', abort);
+        signal?.removeEventListener('abort', abort);
     }
 }
 

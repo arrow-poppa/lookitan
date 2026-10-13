@@ -655,6 +655,7 @@ fn save_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: Se
     if previous.hotkey != next.hotkey {
         apply_hotkey(&app, &next.hotkey)?;
     }
+    let _ = app.emit("settings-changed", ());
     Ok(())
 }
 

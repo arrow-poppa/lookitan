@@ -69,13 +69,21 @@ async function renderDetail() {
     const toAnki = el('button', {class: 'primary', html: `${icon('cards', 'sm')}${w.ankiNoteId ? 'Abrir no Anki' : 'Adicionar ao Anki'}`});
     toAnki.addEventListener('click', async () => {
         if (w.ankiNoteId) {
-            await createConnection(store.anki).guiBrowseNote(w.ankiNoteId).catch(() => {});
+            try { await createConnection(store.anki).guiBrowseNote(w.ankiNoteId); }
+            catch (e) { note.textContent = `Anki: ${e?.message || e}`; }
             return;
         }
         toAnki.disabled = true;
-        const msg = await addToAnki(w);
-        note.textContent = msg;
-        await refreshWords();
+        try {
+            const msg = await addToAnki(w);
+            note.textContent = msg;
+            // Keep configuration and connection errors visible instead of replacing their message.
+            if (msg === 'Adicionada ao Anki.') {
+                await refreshWords();
+                document.getElementById('save-state').textContent = msg;
+            }
+        } catch (e) { note.textContent = `Anki: ${e?.message || e}`; }
+        finally { toAnki.disabled = false; }
     });
     const del = el('button', {html: `${icon('trash', 'sm')}Excluir`});
     del.addEventListener('click', async () => { await api.deleteWord(w.id); await refreshWords(); });
@@ -89,13 +97,14 @@ async function renderDetail() {
 }
 
 async function addToAnki(w) {
-    if (!isFormatReady(store.anki)) { return 'Configure o Anki em Configurações › Anki (baralho, tipo de nota e campos).'; }
+    const options = JSON.parse(JSON.stringify(store.anki));
+    if (!isFormatReady(options)) { return 'Configure o Anki em Configurações › Anki (baralho, tipo de nota e campos).'; }
     try {
-        const conn = createConnection(store.anki);
-        const note = await buildNote(noteContextFromCard(w), store.anki, conn);
+        const conn = createConnection(options);
+        const note = await buildNote(noteContextFromCard(w), options, conn);
         const id = await conn.addNote(note);
         if (id === null) { return 'O Anki não aceitou a nota (talvez já exista).'; }
-        if (store.anki.suspendNewCards) {
+        if (options.suspendNewCards) {
             const cards = await conn.findCardsForNote(id);
             await conn.suspendCards(cards);
         }
@@ -119,6 +128,7 @@ async function syncAll() {
     }
     btn.disabled = false;
     btn.title = `${ok} de ${pending.length} adicionadas. ${ok < pending.length ? last : ''}`;
+    document.getElementById('save-state').textContent = btn.title;
     await refreshWords();
 }
 

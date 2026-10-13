@@ -10,23 +10,21 @@ import {cardRow, el, select, textInput, toggle} from './ui.js';
 let decks = [];
 let models = [];
 let modelFields = [];
+let fieldsModel = null;
+let fieldsServer = null;
 let connection = {ok: null, message: ''};
+let refreshSequence = 0;
 
-async function refreshAnki() {
-    const anki = store.anki;
+async function refreshAnki(anki, model) {
     const conn = createConnection({...anki, enable: true});
     try {
         const version = await conn.getVersion();
-        decks = await conn.getDeckNames();
-        models = await conn.getModelNames();
-        const format = anki.cardFormats[0];
-        modelFields = format.model ? await conn.getModelFieldNames(format.model) : [];
-        connection = {ok: true, message: `Conectado ao AnkiConnect (versão ${version}).`};
+        const [decks, models] = await Promise.all([conn.getDeckNames(), conn.getModelNames()]);
+        const modelFields = model ? await conn.getModelFieldNames(model) : [];
+        return {decks, models, modelFields, connection: {ok: true, message: `Conectado ao AnkiConnect (versão ${version}).`}};
     } catch (e) {
-        decks = [];
-        models = [];
-        modelFields = [];
-        connection = {ok: false, message: `Sem conexão com o Anki: ${e?.message || e}. Abra o Anki com o add-on AnkiConnect instalado.`};
+        return {decks: [], models: [], modelFields: [], connection: {ok: false,
+            message: `Sem conexão com o Anki: ${e?.message || e}. Abra o Anki com o add-on AnkiConnect instalado.`}};
     }
 }
 
@@ -35,13 +33,15 @@ function fieldsEditor(root) {
     if (!format.model) {
         return el('p', {class: 'note'}, 'Escolha o tipo de nota para configurar os campos.');
     }
-    if (modelFields.length === 0) {
+    if (modelFields.length === 0 || fieldsModel !== format.model || fieldsServer !== store.anki.server) {
         return el('p', {class: 'note'}, 'Conecte ao Anki para ver os campos deste tipo de nota.');
     }
     const table = el('table', {class: 'fields-table'});
+    let changed = false;
     modelFields.forEach((name, i) => {
         if (!(name in format.fields)) {
             format.fields[name] = {value: suggestMarker(name, i), overwriteMode: 'coalesce'};
+            changed = true;
         }
         const input = textInput(fieldValue(format.fields[name]), (v) => {
             format.fields[name] = {value: v, overwriteMode: 'coalesce'};
@@ -58,32 +58,55 @@ function fieldsEditor(root) {
         table.append(el('tr', {}, el('td', {}, name), el('td', {}, input), el('td', {}, menu)));
     });
     for (const key of Object.keys(format.fields)) {
-        if (!modelFields.includes(key)) { delete format.fields[key]; }
+        if (!modelFields.includes(key)) { delete format.fields[key]; changed = true; }
     }
-    save();
+    if (changed) { save(); }
     return table;
 }
 
 export async function renderAnkiSection(root) {
+    const sequence = ++refreshSequence;
+    const snapshot = {...store.anki};
+    const model = snapshot.cardFormats[0].model;
+    if (snapshot.enable) { connection = {ok: null, message: 'Conectando ao Anki…'}; }
+    render(root);
+    if (!snapshot.enable) { return; }
+    const result = await refreshAnki(snapshot, model);
+    if (sequence !== refreshSequence) { return; }
+    decks = result.decks;
+    models = result.models;
+    modelFields = result.modelFields;
+    fieldsModel = model;
+    fieldsServer = snapshot.server;
+    connection = result.connection;
+    render(root);
+}
+
+function render(root) {
     const anki = store.anki;
     const format = anki.cardFormats[0];
-    if (anki.enable) { await refreshAnki(); }
     root.replaceChildren();
 
     root.append(cardRow({icon: 'cards', title: 'Integração com o Anki', desc: 'Adiciona cards pelo botão + do popup, via o add-on AnkiConnect.',
         control: toggle(anki.enable, async (v) => { anki.enable = v; save(); await renderAnkiSection(root); })}));
     if (!anki.enable) { return; }
 
-    const status = el('div', {class: connection.ok ? 'd ok' : 'd error'}, connection.message);
+    const status = el('div', {class: connection.ok === true ? 'd ok' : connection.ok === false ? 'd error' : 'd'}, connection.message);
+    const changeConnection = () => {
+        refreshSequence++;
+        connection = {ok: null, message: 'Clique em Verificar para testar a conexão.'};
+        status.className = 'd';
+        status.textContent = connection.message;
+    };
     const retry = el('button', {html: `${icon('refresh', 'sm')}Verificar`});
     retry.addEventListener('click', async () => { await renderAnkiSection(root); });
     root.append(el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('sync')}),
         el('div', {class: 'txt'}, el('div', {class: 't'}, 'Conexão'), status),
         el('div', {class: 'ctl wide'},
-            textInput(anki.server, (v) => { anki.server = v.trim(); save(); }, {placeholder: 'http://127.0.0.1:8765'}),
+            textInput(anki.server, (v) => { anki.server = v.trim(); changeConnection(); save(); }, {placeholder: 'http://127.0.0.1:8765'}),
             retry)));
     root.append(cardRow({icon: 'settings', title: 'Chave da API do AnkiConnect', desc: 'Só se você definiu "apiKey" na configuração do AnkiConnect.', wide: true,
-        control: textInput(anki.apiKey, (v) => { anki.apiKey = v.trim(); save(); }, {type: 'password'})}));
+        control: textInput(anki.apiKey, (v) => { anki.apiKey = v.trim(); changeConnection(); save(); }, {type: 'password'})}));
 
     const deckOptions = [{value: '', label: 'Escolha o baralho'}, ...decks.map((d) => ({value: d, label: d}))];
     if (format.deck && !decks.includes(format.deck)) { deckOptions.push({value: format.deck, label: format.deck}); }
@@ -97,6 +120,9 @@ export async function renderAnkiSection(root) {
             save();
             await renderAnkiSection(root);
         })}));
+    if (!format.deck || !format.model) {
+        root.append(el('p', {class: 'note'}, 'Para adicionar cards, escolha o baralho e o tipo de nota. Depois confira os marcadores dos campos abaixo.'));
+    }
 
     const fieldsCard = el('div', {class: 'card-row stack'},
         el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('list')}),

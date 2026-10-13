@@ -301,7 +301,7 @@ function render(root) {
     root.append(heading('Jogos e programas'), profilesCard());
 
     root.append(heading('Anki'));
-    const ankiRoot = el('div', {class: 'group'});
+    const ankiRoot = el('div', {class: 'group', id: 'anki-settings'});
     root.append(ankiRoot);
     renderAnkiSection(ankiRoot);
 

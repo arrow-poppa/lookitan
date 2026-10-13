@@ -1,0 +1,209 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import test from 'node:test';
+import {createContext, SourceTextModule, SyntheticModule} from 'node:vm';
+
+const project = resolve(import.meta.dirname, '..');
+const file = (path) => resolve(project, path);
+const flush = () => new Promise((done) => setImmediate(done));
+function deferred() {
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    return {promise, resolve};
+}
+class Element {
+    constructor() { this.style = {}; this.dataset = {}; this.innerHTML = ''; this.textContent = ''; this.listeners = {}; }
+    classList = {toggle() {}, remove() {}, add() {}};
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+    setAttribute(name, value) { this[name] = value; }
+    querySelector() { return null; }
+}
+
+async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => ''} = {}) {
+    const nodes = new Map();
+    const document = {getElementById: (id) => {
+        if (!nodes.has(id)) { nodes.set(id, new Element()); }
+        return nodes.get(id);
+    }, addEventListener() {}};
+    const calls = {settings: 0, events: [], notes: [], listeners: new Map()};
+    const lookup = {payload: {word: 'run', sentence: 'I run daily.', entries: []}, keys: new Set()};
+    const options = {enable: false, checkForDuplicates: false};
+    const settings = {hideWordTranslation: false, saveWordsAutomatically: false, ocrLanguage: 'en-US'};
+    const ai = {streamResponse: true, provider: 'custom', custom: {model: 'test'}, cardPrompt: 'card'};
+    const entry = file('src/popup/main.js');
+    const stubs = {
+        '@tauri-apps/api/event': {listen: async (name, handler) => { calls.listeners.set(name, handler); return () => {}; }, emit: async (...args) => { calls.events.push(args); }},
+        [file('src/lib/api.js')]: {
+            api: {openSettings: async () => { calls.settings++; }, entryHtml},
+            entryUrl: () => '', escapeHtml: (value) => String(value).replace(/[&<>"']/g, (c) =>
+                ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]),
+            loadAllSettings: async () => ({settings, ai, anki: options}), renderMarkdown: (text) => String(text),
+        },
+        [file('src/lib/ai/explain.js')]: {explain, isConfigured: () => true},
+        [file('src/lib/anki/notes.js')]: {
+            createConnection: () => connection,
+            isFormatReady: () => typeof ready === 'function' ? ready() : ready,
+            buildNote: async (ctx) => { calls.notes.push(ctx); return {fields: {Word: ctx.word}, options: {}}; },
+        },
+        [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }},
+        [file('src/lib/icons.js')]: {hydrateIcons() {}, icon: (name) => name},
+    };
+    const context = createContext({document, window: {addEventListener() {}}, localStorage: {getItem: () => null, setItem() {}},
+        AbortController, DOMException, console, Intl, setTimeout, clearTimeout});
+    const modules = new Map();
+    async function get(id) {
+        if (modules.has(id)) { return modules.get(id); }
+        const stub = stubs[id];
+        const module = stub ? new SyntheticModule(Object.keys(stub), function () {
+            for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
+        }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
+            '\nexport {runCard, refreshAnkiButton, onAnkiClick};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+        {context, identifier: id});
+        modules.set(id, module);
+        await module.link((specifier) => get(specifier.startsWith('.') ? resolve(id, '..', specifier) : specifier));
+        return module;
+    }
+    const module = await get(entry);
+    await module.evaluate();
+    const popup = module.namespace;
+    const change = (nextLookup = lookup) => popup.contextForTest({lookup: nextLookup, ai, anki: options, settings});
+    change();
+    return {popup, nodes, document, calls, lookup, options, settings, ai, change};
+}
+
+test('popup forwards the streaming option and renders a safe card before completion', async () => {
+    const finish = deferred();
+    let chunk;
+    const view = await fixture({explain: async (options, _word, _sentence, request) => {
+        assert.equal(options.streamResponse, true);
+        chunk = request.onChunk;
+        request.onChunk('', '{"headword":"<img src=x>","definition":"move qui');
+        return finish.promise;
+    }});
+    const body = new Element();
+    const pending = view.popup.runCard(body);
+    await flush();
+    assert(body.innerHTML.includes('move qui'));
+    assert(body.innerHTML.includes('&lt;img src=x&gt;'));
+    assert(!body.innerHTML.includes('<img src=x>'));
+    assert(body.innerHTML.includes('Gerando'));
+    assert.equal(view.lookup.aiCard, undefined, 'partial answers must not become exportable completed cards');
+    chunk('', '{"headword":"run","definition":"move quickly","translation":"correr"}');
+    finish.resolve('{"headword":"run","definition":"move quickly","translation":"correr"}');
+    await pending;
+    assert.equal(view.lookup.aiCard.translation, 'correr');
+    assert(!body.innerHTML.includes('Gerando'));
+});
+
+test('late streaming chunks cannot overwrite a newer lookup', async () => {
+    const finish = deferred();
+    let chunk;
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => {
+        chunk = request.onChunk;
+        return finish.promise;
+    }});
+    const body = new Element();
+    const pending = view.popup.runCard(body);
+    await flush();
+    const next = {payload: {word: 'walk'}, keys: new Set()};
+    view.change(next);
+    body.innerHTML = 'new lookup';
+    chunk('', '{"headword":"run","definition":"old result"}');
+    finish.resolve('{"headword":"run","definition":"old result"}');
+    await pending;
+    assert.equal(body.innerHTML, 'new lookup');
+    assert.equal(next.aiCard, undefined);
+});
+
+test('Anki export waits for the complete streamed word card', async () => {
+    const finish = deferred();
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => {
+        request.onChunk('', '{"headword":"run","definition":"move');
+        return finish.promise;
+    }});
+    view.options.enable = true;
+    const pending = view.popup.runCard(new Element());
+    await flush();
+    const button = view.document.getElementById('btn-anki');
+    assert.equal(button.dataset.mode, 'generating');
+    assert.equal(button.disabled, true);
+    await view.popup.onAnkiClick();
+    assert.equal(view.calls.notes.length, 0);
+    finish.resolve('{"headword":"run","definition":"move quickly"}');
+    await pending;
+    assert.equal(button.dataset.mode, 'add');
+    assert.equal(button.disabled, false);
+});
+
+test('enabled Anki with missing format exposes setup and opens its settings', async () => {
+    const view = await fixture({ready: false});
+    view.options.enable = true;
+    await view.popup.refreshAnkiButton();
+    const button = view.document.getElementById('btn-anki');
+    assert.equal(button.hidden, false);
+    assert.equal(button.dataset.mode, 'configure');
+    assert(view.document.getElementById('anki-status').textContent.includes('baralho'));
+    await view.popup.onAnkiClick();
+    assert.equal(view.calls.settings, 1);
+    assert.equal(view.calls.events[0][0], 'navigate-settings');
+    assert.equal(view.calls.events[0][1].section, 'anki');
+});
+
+test('saving Anki configuration updates the already-open lookup button', async () => {
+    let configured = false;
+    const view = await fixture({ready: () => configured});
+    view.options.enable = true;
+    await view.popup.refreshAnkiButton();
+    assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'configure');
+    configured = true;
+    await view.calls.listeners.get('settings-changed')();
+    assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'add');
+    assert.equal(view.document.getElementById('anki-status').hidden, true);
+});
+
+test('a delayed duplicate check cannot unlock Anki while the AI card is generating', async () => {
+    const duplicates = deferred();
+    const view = await fixture({connection: {canAddNotes: () => duplicates.promise}});
+    view.options.enable = true;
+    view.options.checkForDuplicates = true;
+    view.options.duplicateBehavior = 'prevent';
+    const checking = view.popup.refreshAnkiButton();
+    await flush();
+    view.lookup.aiPending = true;
+    view.document.getElementById('btn-anki').dataset.mode = 'generating';
+    duplicates.resolve([false]);
+    await checking;
+    assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'generating');
+});
+
+test('adding an Anki note retains the clicked word across a later lookup', async () => {
+    const glossary = deferred();
+    const view = await fixture({entryHtml: () => glossary.promise, connection: {addNote: async (note) => {
+        assert.equal(note.fields.Word, 'run');
+        return 123;
+    }}});
+    view.options.enable = true;
+    view.lookup.payload.entries = [{dictId: 'test', entry: 1}];
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    const adding = view.popup.onAnkiClick();
+    const next = {payload: {word: 'walk'}, keys: new Set()};
+    view.change(next);
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    glossary.resolve('<p>run</p>');
+    await adding;
+    assert.equal(view.lookup.ankiNoteId, 123);
+    assert.equal(next.ankiNoteId, undefined);
+    assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'add');
+});
+
+test('Anki add failures show an actionable visible message', async () => {
+    const view = await fixture({connection: {addNote: async () => { throw new Error('AnkiConnect connection refused'); }}});
+    view.options.enable = true;
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    await view.popup.onAnkiClick();
+    const status = view.document.getElementById('anki-status');
+    assert.equal(status.hidden, false);
+    assert(status.textContent.includes('connection refused'));
+    assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'add');
+});

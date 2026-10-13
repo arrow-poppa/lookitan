@@ -41,6 +41,11 @@ Select a region preset or set its width and height. **Original (900 × 260)** re
 previous capture size. These settings are saved automatically. **Full screen** remains
 available for the clickable overlay.
 
+For **Anki**, enable the integration under **Settings › Anki**, select the deck and note type,
+and map its fields (for example `{expression}` and `{glossary}`). The popup opens this setup
+when it is incomplete and shows connection errors directly. AI word cards, explanations and
+context translations respect the streaming option under **Dictionaries › AI word in context**.
+
 ### KDE Plasma on Wayland
 
 Wayland does not let apps read the global pointer position or grab global keys. Lookitan does

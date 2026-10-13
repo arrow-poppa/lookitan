@@ -323,10 +323,11 @@ export class AIProvider {
      * `data:` payload. The reader is always cancelled on the way out, so an aborted request
      * tears the connection down instead of leaving the model generating tokens server side.
      * @param {Response} response
-     * @param {(payload: string) => void} onEvent
+     * @param {(payload: string) => (void|boolean)} onEvent Return false when the stream is complete.
+     * @param {AbortSignal} [signal]
      * @returns {Promise<void>}
      */
-    async _readSseStream(response, onEvent) {
+    async _readSseStream(response, onEvent, signal) {
         const body = response.body;
         if (!body || typeof body.getReader !== 'function') {
             throw new Error('Streaming response body is not available');
@@ -335,23 +336,31 @@ export class AIProvider {
         const decoder = new TextDecoder();
         const separatorPattern = /\r\n\r\n|\n\n|\r\r/;
         let buffer = '';
+        const checkAbort = () => {
+            if (signal?.aborted) { throw signal.reason || new DOMException('Request cancelled', 'AbortError'); }
+        };
+        const abort = () => { void reader.cancel().catch(() => {}); };
         /** @param {string} rawEvent */
         const emit = (rawEvent) => {
+            checkAbort();
             /** @type {string[]} */
             const dataLines = [];
             for (const line of rawEvent.split(/\r\n|\n|\r/)) {
                 // Anything else (`event:`, `id:`, `: keep-alive` comments) carries no text.
                 if (line.startsWith('data:')) { dataLines.push(line.slice(5).replace(/^ /, '')); }
             }
-            if (dataLines.length > 0) { onEvent(dataLines.join('\n')); }
+            return dataLines.length === 0 || onEvent(dataLines.join('\n')) !== false;
         };
+        signal?.addEventListener('abort', abort, {once: true});
         try {
+            checkAbort();
             for (;;) {
                 const {done, value} = await reader.read();
+                checkAbort();
                 buffer += done ? decoder.decode() : decoder.decode(value, {stream: true});
                 let match;
                 while ((match = separatorPattern.exec(buffer)) !== null) {
-                    emit(buffer.slice(0, match.index));
+                    if (!emit(buffer.slice(0, match.index))) { return; }
                     buffer = buffer.slice(match.index + match[0].length);
                 }
                 if (done) { break; }
@@ -359,8 +368,27 @@ export class AIProvider {
             // Some gateways close the stream without the trailing blank line.
             if (buffer.trim().length > 0) { emit(buffer); }
         } finally {
+            signal?.removeEventListener('abort', abort);
             try { await reader.cancel(); } catch (_error) { /* the stream is already gone */ }
+            reader.releaseLock();
         }
+    }
+
+    _providerError(label, payload, status, statusText = '') {
+        const value = isObjectNotArray(payload) && typeof payload.error !== 'undefined' ? payload.error : payload;
+        const detail = typeof value === 'string' ? value : isObjectNotArray(value) && typeof value.message === 'string' ? value.message : '';
+        const error = new Error(`${label} API error${status ? `: ${status} ${statusText}`.trimEnd() : ''}${detail ? `: ${detail.slice(0, 500)}` : ''}`);
+        error.status = status;
+        return error;
+    }
+
+    async _responseError(label, response) {
+        let detail;
+        try {
+            const text = await response.text();
+            try { detail = parseJson(text); } catch (_error) { detail = text; }
+        } catch (_error) { /* Status still identifies an error when its body cannot be read. */ }
+        return this._providerError(label, detail, response.status, response.statusText);
     }
 
     /**
@@ -401,17 +429,13 @@ export class AIProvider {
         });
 
         if (!response.ok) {
-            throw new Error(`${label} API error: ${response.status} ${response.statusText}`);
+            throw await this._responseError(label, response);
         }
 
         let full = '';
-        let finished = false;
-        let streamFailed = false;
         await this._readSseStream(response, (payload) => {
-            if (finished) { return; }
             if (payload === '[DONE]') {
-                finished = true;
-                return;
+                return false;
             }
             /** @type {unknown} */
             let parsed;
@@ -420,18 +444,16 @@ export class AIProvider {
             } catch (_error) {
                 return; // Keep-alive frames and non-JSON padding are not fatal.
             }
-            if (isObjectNotArray(parsed) && typeof parsed.error !== 'undefined') {
-                streamFailed = true;
-                finished = true;
-                return;
+            const error = isObjectNotArray(parsed) ? parsed.error ?? this._getFirstChoice(parsed)?.error : undefined;
+            if (typeof error !== 'undefined') {
+                throw this._providerError(`${label} stream`, error, typeof error?.code === 'number' ? error.code : undefined);
             }
             const delta = this._extractOpenAIStreamDelta(parsed);
             if (delta) {
                 full += delta;
                 if (typeof onChunk === 'function') { onChunk(delta, full); }
             }
-        });
-        if (streamFailed) { throw new Error(`${label} API stream error`); }
+        }, signal);
         return full;
     }
 }
@@ -533,10 +555,11 @@ export class OpenAIProvider extends AIProvider {
         });
 
         if (!response.ok) {
-            throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+            throw await this._responseError('OpenAI', response);
         }
 
         const data = await readResponseJson(response);
+        if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('OpenAI', data.error); }
         const choice = this._getFirstChoice(data);
         const message = choice !== null && isObjectNotArray(choice.message) ? choice.message : null;
         const plain = this._stringifyMessageContent(message?.content ?? choice?.text ?? '');
@@ -736,13 +759,11 @@ export class GeminiProvider extends AIProvider {
         });
 
         if (!response.ok) {
-            throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
+            throw await this._responseError('Gemini', response);
         }
 
         let full = '';
-        let streamFailed = false;
         await this._readSseStream(response, (payload) => {
-            if (streamFailed) { return; }
             /** @type {unknown} */
             let parsed;
             try {
@@ -751,16 +772,14 @@ export class GeminiProvider extends AIProvider {
                 return;
             }
             if (isObjectNotArray(parsed) && typeof parsed.error !== 'undefined') {
-                streamFailed = true;
-                return;
+                throw this._providerError('Gemini stream', parsed.error, typeof parsed.error?.code === 'number' ? parsed.error.code : undefined);
             }
             const delta = this._extractGeminiText(parsed);
             if (delta) {
                 full += delta;
                 if (typeof onChunk === 'function') { onChunk(delta, full); }
             }
-        });
-        if (streamFailed) { throw new Error('Gemini API stream error'); }
+        }, signal);
         return full.trim() || 'No explanation available.';
     }
 
@@ -789,11 +808,11 @@ export class GeminiProvider extends AIProvider {
             body: JSON.stringify(body),
         });
         if (!response.ok) {
-            throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
+            throw await this._responseError('Gemini', response);
         }
 
         const data = await readResponseJson(response);
-        if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw new Error('Gemini API response error'); }
+        if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('Gemini', data.error); }
         const text = this._extractGeminiText(data);
         return text.trim() || 'No explanation available.';
     }
@@ -863,6 +882,7 @@ export class CustomProvider extends AIProvider {
         this._applyReasoningOptions(requestBody);
         this._applyOpenRouterProviderOptions(requestBody);
         this._applyCustomRequestBodyJson(requestBody);
+        requestBody.stream = false;
         if (!Array.isArray(requestBody.messages) || requestBody.messages.length === 0) {
             requestBody.messages = messages;
         }
@@ -922,12 +942,13 @@ export class CustomProvider extends AIProvider {
         });
 
         if (!response.ok) {
-            throw new Error(`Custom API error: ${response.status} ${response.statusText}`);
+            throw await this._responseError('Custom', response);
         }
 
         const data = await readResponseJson(response);
         const choice = this._getFirstChoice(data);
-        if (choice !== null && typeof choice.error !== 'undefined') { throw new Error('Custom API response error'); }
+        const responseError = isObjectNotArray(data) ? data.error ?? choice?.error : undefined;
+        if (typeof responseError !== 'undefined') { throw this._providerError('Custom', responseError); }
         const message = choice !== null && isObjectNotArray(choice.message) ? choice.message : null;
         const plain = this._stringifyMessageContent(message?.content ?? choice?.text ?? '');
         return plain.trim() || 'No explanation available.';
@@ -1045,10 +1066,11 @@ export class DeepSeekProvider extends AIProvider {
         });
 
         if (!response.ok) {
-            throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
+            throw await this._responseError('DeepSeek', response);
         }
 
         const data = await readResponseJson(response);
+        if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('DeepSeek', data.error); }
         const choice = this._getFirstChoice(data);
         const message = choice !== null && isObjectNotArray(choice.message) ? choice.message : null;
         const plain = this._stringifyMessageContent(message?.content ?? choice?.text ?? '');

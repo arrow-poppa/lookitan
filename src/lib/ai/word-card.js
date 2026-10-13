@@ -63,3 +63,48 @@ export function parseCard(text) {
         return null;
     }
 }
+
+/** Reads usable fields while a JSON word card is still arriving, without showing raw JSON. */
+export function parseCardProgress(text) {
+    const complete = parseCard(text);
+    if (complete) { return complete; }
+    const start = text.indexOf('{');
+    if (start < 0) { return null; }
+    let prefix = text.slice(start);
+    const closers = [];
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < prefix.length; i++) {
+        const c = prefix[i];
+        if (inString) {
+            if (escaped) {
+                if (c === 'u') {
+                    if (!/^[0-9a-f]{4}$/i.test(prefix.slice(i + 1, i + 5))) {
+                        prefix = prefix.slice(0, i - 1);
+                        escaped = false;
+                        break;
+                    }
+                    i += 4;
+                }
+                escaped = false;
+            } else if (c === '\\') { escaped = true; }
+            else if (c === '"') { inString = false; }
+        } else if (c === '"') { inString = true; }
+        else if (c === '{') { closers.push('}'); }
+        else if (c === '[') { closers.push(']'); }
+        else if (c === '}' || c === ']') {
+            if (closers.pop() !== c) { return null; }
+        }
+    }
+    if (escaped) { prefix = prefix.slice(0, -1); }
+    if (inString) { prefix += '"'; }
+    prefix = prefix.replace(/,\s*$/, '');
+    const suffix = closers.reverse().join('');
+    // A stream may stop in a key, immediately after a colon, or inside a string/list.
+    for (const filler of ['', 'null', ':null']) {
+        const card = parseCard(prefix + filler + suffix);
+        if (card && (card.headword || card.ipa || card.cefr || card.definition || card.translation ||
+            card.partOfSpeech.length || card.labels.length)) { return card; }
+    }
+    return null;
+}

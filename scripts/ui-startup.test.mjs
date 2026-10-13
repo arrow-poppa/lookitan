@@ -274,7 +274,7 @@ async function mainFixture(rejectSettings = false) {
 
 test('subscriptions attach while status is pending and one tab failure is shown', async () => {
     const fixture = await mainFixture();
-    assert.deepEqual(fixture.subscriptions, ['engine-status', 'dictionaries-changed', 'words-changed', 'settings-changed']);
+    assert.deepEqual(fixture.subscriptions, ['engine-status', 'dictionaries-changed', 'words-changed', 'navigate-settings', 'settings-changed']);
     assert(fixture.saveState.textContent.includes('dictionary read failed'));
     fixture.initialization.resolve();
     await flush();
@@ -284,4 +284,104 @@ test('settings loading failure is visible instead of an unhandled rejection', as
     const fixture = await mainFixture(true);
     assert(fixture.saveState.textContent.includes('settings read failed'));
     assert.equal(fixture.saveState.attributes.role, 'alert');
+});
+
+async function ankiPanelFixture(createConnection, overrides = {}) {
+    const view = dom();
+    const root = view.add('anki-settings');
+    let saves = 0;
+    const anki = {enable: true, server: 'http://127.0.0.1:8765', apiKey: '', tags: ['lookitan'],
+        cardFormats: [{deck: '', model: '', fields: {}}], ...overrides};
+    const panel = await load('src/main/anki-panel.js', {document: view.document}, {
+        [file('src/lib/api.js')]: {escapeHtml: String},
+        [file('src/lib/icons.js')]: {icon: () => ''},
+        [file('src/main/store.js')]: {store: {anki}, save: () => { saves++; }},
+        [file('src/lib/anki/notes.js')]: {createConnection, fieldValue: (field) => field.value, MARKERS: ['expression', 'glossary'],
+            suggestMarker: (_name, index) => index === 0 ? '{expression}' : '{glossary}'},
+    });
+    const initialization = panel.renderAnkiSection(root);
+    const rowFor = (title) => descendants(root).find((node) => node.className === 'card-row' &&
+        node.children.find((child) => child.className === 'txt')?.children[0]?.textContent === title);
+    return {view, root, anki, panel, initialization, rowFor, saves: () => saves};
+}
+
+test('Anki controls render before connecting and stale responses cannot overwrite an edited server', async () => {
+    const version = deferred();
+    const fixture = await ankiPanelFixture(() => ({getVersion: () => version.promise,
+        getDeckNames: async () => ['Study'], getModelNames: async () => ['Basic']}));
+    assert(fixture.root.children.length > 1, 'Anki connection must not block its settings controls');
+    assert(fixture.root.textContent.includes('escolha o baralho e o tipo de nota'));
+    const server = descendants(fixture.rowFor('Conexão')).find((node) => node.tagName === 'input');
+    server.value = 'http://127.0.0.1:8766';
+    server.dispatch('input');
+    assert.equal(fixture.anki.server, 'http://127.0.0.1:8766');
+    assert.equal(fixture.saves(), 1);
+    version.resolve(6);
+    await fixture.initialization;
+    assert.equal(descendants(fixture.rowFor('Conexão')).find((node) => node.tagName === 'input'), server);
+    assert(fixture.root.textContent.includes('Clique em Verificar'));
+    assert.equal(fixture.root.textContent.includes('Conectado ao AnkiConnect'), false);
+});
+
+test('Anki connection errors stay visible alongside usable setup controls', async () => {
+    const fixture = await ankiPanelFixture(() => ({getVersion: async () => { throw new Error('URL denied by HTTP scope'); }}));
+    await fixture.initialization;
+    assert(fixture.root.textContent.includes('URL denied by HTTP scope'));
+    assert(fixture.rowFor('Baralho'));
+    assert(fixture.rowFor('Tipo de nota'));
+    assert.equal(fixture.saves(), 0);
+});
+
+test('Anki field mappings preserve edits and cannot reuse fields from a previously selected model', async () => {
+    const nextVersion = deferred();
+    let connections = 0;
+    const fixture = await ankiPanelFixture(() => {
+        connections++;
+        return {getVersion: () => connections >= 3 ? nextVersion.promise : Promise.resolve(6),
+            getDeckNames: async () => ['Study'], getModelNames: async () => ['Basic', 'Other'],
+            getModelFieldNames: async (model) => model === 'Basic' ? ['Front', 'Back'] : ['Term', 'Meaning']};
+    }, {cardFormats: [{deck: 'Study', model: 'Basic', fields: {Front: {value: '<b>{expression}</b>'}}}]});
+    await fixture.initialization;
+    const format = fixture.anki.cardFormats[0];
+    assert.equal(format.fields.Front.value, '<b>{expression}</b>');
+    assert.equal(format.fields.Back.value, '{glossary}');
+    assert.equal(fixture.saves(), 1);
+    await fixture.panel.renderAnkiSection(fixture.root);
+    assert.equal(fixture.saves(), 1, 'checking the connection must not save unchanged mappings');
+    const model = descendants(fixture.rowFor('Tipo de nota')).find((node) => node.tagName === 'select');
+    model.value = 'Other';
+    model.dispatch('change');
+    assert.equal(format.model, 'Other');
+    assert.deepEqual(Object.keys(format.fields), [], 'old model fields must not fill the new model during connection');
+    nextVersion.resolve(6);
+    await flush();
+    assert.deepEqual(Object.keys(format.fields), ['Term', 'Meaning']);
+    assert.equal(format.fields.Term.value, '{expression}');
+    assert.equal(fixture.saves(), 3);
+});
+
+test('saved word Anki errors stay visible and the add button can be retried', async () => {
+    const view = dom();
+    for (const id of ['words-list', 'words-detail', 'words-search', 'words-sort', 'anki-sync', 'words-export', 'save-state']) { view.add(id); }
+    view.document.getElementById('words-sort').value = 'newest';
+    let listRequests = 0;
+    const words = await load('src/main/words-tab.js', {document: view.document}, {
+        '@tauri-apps/plugin-dialog': {save: async () => null},
+        '@tauri-apps/api/core': {invoke: async () => null},
+        [file('src/lib/api.js')]: {escapeHtml: String, api: {listWords: async () => { listRequests++; return [{id: 'word-1', word: 'hello', createdAt: 1}]; }}},
+        [file('src/lib/icons.js')]: {icon: () => ''},
+        [file('src/lib/cards.js')]: {noteContextFromCard: (card) => ({word: card.word}), toCsv: () => '', toQuizlet: () => ''},
+        [file('src/main/store.js')]: {store: {anki: {enable: true}}},
+        [file('src/lib/anki/notes.js')]: {isFormatReady: () => true, buildNote: async () => ({fields: {Front: 'hello'}}),
+            createConnection: () => ({addNote: async () => { throw new Error('Anki unavailable'); }})},
+    });
+    await words.initWordsTab();
+    await flush();
+    const detail = view.document.getElementById('words-detail');
+    const button = descendants(detail).find((node) => node.tagName === 'button' && node.className === 'primary');
+    button.dispatch('click');
+    await flush();
+    assert(detail.textContent.includes('Anki unavailable'));
+    assert.equal(button.disabled, false);
+    assert.equal(listRequests, 1, 'failed addition must not erase its message by refreshing the word list');
 });
