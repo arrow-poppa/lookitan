@@ -199,6 +199,28 @@ test('UI mode changes reuse completed AI answers but provider model, prompt and 
     assert.equal(requests, 4);
 });
 
+test('Anki waits for the complete explanation when automatic Explain is enabled', async () => {
+    const finish = deferred();
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => {
+        if (request.prompt === 'card') { return '{"headword":"run","definition":"move"}'; }
+        request.onChunk('Partial', 'Partial explanation');
+        return finish.promise;
+    }});
+    view.options.enable = true;
+    view.ai.autoExplain = true;
+    view.ai.customPrompt = 'explanation';
+    await view.popup.runCard(new Element());
+    await flush();
+    const button = view.document.getElementById('btn-anki');
+    assert.equal(button.dataset.mode, 'generating');
+    await view.popup.onAnkiClick();
+    assert.equal(view.calls.notes.length, 0);
+    finish.resolve('Complete explanation');
+    await flush();
+    assert.equal(view.lookup.explanation, 'Complete explanation');
+    assert.equal(button.dataset.mode, 'add');
+});
+
 test('Anki export waits for the complete streamed word card', async () => {
     const finish = deferred();
     const view = await fixture({explain: async (_options, _word, _sentence, request) => {

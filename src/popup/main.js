@@ -110,20 +110,30 @@ async function runExplain(target, force = false) {
     target.innerHTML = shimmer();
     const lookup = state;
     const options = ai;
+    const lookupSettings = settings;
+    const request = {};
+    lookup.explainRequest = request;
+    lookup.explainPending = true;
+    void refreshAnkiButton();
+    const current = () => state === lookup && lookup.explainRequest === request;
     try {
         const prompt = fillLanguages(options.customPrompt, settings);
         const key = await aiKey('explain', prompt, lookup, options);
-        if (state !== lookup) { return; }
+        if (!current()) { return; }
         lookup.keys.add(key);
         const text = await responses.run(key,
             (signal, onChunk) => explain(options, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
-            (_d, full) => { if (state === lookup) { target.innerHTML = renderMarkdown(full); } }, {force});
-        if (state === lookup) {
+            (_d, full) => { if (current()) { target.innerHTML = renderMarkdown(full); } }, {force});
+        if (current()) {
             lookup.explanation = text;
             target.innerHTML = renderMarkdown(text);
+            if (lookup.savedId) { void saveWord(lookup, lookupSettings); }
         }
     } catch (e) {
-        if (state === lookup && e?.name !== 'AbortError') { target.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
+        if (current() && e?.name !== 'AbortError') { target.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
+    } finally {
+        if (lookup.explainRequest === request) { lookup.explainPending = false; }
+        if (current()) { void refreshAnkiButton(); }
     }
 }
 
@@ -290,7 +300,7 @@ async function refreshAnkiButton() {
     }
     ankiStatus();
     if (lookup.ankiNoteId) { setAnki('added', 'Adicionada ao Anki — clique para abrir'); return; }
-    if (lookup.aiPending) { setAnki('generating', 'Aguarde a geração do card para adicionar ao Anki'); return; }
+    if (lookup.aiPending || lookup.explainPending) { setAnki('generating', 'Aguarde a resposta da IA para adicionar ao Anki'); return; }
     setAnki('add', 'Adicionar ao Anki');
     if (!options.checkForDuplicates) { return; }
     try {
@@ -298,14 +308,14 @@ async function refreshAnkiButton() {
         const note = await buildNote(noteContext(lookup, options), options, null);
         note.options.allowDuplicate = false;
         const [canAdd] = await conn.canAddNotes([note]);
-        if (state !== lookup || lookup.ankiNoteId || lookup.aiPending || $('btn-anki').dataset.mode === 'busy') { return; }
+        if (state !== lookup || lookup.ankiNoteId || lookup.aiPending || lookup.explainPending || $('btn-anki').dataset.mode === 'busy') { return; }
         if (!canAdd) {
             setAnki(options.duplicateBehavior === 'prevent' ? 'exists' : 'add',
                 options.duplicateBehavior === 'prevent' ? 'Já está no Anki — clique para abrir' : 'Já existe uma nota parecida; clique para adicionar outra');
             lookup.duplicate = true;
         }
     } catch (e) {
-        if (state !== lookup || lookup.ankiNoteId || lookup.aiPending || $('btn-anki').dataset.mode === 'busy') { return; }
+        if (state !== lookup || lookup.ankiNoteId || lookup.aiPending || lookup.explainPending || $('btn-anki').dataset.mode === 'busy') { return; }
         setAnki('add', `Anki: ${e?.message || e}`);
         ankiStatus(`Anki: ${e?.message || e}`, true);
     }
