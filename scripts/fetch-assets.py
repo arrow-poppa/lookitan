@@ -18,6 +18,8 @@ import json
 import shutil
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -49,9 +51,30 @@ ORT_LINUX_SHA256 = "3a211fbea252c1e66290658f1b735b772056149f28321e71c308942cdb54
 
 
 def get(url: str) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "lookitan-build"})
-    with urllib.request.urlopen(req, timeout=300) as r:
-        return r.read()
+    """Downloads with retries; Hugging Face answers 429 when many builds fetch at once."""
+    delay = 5
+    for attempt in range(7):
+        req = urllib.request.Request(url, headers={"User-Agent": "lookitan-build"})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or attempt == 6:
+                raise
+            wait = int(e.headers.get("Retry-After") or delay)
+            print(f"HTTP {e.code} for {url}; retrying in {wait}s")
+            time.sleep(wait)
+            delay = min(delay * 2, 120)
+        except urllib.error.URLError:
+            if attempt == 6:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 120)
+    raise RuntimeError("unreachable")
+
+
+def have(path: Path) -> bool:
+    return path.exists() and path.stat().st_size > 0
 
 
 def sha256(data: bytes) -> str:
@@ -61,6 +84,9 @@ def sha256(data: bytes) -> str:
 def fetch_models() -> None:
     MODELS.mkdir(parents=True, exist_ok=True)
     for stem, (repo, rev) in MODEL_REPOS.items():
+        if have(MODELS / f"{stem}.onnx") and (stem.startswith("det_") or have(MODELS / f"{stem}.dict.json")):
+            print(f"{stem}: cached")
+            continue
         info = json.loads(get(f"{HF}/api/models/{repo}/revision/{rev}?blobs=true"))
         expected = {s["rfilename"]: (s.get("lfs") or {}).get("sha256") for s in info.get("siblings", [])}
         onnx = get(f"{HF}/{repo}/resolve/{rev}/inference.onnx")
@@ -80,6 +106,9 @@ def fetch_models() -> None:
 
 def fetch_ort_windows() -> None:
     ORT_DIR.mkdir(parents=True, exist_ok=True)
+    if have(ORT_DIR / "onnxruntime.dll") and have(ORT_DIR / "DirectML.dll"):
+        print("ONNX Runtime: cached")
+        return
     pkg = get(
         "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/"
         f"{ORT_VERSION}/microsoft.ml.onnxruntime.directml.{ORT_VERSION}.nupkg"
@@ -98,6 +127,9 @@ def fetch_ort_windows() -> None:
 
 def fetch_ort_linux() -> None:
     ORT_DIR.mkdir(parents=True, exist_ok=True)
+    if have(ORT_DIR / "libonnxruntime.so"):
+        print("ONNX Runtime: cached")
+        return
     name = f"onnxruntime-linux-x64-{ORT_VERSION}"
     tgz = get(f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}/{name}.tgz")
     if sha256(tgz) != ORT_LINUX_SHA256:

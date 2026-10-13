@@ -53,6 +53,14 @@ jobs:
             libxcb1-dev libxcb-randr0-dev libxrandr-dev libdbus-1-dev libpipewire-0.3-dev \
             libwayland-dev libegl-dev libgbm-dev libclang-dev pkg-config libfuse2t64 file
 
+      - name: Cache OCR models and ONNX Runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/resources/models
+            src-tauri/resources/ort
+          key: assets-${{ matrix.platform }}-${{ hashFiles('scripts/fetch-assets.py') }}
+
       - name: Fetch OCR models and ONNX Runtime
         run: |
           python -m pip install --quiet pyyaml

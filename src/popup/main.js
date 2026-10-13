@@ -4,6 +4,7 @@
 import {listen} from '@tauri-apps/api/event';
 import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib/api.js';
 import {explain, isConfigured} from '../lib/ai/explain.js';
+import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {fillLanguages, parseCard} from '../lib/ai/word-card.js';
 import {buildNote, createConnection, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
@@ -19,6 +20,13 @@ let dicts = [];
 let state = null;
 let pinned = false;
 let zoom = Number(localStorage.getItem('zoom') || '1') || 1;
+/** Shared by every lookup while the popup lives, like the fork's generator cache. */
+const responses = new AiResponseCache();
+
+/** Cache key: everything that changes the answer, as the fork's options context + term + sentence. */
+function aiKey(kind, prompt, lookup = state) {
+    return responses.key([kind, ai.provider, ai[ai.provider]?.model || '', ai.temperature, ai.systemPrompt || '', prompt, lookup.payload.word, lookup.payload.sentence || '']);
+}
 
 function applyZoom() {
     $('sections').style.zoom = String(zoom);
@@ -33,12 +41,21 @@ function markWord(text, word) {
     return `${escapeHtml(text.slice(0, i))}<mark>${escapeHtml(text.slice(i, i + word.length))}</mark>${escapeHtml(text.slice(i + word.length))}`;
 }
 
-function section(title, {ai: isAi = false} = {}) {
+function section(title, {ai: isAi = false, onRegenerate = null} = {}) {
     const sec = document.createElement('section');
     sec.className = 'sec';
     sec.innerHTML = `<div class="sec-head"><span>${escapeHtml(title)}</span>${isAi ? icon('sparkle', 'sm') : ''}<span class="line"></span></div><div class="sec-body"></div>`;
     $('sections').append(sec);
-    return sec.querySelector('.sec-body');
+    const body = sec.querySelector('.sec-body');
+    if (onRegenerate) {
+        const b = document.createElement('button');
+        b.className = 'ghost icon';
+        b.title = 'Gerar de novo';
+        b.innerHTML = icon('refresh', 'sm');
+        b.addEventListener('click', () => onRegenerate(body));
+        sec.querySelector('.sec-head').append(b);
+    }
+    return body;
 }
 
 function shimmer() {
@@ -82,28 +99,32 @@ async function runExplain(target) {
     target.innerHTML = shimmer();
     const lookup = state;
     try {
-        const text = await explain(ai, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {
-            signal: lookup.abort.signal,
-            prompt: fillLanguages(ai.customPrompt, settings),
-            onChunk: (_d, full) => { if (state === lookup) { target.innerHTML = renderMarkdown(full); } },
-        });
+        const prompt = fillLanguages(ai.customPrompt, settings);
+        const key = aiKey('explain', prompt, lookup);
+        lookup.keys.add(key);
+        const text = await responses.run(key,
+            (signal, onChunk) => explain(ai, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
+            (_d, full) => { if (state === lookup) { target.innerHTML = renderMarkdown(full); } });
         if (state === lookup) {
             lookup.explanation = text;
             target.innerHTML = renderMarkdown(text);
         }
     } catch (e) {
-        if (state === lookup && !lookup.abort.signal.aborted) { target.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
+        if (state === lookup && e?.name !== 'AbortError') { target.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
     }
 }
 
-async function runCard(body) {
+async function runCard(body, force = false) {
     const lookup = state;
     body.innerHTML = shimmer();
     try {
-        const text = await explain({...ai, streamResponse: false}, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {
-            signal: lookup.abort.signal,
-            prompt: fillLanguages(ai.cardPrompt, settings),
-        });
+        const prompt = fillLanguages(ai.cardPrompt, settings);
+        const key = aiKey('card', prompt, lookup);
+        lookup.keys.add(key);
+        // The card is JSON, so it is shown once complete rather than streamed.
+        const text = await responses.run(key,
+            (signal) => explain({...ai, streamResponse: false}, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt}),
+            undefined, {force});
         if (state !== lookup) { return; }
         const card = parseCard(text);
         if (card) {
@@ -116,27 +137,29 @@ async function runCard(body) {
         void refreshAnkiButton();
         if (settings.saveWordsAutomatically && !lookup.savedId) { void saveWord(); }
     } catch (e) {
-        if (state === lookup && !lookup.abort.signal.aborted) { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
+        if (state === lookup && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
     }
 }
 
-async function runContext(body) {
+async function runContext(body, force = false) {
     const lookup = state;
     const p = lookup.payload;
     if (!p.sentence) { body.innerHTML = '<p class="hint">Sem frase de contexto nesta consulta.</p>'; return; }
     body.innerHTML = '<div class="shimmer w80"></div><div class="shimmer w60"></div>';
     try {
-        const text = await explain(ai, p.word, p.sentence, {
-            signal: lookup.abort.signal,
-            prompt: fillLanguages(ai.contextPrompt, settings),
-            onChunk: (_d, full) => { if (state === lookup) { body.innerHTML = `<div class="translation">${highlightStars(full)}</div>`; } },
-        });
+        const prompt = fillLanguages(ai.contextPrompt, settings);
+        const key = aiKey('context', prompt, lookup);
+        lookup.keys.add(key);
+        const text = await responses.run(key,
+            (signal, onChunk) => explain(ai, p.word, p.sentence, {signal, prompt, onChunk}),
+            (_d, full) => { if (state === lookup) { body.innerHTML = `<div class="translation">${highlightStars(full)}</div>`; } },
+            {force});
         if (state === lookup) {
             lookup.contextTranslation = text;
             body.innerHTML = `<div class="translation">${highlightStars(text)}</div>`;
         }
     } catch (e) {
-        if (state === lookup && !lookup.abort.signal.aborted) { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
+        if (state === lookup && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
     }
 }
 
@@ -280,13 +303,20 @@ async function onAnkiClick() {
 // ------------------------------------------------------------------ render
 
 async function render(payload) {
-    if (state && ai?.cancelPendingRequests !== false) { state.abort.abort(); }
     const all = await loadAllSettings();
     settings = all.settings;
     ai = all.ai;
     anki = all.anki;
     dicts = await api.listDictionaries();
-    state = {payload, abort: new AbortController()};
+    state = {payload, keys: new Set()};
+    if (ai.cancelPendingRequests !== false) {
+        // Keep a request for this same word and sentence running; drop the others.
+        responses.cancelPendingExcept(new Set([
+            aiKey('card', fillLanguages(ai.cardPrompt, settings)),
+            aiKey('context', fillLanguages(ai.contextPrompt, settings)),
+            aiKey('explain', fillLanguages(ai.customPrompt, settings)),
+        ]));
+    }
     $('sections').replaceChildren();
     $('sections').scrollTop = 0;
     $('query').value = payload.word || '';
@@ -309,7 +339,7 @@ async function render(payload) {
     let shown = 0;
     for (const d of dicts.filter((x) => x.enabled)) {
         if (d.kind === 'ai-word') {
-            const body = section('IA — palavra no contexto', {ai: true});
+            const body = section('IA — palavra no contexto', {ai: true, onRegenerate: aiReady ? (b) => void runCard(b, true) : null});
             shown++;
             if (!aiReady) {
                 body.innerHTML = '<p class="hint">Configure o seu provedor de IA em Dicionários › IA — palavra no contexto.</p>';
@@ -320,7 +350,7 @@ async function render(payload) {
                 body.querySelector('button').addEventListener('click', () => void runCard(body));
             }
         } else if (d.kind === 'ai-context' && aiReady && payload.sentence && payload.sentence.trim() !== payload.word) {
-            const body = section('Tradutor de contexto', {ai: true});
+            const body = section('Tradutor de contexto', {ai: true, onRegenerate: (b) => void runContext(b, true)});
             shown++;
             if (ai.autoGenerateOnLookup) {
                 void runContext(body);
