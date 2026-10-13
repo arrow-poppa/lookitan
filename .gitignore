@@ -1,0 +1,9 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/icons/
+src-tauri/resources/models/
+src-tauri/resources/ort/
+*.log
+.DS_Store

@@ -1,0 +1,15 @@
+[Desktop Entry]
+Categories={{categories}}
+Comment={{comment}}
+Exec={{exec}}
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name={{name}}
+Terminal=false
+Type=Application
+# Lets KWin hand the region around the pointer to Lookitan without a permission dialog.
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
+
+[Desktop Action scan]
+Name=Look up the word under the pointer
+Exec={{exec}} --scan

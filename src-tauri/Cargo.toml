@@ -1,0 +1,51 @@
+[package]
+name = "lookitan"
+version = "0.1.0"
+description = "OCR pop-up dictionary for Windows and Linux with bring-your-own-key AI"
+authors = ["arrow-poppa"]
+license = "GPL-3.0-only"
+repository = "https://github.com/arrow-poppa/lookitan"
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "lookitan_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2.4"
+tauri-plugin-single-instance = "2.5"
+tauri-plugin-dialog = "2.8"
+tauri-plugin-http = "2.8"
+tauri-plugin-opener = "2.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+parking_lot = "0.12"
+image = { version = "0.25", default-features = false, features = ["png"] }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24"] }
+xcap = "0.9.8"
+memmap2 = "0.9"
+flate2 = "1"
+encoding_rs = "0.8"
+ripemd = "0.1"
+prost = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "gzip"] }
+
+[target.'cfg(windows)'.dependencies]
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24", "directml"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5.17"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = true

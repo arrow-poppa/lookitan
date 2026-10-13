@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lookitan</title>
+    <link rel="stylesheet" href="/src/shared.css">
+    <link rel="stylesheet" href="/src/popup/popup.css">
+</head>
+<body>
+    <div id="app">
+        <header class="bar" data-tauri-drag-region>
+            <form id="search" autocomplete="off">
+                <input id="query" type="text" spellcheck="false" placeholder="Pesquisar palavra">
+            </form>
+            <div class="tools">
+                <button class="icon" id="zoom-out" title="Diminuir">A−</button>
+                <button class="icon" id="zoom-in" title="Aumentar">A+</button>
+                <button class="icon" id="pin" title="Fixar o popup">📌</button>
+                <button class="icon" id="settings" title="Configurações">⚙</button>
+                <button class="icon" id="close" title="Fechar (Esc)">✕</button>
+            </div>
+        </header>
+        <div id="meta" class="meta muted" data-tauri-drag-region></div>
+        <div id="notice" class="notice" hidden></div>
+        <main id="content">
+            <section id="context" class="context" hidden></section>
+            <section id="ai" class="card ai" hidden>
+                <div class="card-head">
+                    <span class="card-title">IA</span>
+                    <span id="ai-model" class="muted"></span>
+                    <span class="spacer"></span>
+                    <button class="icon" id="ai-explain" title="Explicação mais longa">Explicar</button>
+                    <button class="icon" id="ai-regen" title="Gerar de novo">↻</button>
+                    <button class="icon" id="ai-copy" title="Copiar">⧉</button>
+                </div>
+                <div id="ai-body" class="ai-body"></div>
+            </section>
+            <section id="entries"></section>
+            <section id="empty" class="empty" hidden></section>
+        </main>
+    </div>
+    <script type="module" src="/src/popup/main.js"></script>
+</body>
+</html>
