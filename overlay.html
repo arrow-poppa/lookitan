@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <title>Lookitan Overlay</title>
+    <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; cursor: default; }
+        #frame { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: fill; display: none; }
+        #shade { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.01); }
+        .w {
+            position: fixed;
+            border-radius: 4px;
+            box-shadow: inset 0 0 0 1px rgba(122, 162, 255, 0.55);
+            background: rgba(122, 162, 255, 0.07);
+            cursor: pointer;
+            transition: background 80ms;
+        }
+        .w:hover { background: rgba(122, 162, 255, 0.22); box-shadow: inset 0 0 0 1.5px rgba(122, 162, 255, 0.95); }
+        .w.sel { background: rgba(255, 214, 10, 0.28); box-shadow: inset 0 0 0 2px rgba(255, 196, 0, 0.95); }
+        #hint {
+            position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+            font: 12.5px system-ui, "Segoe UI", sans-serif; color: #fff;
+            background: rgba(20, 22, 26, 0.78); padding: 6px 12px; border-radius: 999px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <img id="frame" alt="">
+    <div id="shade"></div>
+    <div id="words"></div>
+    <div id="hint">Clique em outra palavra · Esc para fechar</div>
+    <script type="module" src="/src/overlay/main.js"></script>
+</body>
+</html>

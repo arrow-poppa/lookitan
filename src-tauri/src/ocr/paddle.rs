@@ -24,7 +24,8 @@ macro_rules! ortx {
 
 const DET_THRESH: f32 = 0.2;
 const UNCLIP_RATIO: f32 = 1.4;
-const DET_MAX_SIDE: f32 = 1280.0;
+/// Full-HD and QHD screens are detected at (almost) native size so small UI text survives.
+const DET_MAX_SIDE: f32 = 2048.0;
 const REC_HEIGHT: u32 = 48;
 
 #[derive(Clone, Copy, Debug)]
@@ -35,12 +36,38 @@ pub struct TextBox {
     pub y1: f32,
 }
 
+/// Splits detected boxes into the line under the pointer with its neighbours (recognized first,
+/// so the pop-up appears at once) and every other box (recognized afterwards for the overlay).
+pub fn split_focus(boxes: &[TextBox], fx: f32, fy: f32) -> (Vec<TextBox>, Vec<TextBox>) {
+    let Some(target) = boxes
+        .iter()
+        .copied()
+        .filter(|b| b.distance_to(fx, fy) <= 48.0)
+        .min_by(|a, b| a.distance_to(fx, fy).total_cmp(&b.distance_to(fx, fy)))
+    else {
+        return (Vec::new(), boxes.to_vec());
+    };
+    let h = target.height().max(4.0);
+    let near = |b: &TextBox| {
+        let overlap = b.x1.min(target.x1) - b.x0.max(target.x0);
+        let gap = if b.y0 > target.y1 { b.y0 - target.y1 } else if b.y1 < target.y0 { target.y0 - b.y1 } else { 0.0 };
+        overlap > 0.0 && gap <= 1.6 * h
+    };
+    let (mut focus, rest): (Vec<TextBox>, Vec<TextBox>) = boxes.iter().copied().partition(|b| near(b));
+    focus.sort_by(|a, b| a.distance_to(fx, fy).total_cmp(&b.distance_to(fx, fy)));
+    let mut rest = rest;
+    if focus.len() > 7 {
+        rest.extend(focus.split_off(7));
+    }
+    (focus, rest)
+}
+
 impl TextBox {
     fn height(&self) -> f32 {
         self.y1 - self.y0
     }
 
-    fn distance_to(&self, x: f32, y: f32) -> f32 {
+    pub fn distance_to(&self, x: f32, y: f32) -> f32 {
         let dx = if x < self.x0 { self.x0 - x } else if x > self.x1 { x - self.x1 } else { 0.0 };
         let dy = if y < self.y0 { self.y0 - y } else if y > self.y1 { y - self.y1 } else { 0.0 };
         (dx * dx + dy * dy).sqrt()
@@ -151,50 +178,25 @@ impl PaddleOcr {
         }
     }
 
-    /// Detects text boxes and recognizes the line under `focus` plus its neighbours (or every
-    /// line when `focus` is `None`).
-    pub fn recognize(&self, img: &RgbaImage, focus: Option<(f32, f32)>) -> Result<Vec<OcrLine>> {
+    /// Detects every text box, top to bottom.
+    pub fn detect_boxes(&self, img: &RgbaImage) -> Result<Vec<TextBox>> {
         let mut boxes = self.detect(img)?;
         boxes.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));
-        let chosen: Vec<TextBox> = match focus {
-            None => boxes.into_iter().take(48).collect(),
-            Some((fx, fy)) => {
-                let Some(target) = boxes
-                    .iter()
-                    .copied()
-                    .filter(|b| b.distance_to(fx, fy) <= 48.0)
-                    .min_by(|a, b| a.distance_to(fx, fy).total_cmp(&b.distance_to(fx, fy)))
-                else {
-                    return Ok(Vec::new());
-                };
-                let h = target.height().max(4.0);
-                let mut ctx: Vec<TextBox> = boxes
-                    .iter()
-                    .copied()
-                    .filter(|b| {
-                        let overlap = b.x1.min(target.x1) - b.x0.max(target.x0);
-                        let gap = if b.y0 > target.y1 { b.y0 - target.y1 } else if b.y1 < target.y0 { target.y0 - b.y1 } else { 0.0 };
-                        overlap > 0.0 && gap <= 1.6 * h
-                    })
-                    .collect();
-                ctx.sort_by(|a, b| a.y0.total_cmp(&b.y0));
-                ctx.truncate(6);
-                if !ctx.iter().any(|b| b.x0 == target.x0 && b.y0 == target.y0) {
-                    ctx.push(target);
-                }
-                ctx
-            }
-        };
-        let mut lines = Vec::with_capacity(chosen.len());
-        for b in chosen {
-            match self.recognize_box(img, b) {
+        Ok(boxes)
+    }
+
+    /// Recognizes the given boxes; boxes without readable text are dropped.
+    pub fn recognize_boxes(&self, img: &RgbaImage, boxes: &[TextBox]) -> Vec<OcrLine> {
+        let mut lines = Vec::with_capacity(boxes.len());
+        for b in boxes {
+            match self.recognize_box(img, *b) {
                 Ok(Some(line)) => lines.push(line),
                 Ok(None) => {}
                 Err(e) => log::warn!("recognition failed: {e:#}"),
             }
         }
         lines.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));
-        Ok(lines)
+        lines
     }
 
     fn detect(&self, img: &RgbaImage) -> Result<Vec<TextBox>> {

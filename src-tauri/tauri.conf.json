@@ -25,18 +25,34 @@
         "center": true
       },
       {
+        "label": "overlay",
+        "title": "Lookitan Overlay",
+        "url": "overlay.html",
+        "width": 800,
+        "height": 600,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false,
+        "focus": false,
+        "shadow": false
+      },
+      {
         "label": "popup",
         "title": "Lookitan",
         "url": "popup.html",
-        "width": 460,
-        "height": 540,
+        "width": 580,
+        "height": 520,
         "decorations": false,
+        "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": false,
         "resizable": true,
         "focus": false,
-        "shadow": true
+        "shadow": false
       }
     ],
     "security": {

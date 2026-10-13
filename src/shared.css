@@ -1,32 +1,46 @@
+/* Lookitan theme: dark by default (follows the system), light variant under prefers-color-scheme. */
 :root {
-    --bg: #f7f7f5;
-    --surface: #ffffff;
-    --surface-2: #f0f0ec;
-    --text: #1d1d1b;
-    --muted: #6b6b66;
-    --border: #e2e2dc;
-    --accent: #3a6df0;
-    --accent-ink: #ffffff;
-    --danger: #c0392b;
-    --ok: #2e8b57;
-    --radius: 10px;
-    --font: system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
-    color-scheme: light;
+    --bg: #1b1d22;
+    --bg-grad: radial-gradient(120% 90% at 0% 0%, #23283a 0%, #1b1d22 55%, #191a1e 100%);
+    --surface: #2a2c31;
+    --surface-2: #32353b;
+    --surface-3: #3a3d44;
+    --text: #f1f1f1;
+    --muted: #a9abb1;
+    --faint: #7c7f86;
+    --border: rgba(255, 255, 255, 0.07);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --accent: #8fd3ff;
+    --accent-strong: #60c0ff;
+    --accent-ink: #0b1a24;
+    --danger: #ff8f8f;
+    --ok: #6ccb8f;
+    --mark: rgba(222, 205, 70, 0.42);
+    --radius: 8px;
+    --radius-lg: 12px;
+    --font: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Noto Sans", sans-serif;
+    color-scheme: dark;
 }
 
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
     :root {
-        --bg: #17181a;
-        --surface: #1f2023;
-        --surface-2: #26282b;
-        --text: #ececea;
-        --muted: #9c9c97;
-        --border: #34363a;
-        --accent: #7aa2ff;
-        --accent-ink: #0b1020;
-        --danger: #ff7b6b;
-        --ok: #5fcf8f;
-        color-scheme: dark;
+        --bg: #f3f3f3;
+        --bg-grad: radial-gradient(120% 90% at 0% 0%, #e8edf8 0%, #f3f3f3 55%, #f1f1f1 100%);
+        --surface: #ffffff;
+        --surface-2: #f6f6f6;
+        --surface-3: #ececec;
+        --text: #1b1b1b;
+        --muted: #5f6066;
+        --faint: #8a8b90;
+        --border: rgba(0, 0, 0, 0.07);
+        --border-strong: rgba(0, 0, 0, 0.14);
+        --accent: #0a74c9;
+        --accent-strong: #005fa8;
+        --accent-ink: #ffffff;
+        --danger: #c42b1c;
+        --ok: #0f7b0f;
+        --mark: rgba(230, 200, 0, 0.35);
+        color-scheme: light;
     }
 }
 
@@ -37,33 +51,63 @@ html, body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font: 14px/1.45 var(--font);
+    font: 14px/1.43 var(--font);
 }
 
 button, input, select, textarea { font: inherit; color: inherit; }
 
 button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 5px 12px;
+    min-height: 32px;
     cursor: pointer;
 }
-button:hover { border-color: var(--muted); }
-button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-button.icon { padding: 4px 8px; line-height: 1; }
+button:hover:not(:disabled) { background: var(--surface-3); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+button.primary:hover:not(:disabled) { background: var(--accent-strong); }
+button.ghost { background: transparent; border-color: transparent; }
+button.ghost:hover:not(:disabled) { background: var(--surface-2); }
+button.icon { padding: 4px; min-height: 28px; min-width: 28px; justify-content: center; }
 
-input[type="text"], input[type="password"], input[type="number"], select, textarea {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px 10px;
+input[type="text"], input[type="password"], input[type="number"], input[type="url"], select, textarea {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-bottom-color: var(--faint);
+    border-radius: 6px;
+    padding: 5px 10px;
+    min-height: 32px;
     width: 100%;
 }
-textarea { resize: vertical; min-height: 72px; }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+textarea { resize: vertical; min-height: 76px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+input:focus, select:focus, textarea:focus { outline: none; border-bottom: 2px solid var(--accent); }
+
+svg.i { width: 18px; height: 18px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+svg.i.sm { width: 14px; height: 14px; }
+svg.i.lg { width: 24px; height: 24px; }
 
 .muted { color: var(--muted); }
+.faint { color: var(--faint); }
 .error { color: var(--danger); }
 .ok { color: var(--ok); }
-code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.92em; }
+code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 0.92em; }
+mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+
+/* Toggle switch */
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.switch input { display: none; }
+.switch .track { width: 40px; height: 20px; border-radius: 10px; border: 1px solid var(--muted); position: relative; transition: background 120ms; }
+.switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); transition: left 120ms, background 120ms; }
+.switch input:checked + .track { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + .track::after { left: 23px; background: var(--accent-ink); }
+.switch .label { min-width: 28px; text-align: right; color: var(--muted); }
+
+/* Segmented control */
+.segmented { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px; gap: 2px; }
+.segmented button { border: none; background: transparent; min-height: 30px; }
+.segmented button.on { background: var(--accent); color: var(--accent-ink); }

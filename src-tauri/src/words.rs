@@ -19,6 +19,53 @@ pub struct Pick {
     pub y1: f32,
 }
 
+/// A clickable word rectangle for the overlay, in image coordinates.
+#[derive(Clone, Debug, Serialize)]
+pub struct WordBox {
+    pub text: String,
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+/// Every word of every line as a rectangle. Runs of unspaced-script characters (CJK, Thai) form
+/// one rectangle; a click inside it still picks the longest dictionary match from the click point.
+pub fn word_boxes(lines: &[OcrLine]) -> Vec<WordBox> {
+    let mut out = Vec::new();
+    for line in lines {
+        let chars = &line.chars;
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i].ch;
+            let unspaced = is_unspaced_script(c);
+            if !(c.is_alphanumeric() || unspaced) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            i += 1;
+            while i < chars.len() {
+                let d = chars[i].ch;
+                let same = if unspaced { is_unspaced_script(d) } else { is_word_char(d) && !is_unspaced_script(d) };
+                if !same {
+                    break;
+                }
+                i += 1;
+            }
+            let mut end = i;
+            while end > start + 1 && !chars[end - 1].ch.is_alphanumeric() && !unspaced {
+                end -= 1;
+            }
+            let text: String = chars[start..end].iter().map(|c| c.ch).collect();
+            if !text.trim().is_empty() {
+                out.push(WordBox { text, x0: chars[start].x0, y0: line.y0, x1: chars[end - 1].x1, y1: line.y1 });
+            }
+        }
+    }
+    out
+}
+
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '\'' || c == '’' || c == '-' || c == '·'
 }

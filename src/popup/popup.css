@@ -1,40 +1,72 @@
-html, body { height: 100%; overflow: hidden; background: var(--surface); }
+html, body { height: 100%; overflow: hidden; background: transparent; }
 
-#app { display: flex; flex-direction: column; height: 100%; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-
-.bar { display: flex; gap: 6px; align-items: center; padding: 8px 8px 4px; background: var(--surface); }
-.bar form { flex: 1; }
-.bar input { font-size: 17px; font-weight: 600; border-color: transparent; background: var(--surface-2); }
-.tools { display: flex; gap: 2px; }
-.tools button { background: transparent; border-color: transparent; color: var(--muted); }
-.tools button:hover { color: var(--text); background: var(--surface-2); }
-#pin.on { color: var(--accent); }
-
-.meta { padding: 0 12px 6px; font-size: 11.5px; min-height: 16px; }
-.notice { margin: 0 8px 6px; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); font-size: 12.5px; }
-
-#content { flex: 1; overflow-y: auto; padding: 0 8px 10px; }
-
-.context { margin: 0 4px 8px; padding: 6px 10px; border-left: 3px solid var(--border); color: var(--muted); font-size: 13px; }
-.context mark { background: transparent; color: var(--text); font-weight: 600; }
-
-.card { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; background: var(--surface); overflow: hidden; }
-.card-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--surface-2); font-size: 12.5px; }
-.card-title { font-weight: 600; }
-.card-head .spacer { flex: 1; }
-.card-head button { background: transparent; border-color: transparent; padding: 2px 6px; font-size: 12px; color: var(--muted); }
-.card-head button:hover { color: var(--text); }
-
-.ai-body { padding: 8px 12px; font-size: 14px; }
-.ai-body p { margin: 0 0 6px; }
-.ai-body ul { margin: 0 0 6px; padding-left: 20px; }
-.ai-body.loading::after { content: "…"; animation: blink 1s steps(2) infinite; }
-@keyframes blink { 50% { opacity: 0; } }
-
-.entry iframe { display: block; width: 100%; height: 120px; border: 0; background: #fff; }
-@media (prefers-color-scheme: dark) {
-    .entry iframe { filter: invert(0.92) hue-rotate(180deg); }
+.card {
+    position: absolute;
+    inset: 6px;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
 }
 
-.empty { padding: 24px 12px; text-align: center; color: var(--muted); }
-.empty strong { display: block; color: var(--text); margin-bottom: 4px; }
+.top { display: flex; align-items: center; gap: 2px; padding: 8px 10px 0 16px; min-height: 40px; }
+.top .spacer { flex: 1; align-self: stretch; }
+.top form { flex: 1; margin-right: 8px; }
+.top button { color: var(--muted); }
+.top button:hover { color: var(--text); }
+.top button.on { color: var(--accent); }
+#btn-save .i, #btn-anki .i { width: 20px; height: 20px; }
+
+.notice { margin: 4px 16px; padding: 6px 10px; border-radius: 6px; background: var(--surface-2); font-size: 12.5px; color: var(--muted); }
+
+#sections { flex: 1; overflow-y: auto; padding: 0 26px 14px 30px; }
+
+.sec { margin-top: 10px; }
+.sec-head { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 15px; margin: 6px 0 8px; }
+.sec-head .line { flex: 1; height: 1px; background: var(--border-strong); }
+.sec-head .i { color: var(--muted); }
+
+.hw { display: flex; align-items: center; gap: 10px; }
+.hw .word { font-size: 26px; font-weight: 600; line-height: 1.2; }
+.hw button { color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 10px; }
+.chip { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--surface-3); color: var(--text); }
+.ipa { color: var(--muted); font-size: 14px; }
+.cefr { font-size: 11.5px; font-weight: 700; padding: 1px 7px; border-radius: 4px; color: #fff; background: #7a5cff; }
+.cefr.a1, .cefr.a2 { background: #2e9e5b; }
+.cefr.b1, .cefr.b2 { background: #2f7fd6; }
+.cefr.c1, .cefr.c2 { background: #8a3ffc; }
+.term { font-weight: 600; font-size: 15px; }
+.tr { font-weight: 600; font-size: 15px; color: var(--accent); cursor: default; }
+.tr.hidden-tr { filter: blur(6px); cursor: pointer; user-select: none; }
+.def { margin: 4px 0 8px; font-size: 15px; line-height: 1.5; }
+.ai-text p { margin: 0 0 6px; font-size: 14.5px; line-height: 1.5; }
+.ai-text ul { margin: 0 0 6px; padding-left: 20px; }
+.explain-btn { margin: 2px 0 10px; color: var(--muted); }
+.explanation { margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; background: var(--surface-2); }
+
+details.ctx { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); margin-bottom: 4px; }
+details.ctx summary { list-style: none; cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: 13px; display: flex; align-items: center; }
+details.ctx summary::-webkit-details-marker { display: none; }
+details.ctx summary::after { content: ""; margin-left: auto; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); }
+details.ctx[open] summary::after { transform: rotate(225deg); }
+details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px; }
+
+.translation { font-size: 15px; line-height: 1.5; }
+.hint { color: var(--muted); font-size: 13px; }
+
+.shimmer { height: 12px; border-radius: 6px; margin: 8px 0; background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: sh 1.2s infinite linear; }
+.shimmer.w60 { width: 60%; } .shimmer.w80 { width: 80%; } .shimmer.w40 { width: 40%; height: 22px; }
+@keyframes sh { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+.entry iframe { display: block; width: 100%; height: 120px; border: 0; background: #fff; border-radius: 6px; margin-bottom: 8px; }
+@media (prefers-color-scheme: dark) {
+    .entry iframe { filter: invert(0.9) hue-rotate(180deg); }
+}
+
+.empty { padding: 30px 8px; text-align: center; color: var(--muted); }
+.empty strong { display: block; color: var(--text); margin-bottom: 4px; font-size: 15px; }
+.meta { padding: 4px 16px 8px; font-size: 11px; color: var(--faint); min-height: 18px; }

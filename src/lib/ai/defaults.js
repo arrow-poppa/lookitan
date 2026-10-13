@@ -1,13 +1,17 @@
-// Default AI options, matching the `ai` object of yomitan-byok-ai's options schema.
+// Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
+// for the word card and the context translator.
 
-export const DEFAULT_PROMPT =
-    "Explain the meaning of '{{target}}' in the following sentence: '{{sentence}}'. " +
-    "Provide a concise explanation focusing on the word's usage and meaning in this specific context.";
+import {CARD_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT} from './word-card.js';
+
+/** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
+export const DEFAULT_PROMPT = EXPLAIN_PROMPT;
 
 export function defaultAiOptions() {
     return {
         provider: 'openai',
         customPrompt: DEFAULT_PROMPT,
+        cardPrompt: CARD_PROMPT,
+        contextPrompt: CONTEXT_PROMPT,
         systemPrompt: '',
         autoGenerateOnLookup: true,
         streamResponse: true,
@@ -44,6 +48,9 @@ export function normalizeAiOptions(stored) {
     const out = {...base, ...stored};
     for (const key of ['openai', 'gemini', 'deepseek', 'custom']) {
         out[key] = {...base[key], ...(typeof stored[key] === 'object' && stored[key] !== null ? stored[key] : {})};
+    }
+    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt']) {
+        if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
     }
     return out;
 }

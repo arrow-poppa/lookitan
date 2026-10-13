@@ -1,0 +1,100 @@
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; background: var(--bg-grad), var(--bg); overflow: hidden; }
+
+.topbar { display: flex; align-items: center; gap: 22px; padding: 14px 24px 10px; }
+.logo { width: 30px; height: 30px; }
+.tabs { display: flex; gap: 6px; }
+.tabs button { background: transparent; border: none; font-size: 15px; padding: 6px 12px; position: relative; color: var(--muted); }
+.tabs button:hover { background: var(--surface); }
+.tabs button.on { color: var(--text); }
+.tabs button.on::after { content: ""; position: absolute; left: 50%; bottom: -2px; width: 18px; height: 3px; border-radius: 2px; background: var(--accent); transform: translateX(-50%); }
+.save-state { margin-left: auto; font-size: 12px; color: var(--faint); }
+
+.tab { flex: 1; min-height: 0; padding: 8px 24px 24px; display: flex; flex-direction: column; }
+.tab.scroll { overflow-y: auto; }
+.scroll { overflow-y: auto; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(280px, 42%) 1fr; overflow: hidden; }
+.split.dicts { grid-template-columns: minmax(300px, 38%) 1fr; }
+.pane { min-height: 0; overflow-y: auto; }
+.list-pane { padding: 16px; border-right: 1px solid var(--border); }
+.detail-pane { padding: 24px 28px; background: var(--surface-2); }
+
+.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+.toolbar input { max-width: 420px; }
+.toolbar select { width: auto; }
+.toolbar .spacer { flex: 1; }
+
+.caption { color: var(--muted); font-size: 13px; margin: 18px 4px 8px; }
+.empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 6px; color: var(--muted); padding: 24px; }
+.empty strong { color: var(--text); font-size: 15px; }
+.empty .i { width: 34px; height: 34px; color: var(--muted); margin-bottom: 4px; }
+
+/* Dictionary list */
+.dict-list { list-style: none; margin: 0; padding: 0; }
+.dict-list li { display: flex; align-items: center; gap: 10px; padding: 12px 12px; border-radius: 6px; cursor: pointer; position: relative; }
+.dict-list li:hover { background: var(--surface-2); }
+.dict-list li.sel { background: var(--surface-2); }
+.dict-list li.sel::before { content: ""; position: absolute; left: 0; top: 30%; height: 40%; width: 3px; border-radius: 2px; background: var(--accent); }
+.dict-list li.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+.dict-list .num { width: 16px; color: var(--muted); font-size: 13px; text-align: right; }
+.dict-list .name { flex: 1; min-width: 0; }
+.dict-list .err { color: var(--danger); display: inline-flex; }
+
+/* Detail pane typography */
+.detail-pane h2 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+.detail-pane .lead { color: var(--muted); margin: 0 0 22px; max-width: 760px; }
+.detail-pane h3 { font-size: 15px; margin: 22px 0 10px; }
+
+/* Settings column and cards */
+.settings-col { width: min(1190px, 100%); margin: 0 auto; padding-bottom: 40px; }
+.settings-col h3 { font-size: 15px; font-weight: 600; margin: 26px 0 10px; }
+.settings-col h3:first-child { margin-top: 10px; }
+.group { display: flex; flex-direction: column; gap: 4px; }
+.card-row { display: flex; align-items: center; gap: 16px; min-height: 72px; padding: 14px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.detail-pane .card-row { background: var(--surface-3); }
+.card-row .ico { color: var(--text); display: inline-flex; width: 24px; justify-content: center; }
+.card-row .ico .i { width: 22px; height: 22px; }
+.card-row .txt { flex: 1; min-width: 0; }
+.card-row .t { font-size: 14.5px; }
+.card-row .d { color: var(--muted); font-size: 12.5px; }
+.card-row .ctl { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.card-row .ctl.wide { width: min(450px, 48%); }
+.card-row .ctl select, .card-row .ctl input { min-width: 220px; }
+.card-row.stack { flex-direction: column; align-items: stretch; }
+.card-row.stack .head { display: flex; align-items: center; gap: 16px; }
+.sub { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 2px 40px; }
+.sub label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+
+/* Hotkey boxes */
+.hotkey { display: flex; align-items: center; gap: 10px; width: min(450px, 100%); padding: 0 6px 0 12px; min-height: 40px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border-strong); cursor: pointer; }
+.hotkey.capturing { outline: 2px solid var(--accent); }
+.hotkey .val { flex: 1; }
+.hotkey .val.placeholder { color: var(--muted); }
+
+/* Profiles */
+.profiles { display: flex; flex-direction: column; }
+.profile { display: flex; align-items: center; gap: 14px; padding: 10px 20px 10px 20px; border-top: 1px solid var(--border); }
+.profile .badge { width: 28px; height: 28px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; background: var(--surface-3); font-weight: 600; }
+.profile .names { flex: 1; min-width: 0; }
+.profile .names .x { font-size: 12.5px; color: var(--muted); }
+.profile select { width: 200px; }
+.check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+
+/* Anki fields table */
+.fields-table { width: 100%; border-collapse: collapse; }
+.fields-table td { padding: 4px 6px 4px 0; vertical-align: middle; }
+.fields-table td:first-child { width: 30%; color: var(--muted); }
+
+/* Words */
+.word-item { padding: 10px 12px; border-radius: 6px; cursor: pointer; }
+.word-item:hover, .word-item.sel { background: var(--surface-2); }
+.word-item .w { font-weight: 600; }
+.word-item .tr { color: var(--muted); font-size: 13px; }
+.word-detail dl { display: grid; grid-template-columns: 170px 1fr; gap: 8px 14px; margin: 0; }
+.word-detail dt { color: var(--muted); }
+.word-detail dd { margin: 0; }
+.word-detail img { max-width: 100%; border-radius: 6px; margin-top: 12px; border: 1px solid var(--border); }
+.actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+.note { color: var(--muted); font-size: 12.5px; }

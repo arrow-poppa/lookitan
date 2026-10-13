@@ -1,8 +1,9 @@
 // KDE Plasma (Wayland) support, after the approach of MaruPop (LGPL-3.0, (c) 2026 marunine):
-//  * a KWin script relays the global pointer position to Lookitan over D-Bus, because no
-//    Wayland protocol reports the pointer to a client that does not have focus;
-//  * org.kde.KWin.ScreenShot2.CaptureArea returns the region around the pointer without a
-//    permission dialog when the installed .desktop file declares the restricted interface.
+//  * a KWin script relays the global pointer position, the screen under it and the active
+//    window to Lookitan over D-Bus, because no Wayland protocol reports the pointer to a client
+//    that does not have focus;
+//  * org.kde.KWin.ScreenShot2.CaptureArea returns pixels without a permission dialog when the
+//    installed .desktop file declares the restricted interface.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -13,6 +14,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use image::RgbaImage;
 use parking_lot::Mutex;
+use serde::Deserialize;
 use zbus::zvariant::{Fd, OwnedValue, Value};
 
 use super::Capture;
@@ -21,14 +23,23 @@ pub const BUS_NAME: &str = "io.github.arrowpoppa.Lookitan";
 const SCRIPT_NAME: &str = "lookitancursor";
 const SCRIPT: &str = include_str!("../../resources/kwin/lookitan-cursor.js");
 
-struct CursorState {
-    x: f64,
-    y: f64,
-    scale: f64,
-    at: Instant,
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Report {
+    pub x: f64,
+    pub y: f64,
+    pub screen: String,
+    pub scale: f64,
+    pub sx: f64,
+    pub sy: f64,
+    pub sw: f64,
+    pub sh: f64,
+    pub app_class: String,
+    pub app_pid: u32,
+    pub app_title: String,
 }
 
-static CURSOR: Mutex<Option<CursorState>> = Mutex::new(None);
+static LATEST: Mutex<Option<(Report, Instant)>> = Mutex::new(None);
 static TRACK_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 static CONNECTION: OnceLock<zbus::blocking::Connection> = OnceLock::new();
 
@@ -36,29 +47,28 @@ struct CursorSink;
 
 #[zbus::interface(name = "io.github.arrowpoppa.Lookitan.CursorSink")]
 impl CursorSink {
-    /// Called by the KWin script. Values arrive as strings so the D-Bus signature is fixed no
-    /// matter how JavaScript chooses to marshal each number. Returns whether to report fast.
-    fn update(&self, x: String, y: String, _screen: String, scale: String, _sent_at: String) -> bool {
-        if let (Ok(x), Ok(y)) = (x.parse::<f64>(), y.parse::<f64>()) {
-            let scale = scale.parse::<f64>().unwrap_or(1.0);
-            *CURSOR.lock() = Some(CursorState { x, y, scale, at: Instant::now() });
+    /// Called by the KWin script with one JSON report. Returns whether to report fast.
+    fn update(&self, report: String) -> bool {
+        match serde_json::from_str::<Report>(&report) {
+            Ok(r) => *LATEST.lock() = Some((r, Instant::now())),
+            Err(e) => log::debug!("bad cursor report: {e}"),
         }
         let until = *TRACK_UNTIL.lock();
         until.map(|t| Instant::now() < t).unwrap_or(false)
     }
 }
 
-pub fn latest_cursor() -> Option<(f64, f64)> {
-    let c = CURSOR.lock();
-    let c = c.as_ref()?;
-    if c.at.elapsed() > Duration::from_secs(600) {
+pub fn latest() -> Option<Report> {
+    let guard = LATEST.lock();
+    let (r, at) = guard.as_ref()?;
+    if at.elapsed() > Duration::from_secs(600) {
         return None;
     }
-    Some((c.x, c.y))
+    Some(r.clone())
 }
 
-pub fn latest_scale() -> f64 {
-    CURSOR.lock().as_ref().map(|c| c.scale).unwrap_or(1.0)
+pub fn latest_cursor() -> Option<(f64, f64)> {
+    latest().map(|r| (r.x, r.y))
 }
 
 /// Asks the relay to report at its fast rate for a few seconds (around a lookup).
@@ -131,15 +141,22 @@ fn get_u32(map: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
     map.get(key).and_then(|v| u32::try_from(v).ok())
 }
 
-/// Captures a region centred on (cx, cy), in KWin's logical coordinates, at native resolution.
-pub fn capture_area(cx: f64, cy: f64, width: u32, height: u32) -> Result<Capture> {
+/// The screen under the pointer, in KWin's logical coordinates.
+pub fn screen_rect() -> Option<(f64, f64, f64, f64)> {
+    let r = latest()?;
+    if r.sw > 0.0 && r.sh > 0.0 {
+        Some((r.sx, r.sy, r.sw, r.sh))
+    } else {
+        None
+    }
+}
+
+/// Captures an area in KWin's logical coordinates at native resolution.
+pub fn capture_rect(x: i32, y: i32, width: u32, height: u32) -> Result<Capture> {
     let conn = match CONNECTION.get() {
         Some(c) => c.clone(),
         None => zbus::blocking::Connection::session()?,
     };
-    let x = (cx - width as f64 / 2.0).max(0.0).round() as i32;
-    let y = (cy - height as f64 / 2.0).max(0.0).round() as i32;
-
     let (mut reader, writer) = std::io::pipe()?;
     let read_thread = std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -181,6 +198,6 @@ pub fn capture_area(cx: f64, cy: f64, width: u32, height: u32) -> Result<Capture
         }
     }
     let image = RgbaImage::from_raw(w, h, rgba).ok_or_else(|| anyhow!("bad image buffer"))?;
-    let scale = if width > 0 { w as f64 / width as f64 } else { latest_scale() };
+    let scale = if width > 0 { w as f64 / width as f64 } else { 1.0 };
     Ok(Capture { image, origin_x: x as f64, origin_y: y as f64, scale })
 }

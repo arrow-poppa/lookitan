@@ -3,178 +3,57 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Lookitan — Configurações</title>
+    <title>Lookitan</title>
     <link rel="stylesheet" href="/src/shared.css">
-    <link rel="stylesheet" href="/src/settings/settings.css">
+    <link rel="stylesheet" href="/src/main/main.css">
 </head>
 <body>
-    <div class="layout">
-        <nav class="sidebar">
-            <div class="brand">Lookitan</div>
-            <button data-tab="general" class="active">Geral</button>
-            <button data-tab="ocr">OCR</button>
+    <header class="topbar">
+        <img class="logo" src="/app-icon.svg" alt="">
+        <nav class="tabs">
+            <button data-tab="words">Palavras</button>
             <button data-tab="dicts">Dicionários</button>
-            <button data-tab="ai">IA</button>
-            <button data-tab="about">Sobre</button>
-            <div class="save-state muted" id="save-state"></div>
+            <button data-tab="settings">Configurações</button>
         </nav>
-        <main>
-            <!-- Geral -->
-            <section class="tab" id="tab-general">
-                <h1>Geral</h1>
-                <div class="field">
-                    <label>Atalho de consulta</label>
-                    <div class="row">
-                        <input id="hotkey" type="text" readonly placeholder="Clique e pressione as teclas">
-                        <button id="hotkey-clear">Remover</button>
-                    </div>
-                    <p class="hint">Aponte o mouse para uma palavra em qualquer janela e pressione o atalho.</p>
-                </div>
-                <div class="field" id="wayland-hint" hidden>
-                    <label>KDE Plasma (Wayland)</label>
-                    <p class="hint">No Wayland, atalhos globais de apps XWayland só funcionam com o app em foco. Crie um atalho em
-                        <em>Configurações do Sistema › Atalhos › Adicionar novo › Comando</em> com o comando:</p>
-                    <div class="row"><input type="text" readonly value="lookitan --scan" id="scan-cmd"><button id="copy-cmd">Copiar</button></div>
-                </div>
-                <div class="field">
-                    <label>Área capturada em volta do cursor</label>
-                    <div class="row">
-                        <input id="cap-w" type="number" min="200" max="3000" step="10"> <span class="muted">×</span>
-                        <input id="cap-h" type="number" min="60" max="1500" step="10"> <span class="muted">px</span>
-                    </div>
-                    <p class="hint">Área maior dá mais contexto para a IA; área menor deixa o OCR mais rápido.</p>
-                </div>
-            </section>
+        <span class="save-state" id="save-state"></span>
+    </header>
 
-            <!-- OCR -->
-            <section class="tab" id="tab-ocr" hidden>
-                <h1>OCR</h1>
-                <div class="field">
-                    <label>Motor de OCR</label>
-                    <label class="choice"><input type="radio" name="engine" value="paddle"> <span><strong>PP-OCRv6 (local)</strong><br><span class="muted">Roda no seu PC, na GPU (DirectML) ou CPU. Nada sai do computador.</span></span></label>
-                    <label class="choice"><input type="radio" name="engine" value="lens"> <span><strong>Google Lens (nuvem)</strong><br><span class="muted">Envia a área capturada ao Google. API não oficial: pode mudar ou parar sem aviso. Se falhar, o PP-OCRv6 assume.</span></span></label>
-                </div>
-                <div class="field" id="lens-key-field">
-                    <label>Chave da API do Google Lens</label>
-                    <input id="lens-key" type="password" placeholder="x-goog-api-key" autocomplete="off">
-                    <p class="hint">O Lookitan não vem com chave embutida. Usada só quando o motor é o Google Lens.</p>
-                </div>
-                <div class="field">
-                    <label>Idioma do texto na tela</label>
-                    <select id="ocr-lang"></select>
-                    <p class="hint">Define o modelo de reconhecimento (mesma tabela do Lookupper).</p>
-                </div>
-                <div class="field" id="gpu-field">
-                    <label class="check"><input type="checkbox" id="use-gpu"> Usar a placa de vídeo (DirectML)</label>
-                </div>
-                <div class="field">
-                    <label>Estado do motor</label>
-                    <div id="engine-status" class="status-box muted">Carregando…</div>
-                </div>
-            </section>
+    <!-- Palavras -->
+    <section class="tab" id="tab-words" hidden>
+        <div class="toolbar">
+            <input id="words-search" type="text" placeholder="Pesquisar palavras, traduções, contexto…">
+            <select id="words-sort">
+                <option value="newest">Mais recentes primeiro</option>
+                <option value="oldest">Mais antigas primeiro</option>
+                <option value="az">A–Z</option>
+            </select>
+            <span class="spacer"></span>
+            <button id="anki-sync"><i data-icon="sync"></i>Sincronizar com o Anki</button>
+            <button id="words-export"><i data-icon="export"></i>Exportar</button>
+        </div>
+        <div class="split panel">
+            <div class="pane list-pane" id="words-list"></div>
+            <div class="pane detail-pane" id="words-detail"></div>
+        </div>
+    </section>
 
-            <!-- Dicionários -->
-            <section class="tab" id="tab-dicts" hidden>
-                <h1>Dicionários</h1>
-                <p class="hint">Formato MDict (.mdx). Os arquivos .mdd e .css com o mesmo nome, na mesma pasta, são carregados junto. A ordem da lista é a ordem no popup.</p>
-                <div class="row"><button class="primary" id="add-dict">Adicionar dicionário…</button></div>
-                <ul id="dict-list" class="dict-list"></ul>
-            </section>
+    <!-- Dicionários -->
+    <section class="tab" id="tab-dicts" hidden>
+        <div class="split panel dicts">
+            <div class="pane list-pane">
+                <button id="add-dict"><i data-icon="plus"></i>Adicionar dicionário</button>
+                <div class="caption">Ordem no popup</div>
+                <ol id="dict-list" class="dict-list"></ol>
+            </div>
+            <div class="pane detail-pane scroll" id="dict-detail"></div>
+        </div>
+    </section>
 
-            <!-- IA -->
-            <section class="tab" id="tab-ai" hidden>
-                <h1>IA (sua chave, seu modelo)</h1>
-                <div class="field">
-                    <label>Provedor</label>
-                    <select id="ai-provider">
-                        <option value="openai">OpenAI</option>
-                        <option value="gemini">Google Gemini</option>
-                        <option value="deepseek">DeepSeek</option>
-                        <option value="custom">Personalizado (compatível com OpenAI: OpenRouter, Ollama, LM Studio…)</option>
-                    </select>
-                </div>
-                <div class="field" data-show="custom">
-                    <label>Endpoint</label>
-                    <input id="ai-endpoint" type="text" placeholder="https://openrouter.ai/api/v1/chat/completions">
-                </div>
-                <div class="field">
-                    <label>Chave da API</label>
-                    <input id="ai-key" type="password" autocomplete="off">
-                </div>
-                <div class="field">
-                    <label>Modelo</label>
-                    <input id="ai-model" type="text" list="ai-models">
-                    <datalist id="ai-models"></datalist>
-                </div>
-                <div class="field" data-show="gemini">
-                    <label>Nível de raciocínio (Gemini 3)</label>
-                    <select id="ai-gemini-thinking">
-                        <option value="">Padrão do modelo</option>
-                        <option>MINIMAL</option><option>LOW</option><option>MEDIUM</option><option>HIGH</option>
-                    </select>
-                </div>
-                <div class="field" data-show="deepseek custom">
-                    <label>Raciocínio (thinking)</label>
-                    <div class="row">
-                        <select id="ai-thinking-mode">
-                            <option value="">Padrão</option><option value="enabled">Ligado</option><option value="disabled">Desligado</option>
-                        </select>
-                        <select id="ai-thinking-intensity">
-                            <option value="">Intensidade padrão</option><option value="high">Alta</option><option value="max">Máxima</option>
-                            <option value="custom" data-only="custom">Personalizada</option>
-                        </select>
-                    </div>
-                    <input id="ai-thinking-custom" data-show="custom" type="text" placeholder='Intensidade personalizada, ex.: {"effort":"medium"} ou 4096'>
-                </div>
-                <div class="field" data-show="custom">
-                    <label>Roteamento de provedores (OpenRouter)</label>
-                    <div class="row">
-                        <select id="ai-routing">
-                            <option value="">Sem roteamento</option><option value="order">Ordem</option><option value="only">Somente</option><option value="ignore">Ignorar</option>
-                        </select>
-                        <input id="ai-slugs" type="text" placeholder="slugs separados por vírgula">
-                    </div>
-                    <label class="check"><input type="checkbox" id="ai-fallbacks"> Permitir outros provedores se os escolhidos falharem</label>
-                </div>
-                <div class="field" data-show="custom">
-                    <label>JSON extra no corpo da requisição</label>
-                    <textarea id="ai-body-json" spellcheck="false" placeholder='{"top_p": 0.9}'></textarea>
-                </div>
-                <div class="field">
-                    <label>Prompt personalizado</label>
-                    <textarea id="ai-prompt" rows="4"></textarea>
-                    <p class="hint">Variáveis: <code>{{target}}</code> (a palavra) e <code>{{sentence}}</code> (a frase lida na tela). <button class="link" id="ai-prompt-reset">Restaurar padrão</button></p>
-                </div>
-                <div class="field">
-                    <label>System prompt</label>
-                    <textarea id="ai-system" rows="3" placeholder="Opcional. Ex.: Responda em português, de forma curta."></textarea>
-                </div>
-                <div class="field">
-                    <label>Temperatura <span id="ai-temp-value" class="muted"></span></label>
-                    <input id="ai-temp" type="range" min="0" max="2" step="0.05">
-                </div>
-                <div class="field checks">
-                    <label class="check"><input type="checkbox" id="ai-auto"> Gerar automaticamente ao abrir o popup</label>
-                    <label class="check"><input type="checkbox" id="ai-stream"> Mostrar a resposta enquanto é gerada (streaming)</label>
-                    <label class="check"><input type="checkbox" id="ai-cancel"> Cancelar pedidos pendentes ao consultar outra palavra</label>
-                    <label class="check"><input type="checkbox" id="ai-fallback"> Usar a IA quando a palavra não estiver nos dicionários</label>
-                </div>
-                <div class="field">
-                    <div class="row"><button id="ai-test">Testar</button><span id="ai-test-result" class="muted"></span></div>
-                </div>
-            </section>
+    <!-- Configurações -->
+    <section class="tab scroll" id="tab-settings" hidden>
+        <div class="settings-col" id="settings-col"></div>
+    </section>
 
-            <!-- Sobre -->
-            <section class="tab" id="tab-about" hidden>
-                <h1>Sobre</h1>
-                <p><strong>Lookitan</strong> <span id="version" class="muted"></span> — dicionário popup com OCR para Windows e Linux.</p>
-                <p class="hint">Licença GPL-3.0. Camada BYOK portada de <code>arrow-poppa/yomitan-byok-ai</code> (Yomitan, GPL-3.0).
-                    Integração com KWin baseada no MaruPop (LGPL-3.0). OCR com modelos PaddleOCR PP-OCRv6/PP-OCRv5 (Apache-2.0) no ONNX Runtime (MIT).
-                    Cliente opcional do Google Lens baseado no YomiNinja (GPL-3.0) e nos protocolos do Chromium (BSD).</p>
-                <p class="hint">O Lookitan reproduz o comportamento do Lookupper com código próprio; não contém código, marca ou recursos do Lookupper.</p>
-            </section>
-        </main>
-    </div>
-    <script type="module" src="/src/settings/main.js"></script>
+    <script type="module" src="/src/main/main.js"></script>
 </body>
 </html>

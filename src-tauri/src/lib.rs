@@ -4,6 +4,7 @@
 // This program is free software: you can redistribute it and/or modify it under the terms of the
 // GNU General Public License version 3 as published by the Free Software Foundation.
 
+mod cards;
 mod dict;
 mod mdict;
 mod ocr;
@@ -13,29 +14,49 @@ mod settings;
 mod words;
 
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
+use base64::Engine;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
+use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::cards::CardStore;
 use crate::dict::{DictList, Dictionary, EntryRef};
 use crate::ocr::lens::LensOcr;
-use crate::ocr::paddle::PaddleOcr;
-use crate::platform::SessionKind;
-use crate::settings::{DictionaryConfig, OcrEngineKind, Settings};
+use crate::ocr::paddle::{split_focus, PaddleOcr, TextBox};
+use crate::ocr::OcrLine;
+use crate::platform::{Capture, ForegroundApp, SessionKind};
+use crate::settings::{AppProfile, DictionaryConfig, DictionaryKind, FreezeMode, OcrEngineKind, OcrScope, Settings};
+
+/// The last OCR pass: what the overlay shows and what clicks on it look up.
+struct Recognition {
+    id: u64,
+    capture: Capture,
+    lines: Vec<OcrLine>,
+    /// Lines around the first word, used for the "sentence" screenshot.
+    focus_lines: Vec<OcrLine>,
+    /// Monitor of the overlay: desktop x, y (physical), and its scale factor.
+    monitor: (f64, f64, f64),
+    app: Option<ForegroundApp>,
+    frozen_pid: Option<u32>,
+    freeze_frame: bool,
+    engine: String,
+    ocr_ms: u64,
+}
 
 pub struct AppState {
     config_dir: PathBuf,
-    data_dir: PathBuf,
     resource_dir: PathBuf,
     pub settings: RwLock<Settings>,
     pub dicts: RwLock<DictList>,
@@ -44,6 +65,9 @@ pub struct AppState {
     engine_error: RwLock<Option<String>>,
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
     lens: Mutex<Option<Arc<LensOcr>>>,
+    recognition: Mutex<Option<Recognition>>,
+    recognition_seq: AtomicU64,
+    pub cards: CardStore,
     busy: AtomicBool,
     pinned: AtomicBool,
 }
@@ -60,6 +84,29 @@ pub struct LookupPayload {
     pub notice: Option<String>,
     pub error: Option<String>,
     pub manual: bool,
+    pub app: Option<ForegroundApp>,
+    pub recognition: Option<u64>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct OverlayWord {
+    text: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct OverlayPayload {
+    id: u64,
+    words: Vec<OverlayWord>,
+    /// Desktop rectangle (CSS px of the overlay) of the selected word.
+    selected: Option<OverlayWord>,
+    frame_url: Option<String>,
+    complete: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -79,6 +126,7 @@ pub struct EngineStatus {
 #[serde(rename_all = "camelCase")]
 pub struct DictInfo {
     pub id: String,
+    pub kind: DictionaryKind,
     pub name: String,
     pub path: String,
     pub enabled: bool,
@@ -168,8 +216,7 @@ fn load_dictionaries(state: &AppState) {
     let configs: Vec<DictionaryConfig> = state.settings.read().dictionaries.clone();
     let mut loaded: DictList = Vec::new();
     let mut errors = HashMap::new();
-    for c in configs.iter().filter(|c| c.enabled) {
-        // Reuse dictionaries that are already open.
+    for c in configs.iter().filter(|c| c.enabled && c.kind == DictionaryKind::Mdict) {
         if let Some(d) = state.dicts.read().iter().find(|d| d.id == c.id) {
             loaded.push(d.clone());
             continue;
@@ -197,10 +244,11 @@ fn dictionary_infos(state: &AppState) -> Vec<DictInfo> {
             let d = dicts.iter().find(|d| d.id == c.id);
             DictInfo {
                 id: c.id.clone(),
+                kind: c.kind,
                 name: d.map(|d| d.name.clone()).unwrap_or_else(|| c.name.clone()),
                 path: c.path.clone(),
                 enabled: c.enabled,
-                loaded: d.is_some(),
+                loaded: d.is_some() || c.kind != DictionaryKind::Mdict,
                 entries: d.map(|d| d.mdx.len()).unwrap_or(0),
                 resource_files: d.map(|d| d.mdds.len()).unwrap_or(0),
                 error: errors.get(&c.id).cloned(),
@@ -252,65 +300,219 @@ pub fn scan(app: &AppHandle) {
     });
 }
 
+/// Finds (or records) the profile of the app in front, so it shows up in Settings › Games.
+fn profile_for(app: &AppHandle, fg: &ForegroundApp) -> AppProfile {
+    let state = app.state::<AppState>();
+    if fg.executable.is_empty() {
+        return AppProfile::default();
+    }
+    if let Some(p) = state.settings.read().profiles.iter().find(|p| p.executable.eq_ignore_ascii_case(&fg.executable)) {
+        return p.clone();
+    }
+    let profile = AppProfile { executable: fg.executable.clone(), display_name: fg.title.clone(), ..Default::default() };
+    {
+        let mut s = state.settings.write();
+        s.profiles.push(profile.clone());
+        let _ = settings::save(&state.config_dir, &s);
+    }
+    let _ = app.emit("settings-changed", ());
+    profile
+}
+
 fn run_scan(app: &AppHandle) -> Result<()> {
     let state = app.state::<AppState>();
     #[cfg(target_os = "linux")]
     if platform::session_kind() == SessionKind::KdeWayland {
         platform::kwin::track_for(std::time::Duration::from_secs(3));
     }
+    // A new lookup replaces the previous overlay (and resumes a frozen app).
+    close_overlay(app);
+
     let settings = state.settings.read().clone();
+    let fg = platform::foreground_app();
+    let profile = fg.as_ref().map(|f| profile_for(app, f)).unwrap_or_default();
     let (cx, cy) = platform::cursor_position(app)?;
-    let capture = platform::capture_around(cx, cy, settings.capture_width, settings.capture_height)?;
+    let capture = match settings.ocr_scope {
+        OcrScope::Screen => platform::capture_screen(cx, cy)?,
+        OcrScope::Region => platform::capture_around(cx, cy, settings.capture_width, settings.capture_height)?,
+    };
+    let frozen_pid = match (profile.freeze, fg.as_ref()) {
+        (FreezeMode::Process, Some(f)) if f.pid != 0 => {
+            platform::suspend_process(f.pid);
+            Some(f.pid)
+        }
+        _ => None,
+    };
     let (px, py) = capture.to_image(cx, cy);
 
     let started = Instant::now();
     let mut notice = None;
+    let mut rest: Vec<TextBox> = Vec::new();
+    let mut paddle_engine: Option<Arc<PaddleOcr>> = None;
     let (lines, engine) = match settings.ocr_engine {
-        OcrEngineKind::Lens => {
-            match lens_engine(&state).and_then(|l| l.recognize(&capture.image, &settings.lens_api_key, &settings.ocr_language)) {
-                Ok(lines) => (lines, "Google Lens".to_string()),
-                Err(e) => {
-                    notice = Some(format!("Google Lens failed, used PP-OCRv6 instead: {e:#}"));
-                    let p = ensure_paddle(&state)?;
-                    (p.recognize(&capture.image, Some((px, py)))?, format!("PP-OCRv6 ({})", p.det_model))
-                }
+        OcrEngineKind::Lens => match lens_engine(&state)
+            .and_then(|l| l.recognize(&capture.image, &settings.lens_api_key, &settings.ocr_language))
+        {
+            Ok(lines) => (lines, "Google Lens".to_string()),
+            Err(e) => {
+                notice = Some(format!("Google Lens failed, used PP-OCRv6 instead: {e:#}"));
+                let p = ensure_paddle(&state)?;
+                let boxes = p.detect_boxes(&capture.image)?;
+                let (focus, others) = split_focus(&boxes, px, py);
+                rest = others;
+                let lines = p.recognize_boxes(&capture.image, &focus);
+                paddle_engine = Some(p.clone());
+                (lines, format!("PP-OCRv6 {}", p.det_model))
             }
-        }
+        },
         OcrEngineKind::Paddle => {
             let p = ensure_paddle(&state)?;
+            let boxes = p.detect_boxes(&capture.image)?;
+            let (focus, others) = split_focus(&boxes, px, py);
+            rest = others;
+            let lines = p.recognize_boxes(&capture.image, &focus);
             let gpu = if p.det_on_gpu { "GPU" } else { "CPU" };
-            (p.recognize(&capture.image, Some((px, py)))?, format!("PP-OCRv6 {} · {gpu}", p.det_model))
+            paddle_engine = Some(p.clone());
+            (lines, format!("PP-OCRv6 {} · {gpu}", p.det_model))
         }
     };
     let ocr_ms = started.elapsed().as_millis() as u64;
 
-    let Some(pick) = words::pick(&lines, px, py) else {
-        let payload = LookupPayload {
+    let monitor = app
+        .monitor_from_point(cx, cy)
+        .ok()
+        .flatten()
+        .map(|m| (m.position().x as f64, m.position().y as f64, m.scale_factor()))
+        .unwrap_or((capture.origin_x, capture.origin_y, 1.0));
+    let id = state.recognition_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    *state.recognition.lock() = Some(Recognition {
+        id,
+        capture: capture.clone(),
+        lines: lines.clone(),
+        focus_lines: lines.clone(),
+        monitor,
+        app: fg.clone(),
+        frozen_pid,
+        freeze_frame: profile.freeze == FreezeMode::Frame,
+        engine: engine.clone(),
+        ocr_ms,
+    });
+
+    let pick = words::pick(&lines, px, py);
+    let anchor = pick.as_ref().map(|p| {
+        let (x0, y0) = capture.to_desktop(p.x0, p.y0);
+        let (x1, y1) = capture.to_desktop(p.x1, p.y1);
+        (x0, y0, x1, y1)
+    });
+    show_overlay(app, id, anchor, rest.is_empty(), profile.focus_overlay);
+
+    let payload = match pick {
+        None => LookupPayload {
             engine,
             ocr_ms,
             notice,
             error: Some("No text found under the pointer.".into()),
+            app: fg,
+            recognition: Some(id),
             ..Default::default()
-        };
-        show_popup(app, &payload, Some((cx, cy, cx, cy)));
-        return Ok(());
+        },
+        Some(pick) => LookupPayload {
+            entries: lookup_words(&state, &pick.candidates),
+            word: pick.word,
+            sentence: pick.sentence,
+            candidates: pick.candidates,
+            engine,
+            ocr_ms,
+            notice,
+            error: None,
+            manual: false,
+            app: fg,
+            recognition: Some(id),
+        },
     };
-    let entries = lookup_words(&state, &pick.candidates);
-    let (ax0, ay0) = capture.to_desktop(pick.x0, pick.y0);
-    let (ax1, ay1) = capture.to_desktop(pick.x1, pick.y1);
-    let payload = LookupPayload {
-        word: pick.word,
-        sentence: pick.sentence,
-        candidates: pick.candidates,
-        entries,
-        engine,
-        ocr_ms,
-        notice,
-        error: None,
-        manual: false,
-    };
-    show_popup(app, &payload, Some((ax0, ay0, ax1, ay1)));
+    show_popup(app, &payload, anchor.or(Some((cx, cy, cx, cy))));
+
+    // Recognize the rest of the screen in the background so every word becomes clickable.
+    if let (Some(p), false) = (paddle_engine, rest.is_empty()) {
+        let app = app.clone();
+        let image = capture.image.clone();
+        std::thread::spawn(move || {
+            for chunk in rest.chunks(8) {
+                let more = p.recognize_boxes(&image, chunk);
+                let state = app.state::<AppState>();
+                {
+                    let mut guard = state.recognition.lock();
+                    match guard.as_mut() {
+                        Some(r) if r.id == id => r.lines.extend(more),
+                        _ => return,
+                    }
+                }
+                emit_overlay(&app, id, None, false);
+            }
+            emit_overlay(&app, id, None, true);
+        });
+    }
     Ok(())
+}
+
+fn css_rect(r: &Recognition, x0: f64, y0: f64, x1: f64, y1: f64) -> (f64, f64, f64, f64) {
+    let (mx, my, s) = r.monitor;
+    ((x0 - mx) / s, (y0 - my) / s, (x1 - x0) / s, (y1 - y0) / s)
+}
+
+fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>, complete: bool) {
+    let state = app.state::<AppState>();
+    let payload = {
+        let guard = state.recognition.lock();
+        let Some(r) = guard.as_ref().filter(|r| r.id == id) else { return };
+        let words = words::word_boxes(&r.lines)
+            .into_iter()
+            .map(|w| {
+                let (x0, y0) = r.capture.to_desktop(w.x0, w.y0);
+                let (x1, y1) = r.capture.to_desktop(w.x1, w.y1);
+                let (x, y, w2, h) = css_rect(r, x0, y0, x1, y1);
+                OverlayWord { text: w.text, x, y, w: w2, h }
+            })
+            .collect();
+        let selected = selected.map(|(x0, y0, x1, y1)| {
+            let (x, y, w, h) = css_rect(r, x0, y0, x1, y1);
+            OverlayWord { text: String::new(), x, y, w, h }
+        });
+        OverlayPayload {
+            id,
+            words,
+            selected,
+            frame_url: r.freeze_frame.then(|| format!("/c/{id}/frame.png")),
+            complete,
+        }
+    };
+    let _ = app.emit_to("overlay", "overlay", &payload);
+}
+
+fn show_overlay(app: &AppHandle, id: u64, anchor: Option<(f64, f64, f64, f64)>, complete: bool, focus: bool) {
+    let Some(win) = app.get_webview_window("overlay") else { return };
+    let state = app.state::<AppState>();
+    let (mx, my) = state.recognition.lock().as_ref().map(|r| (r.monitor.0, r.monitor.1)).unwrap_or((0.0, 0.0));
+    if let Ok(Some(m)) = app.monitor_from_point(mx + 1.0, my + 1.0) {
+        let _ = win.set_position(*m.position());
+        let _ = win.set_size(*m.size());
+    }
+    emit_overlay(app, id, anchor, complete);
+    let _ = win.show();
+    if focus {
+        let _ = win.set_focus();
+    }
+}
+
+fn close_overlay(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let frozen = state.recognition.lock().as_mut().and_then(|r| r.frozen_pid.take());
+    if let Some(pid) = frozen {
+        platform::resume_process(pid);
+    }
+    if let Some(w) = app.get_webview_window("overlay") {
+        let _ = w.hide();
+    }
 }
 
 /// Sends the result to the popup and shows it next to the word (desktop coordinates).
@@ -318,15 +520,15 @@ fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64
     let Some(win) = app.get_webview_window("popup") else { return };
     let _ = app.emit_to("popup", "lookup", payload);
     if let Some((x0, y0, _x1, y1)) = anchor {
-        let size = win.outer_size().unwrap_or(tauri::PhysicalSize::new(460, 540));
+        let size = win.outer_size().unwrap_or(PhysicalSize::new(560, 520));
         let (w, h) = (size.width as f64, size.height as f64);
-        let mut x = x0 - 12.0;
-        let mut y = y1 + 8.0;
+        let mut x = x0 - 24.0;
+        let mut y = y1 + 10.0;
         if let Ok(Some(m)) = app.monitor_from_point(x0, y0) {
             let (mx, my) = (m.position().x as f64, m.position().y as f64);
             let (mw, mh) = (m.size().width as f64, m.size().height as f64);
             if y + h > my + mh {
-                y = (y0 - h - 8.0).max(my);
+                y = (y0 - h - 10.0).max(my);
             }
             x = x.clamp(mx, (mx + mw - w).max(mx));
         }
@@ -336,8 +538,32 @@ fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64
     let _ = win.set_focus();
 }
 
+/// PNG of the last capture: the whole frame, or the lines around the word with some margin.
+pub fn capture_png(state: &AppState, id: Option<u64>, area: &str) -> Option<Vec<u8>> {
+    let guard = state.recognition.lock();
+    let r = guard.as_ref().filter(|r| id.map(|i| i == r.id).unwrap_or(true))?;
+    let img = &r.capture.image;
+    let cropped = if area == "sentence" && !r.focus_lines.is_empty() {
+        let pad = 24.0;
+        let x0 = r.focus_lines.iter().map(|l| l.x0).fold(f32::MAX, f32::min) - pad;
+        let y0 = r.focus_lines.iter().map(|l| l.y0).fold(f32::MAX, f32::min) - pad;
+        let x1 = r.focus_lines.iter().map(|l| l.x1).fold(0.0, f32::max) + pad;
+        let y1 = r.focus_lines.iter().map(|l| l.y1).fold(0.0, f32::max) + pad;
+        let x = x0.max(0.0) as u32;
+        let y = y0.max(0.0) as u32;
+        let w = (x1.min(img.width() as f32) as u32).saturating_sub(x).max(1);
+        let h = (y1.min(img.height() as f32) as u32).saturating_sub(y).max(1);
+        image::imageops::crop_imm(img, x, y, w, h).to_image()
+    } else {
+        img.clone()
+    };
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(cropped).write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    Some(png)
+}
+
 // ---------------------------------------------------------------------------------------------
-// Settings, shortcut, windows
+// Settings, shortcuts, windows
 
 fn apply_hotkey(app: &AppHandle, hotkey: &str) -> std::result::Result<(), String> {
     let gs = app.global_shortcut();
@@ -352,6 +578,26 @@ fn apply_hotkey(app: &AppHandle, hotkey: &str) -> std::result::Result<(), String
         }
     })
     .map_err(|e| format!("could not register shortcut {hotkey}: {e}"))
+}
+
+fn apply_mouse_hotkey(app: &AppHandle, cfg: &settings::MouseHotkey) {
+    #[cfg(windows)]
+    {
+        let handle = app.clone();
+        platform::win::set_mouse_hotkey(cfg.clone(), move || scan(&handle));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, cfg);
+    }
+}
+
+fn apply_autostart(app: &AppHandle, enabled: bool) {
+    let launcher = app.autolaunch();
+    let r = if enabled { launcher.enable() } else { launcher.disable() };
+    if let Err(e) = r {
+        log::warn!("autostart: {e}");
+    }
 }
 
 fn open_settings_window(app: &AppHandle) {
@@ -385,17 +631,20 @@ fn get_settings(state: tauri::State<'_, AppState>) -> Settings {
 #[tauri::command]
 fn save_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: Settings) -> std::result::Result<(), String> {
     let previous = state.settings.read().clone();
-    // Dictionaries are managed by their own commands; keep the stored list.
+    // Dictionary files are managed by their own commands; keep the stored list.
     let mut next = settings;
     next.dictionaries = previous.dictionaries.clone();
     settings::save(&state.config_dir, &next).map_err(|e| format!("{e:#}"))?;
-    let hotkey_changed = previous.hotkey != next.hotkey;
     let engine_changed = previous.ocr_language != next.ocr_language || previous.use_gpu != next.use_gpu;
     *state.settings.write() = next.clone();
     if engine_changed {
         warm_engine_in_background(&app);
     }
-    if hotkey_changed {
+    if previous.autostart != next.autostart {
+        apply_autostart(&app, next.autostart);
+    }
+    apply_mouse_hotkey(&app, &next.mouse_hotkey);
+    if previous.hotkey != next.hotkey {
         apply_hotkey(&app, &next.hotkey)?;
     }
     Ok(())
@@ -439,7 +688,7 @@ async fn add_dictionary(app: AppHandle, path: String) -> std::result::Result<Vec
         let name = dict.name.clone();
         {
             let mut s = state.settings.write();
-            s.dictionaries.push(DictionaryConfig { id: id.clone(), path: path.clone(), name, enabled: true });
+            s.dictionaries.push(DictionaryConfig { id: id.clone(), kind: DictionaryKind::Mdict, path: path.clone(), name, enabled: true });
             settings::save(&state.config_dir, &s).map_err(|e| format!("{e:#}"))?;
         }
         state.dicts.write().push(Arc::new(dict));
@@ -454,6 +703,9 @@ async fn add_dictionary(app: AppHandle, path: String) -> std::result::Result<Vec
 fn remove_dictionary(state: tauri::State<'_, AppState>, id: String) -> std::result::Result<Vec<DictInfo>, String> {
     {
         let mut s = state.settings.write();
+        if s.dictionaries.iter().any(|d| d.id == id && d.kind != DictionaryKind::Mdict) {
+            return Err("Built-in dictionaries can be turned off but not removed.".into());
+        }
         s.dictionaries.retain(|d| d.id != id);
         settings::save(&state.config_dir, &s).map_err(|e| format!("{e:#}"))?;
     }
@@ -462,7 +714,7 @@ fn remove_dictionary(state: tauri::State<'_, AppState>, id: String) -> std::resu
 }
 
 #[tauri::command]
-async fn update_dictionary(app: AppHandle, id: String, enabled: Option<bool>, move_by: Option<i32>) -> std::result::Result<Vec<DictInfo>, String> {
+async fn update_dictionary(app: AppHandle, id: String, enabled: Option<bool>, move_to: Option<usize>) -> std::result::Result<Vec<DictInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         {
@@ -473,8 +725,8 @@ async fn update_dictionary(app: AppHandle, id: String, enabled: Option<bool>, mo
             if let Some(e) = enabled {
                 s.dictionaries[pos].enabled = e;
             }
-            if let Some(delta) = move_by {
-                let target = (pos as i32 + delta).clamp(0, s.dictionaries.len() as i32 - 1) as usize;
+            if let Some(target) = move_to {
+                let target = target.min(s.dictionaries.len() - 1);
                 let item = s.dictionaries.remove(pos);
                 s.dictionaries.insert(target, item);
             }
@@ -496,10 +748,60 @@ fn lookup_text(state: tauri::State<'_, AppState>, text: String, sentence: Option
         sentence: sentence.unwrap_or_default(),
         candidates,
         entries,
-        engine: String::new(),
         manual: true,
         ..Default::default()
     }
+}
+
+/// A click on the overlay (CSS pixels of the overlay window): look up the word there.
+#[tauri::command]
+fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f64) {
+    let (lines, capture, monitor, app_info, id, engine, ocr_ms) = {
+        let guard = state.recognition.lock();
+        let Some(r) = guard.as_ref() else { return };
+        (r.lines.clone(), r.capture.clone(), r.monitor, r.app.clone(), r.id, r.engine.clone(), r.ocr_ms)
+    };
+    let (mx, my, s) = monitor;
+    let (dx, dy) = (mx + x * s, my + y * s);
+    let (px, py) = capture.to_image(dx, dy);
+    let Some(pick) = words::pick(&lines, px, py) else { return };
+    if let Some(r) = state.recognition.lock().as_mut() {
+        let h = (pick.y1 - pick.y0).max(4.0);
+        r.focus_lines = lines
+            .iter()
+            .filter(|l| l.y1 >= pick.y0 - 1.6 * h && l.y0 <= pick.y1 + 1.6 * h)
+            .cloned()
+            .collect();
+    }
+    let (x0, y0) = capture.to_desktop(pick.x0, pick.y0);
+    let (x1, y1) = capture.to_desktop(pick.x1, pick.y1);
+    let payload = LookupPayload {
+        entries: lookup_words(&state, &pick.candidates),
+        word: pick.word,
+        sentence: pick.sentence,
+        candidates: pick.candidates,
+        engine,
+        ocr_ms,
+        app: app_info,
+        recognition: Some(id),
+        ..Default::default()
+    };
+    emit_overlay(&app, id, Some((x0, y0, x1, y1)), true);
+    show_popup(&app, &payload, Some((x0, y0, x1, y1)));
+}
+
+#[tauri::command]
+fn overlay_close(app: AppHandle) {
+    close_overlay(&app);
+    if let Some(w) = app.get_webview_window("popup") {
+        let _ = w.hide();
+    }
+}
+
+#[tauri::command]
+fn capture_image(state: tauri::State<'_, AppState>, recognition: Option<u64>, area: String) -> Option<String> {
+    let png = capture_png(&state, recognition, &area)?;
+    Some(base64::engine::general_purpose::STANDARD.encode(png))
 }
 
 #[tauri::command]
@@ -512,6 +814,7 @@ fn hide_popup(app: AppHandle) {
     if let Some(w) = app.get_webview_window("popup") {
         let _ = w.hide();
     }
+    close_overlay(&app);
 }
 
 #[tauri::command]
@@ -532,11 +835,48 @@ fn open_settings(app: AppHandle) {
     open_settings_window(&app);
 }
 
+#[tauri::command]
+fn entry_html(state: tauri::State<'_, AppState>, dict_id: String, entry: u32) -> std::result::Result<String, String> {
+    let dicts = state.dicts.read().clone();
+    let d = dicts.iter().find(|d| d.id == dict_id).ok_or("unknown dictionary")?;
+    d.entry_html(entry).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn list_words(state: tauri::State<'_, AppState>) -> Vec<serde_json::Value> {
+    state.cards.list()
+}
+
+#[tauri::command]
+fn save_word(app: AppHandle, state: tauri::State<'_, AppState>, card: serde_json::Value) -> std::result::Result<serde_json::Value, String> {
+    let saved = state.cards.save(card).map_err(|e| format!("{e:#}"))?;
+    let _ = app.emit("words-changed", ());
+    Ok(saved)
+}
+
+#[tauri::command]
+fn delete_word(app: AppHandle, state: tauri::State<'_, AppState>, id: String) -> std::result::Result<(), String> {
+    state.cards.delete(&id).map_err(|e| format!("{e:#}"))?;
+    let _ = app.emit("words-changed", ());
+    Ok(())
+}
+
+/// Writes an export chosen by the user in the save dialog.
+#[tauri::command]
+fn write_text_file(path: String, content: String) -> std::result::Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| format!("{path}: {e}"))
+}
+
+#[tauri::command]
+fn word_image(state: tauri::State<'_, AppState>, name: String) -> Option<String> {
+    state.cards.media(&name).map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+}
+
 // ---------------------------------------------------------------------------------------------
 
 pub fn run() {
-    // On KDE Plasma Wayland the pop-up runs through XWayland so it can be placed next to the word
-    // and kept above other windows; pointer and capture come from KWin (see platform::kwin).
+    // On KDE Plasma Wayland the windows run through XWayland so the pop-up can be placed next to the
+    // word and kept above other windows; pointer and capture come from KWin (see platform::kwin).
     #[cfg(target_os = "linux")]
     if platform::session_kind() == SessionKind::KdeWayland && std::env::var_os("GDK_BACKEND").is_none() {
         std::env::set_var("GDK_BACKEND", "x11");
@@ -557,18 +897,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .register_uri_scheme_protocol("lkt", |ctx, request| protocol::handle(ctx.app_handle(), &request))
         .setup(move |app| {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
             let resource_dir = app.path().resource_dir()?;
-            let settings = settings::load(&config_dir);
             let first_run = !settings::settings_path(&config_dir).exists();
+            let settings = settings::load(&config_dir);
             let hotkey = settings.hotkey.clone();
+            let mouse = settings.mouse_hotkey.clone();
             app.manage(AppState {
                 config_dir,
-                data_dir: data_dir.clone(),
                 resource_dir,
                 settings: RwLock::new(settings),
                 dicts: RwLock::new(Vec::new()),
@@ -577,6 +918,9 @@ pub fn run() {
                 engine_error: RwLock::new(None),
                 ort_ready: Mutex::new(None),
                 lens: Mutex::new(None),
+                recognition: Mutex::new(None),
+                recognition_seq: AtomicU64::new(0),
+                cards: CardStore::open(&data_dir),
                 busy: AtomicBool::new(false),
                 pinned: AtomicBool::new(false),
             });
@@ -584,6 +928,7 @@ pub fn run() {
             if let Err(e) = apply_hotkey(&handle, &hotkey) {
                 log::warn!("{e}");
             }
+            apply_mouse_hotkey(&handle, &mouse);
 
             #[cfg(target_os = "linux")]
             if platform::session_kind() == SessionKind::KdeWayland {
@@ -603,8 +948,8 @@ pub fn run() {
             }
             warm_engine_in_background(&handle);
 
-            let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit Lookitan", true, None::<&str>)?;
+            let settings_item = MenuItem::with_id(app, "settings", "Lookitan", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&settings_item, &quit_item])?;
             let mut tray = TrayIconBuilder::with_id("main").menu(&menu).tooltip("Lookitan");
             if let Some(icon) = app.default_window_icon() {
@@ -613,6 +958,7 @@ pub fn run() {
             tray.on_menu_event(|app, event| match event.id.as_ref() {
                 "settings" => open_settings_window(app),
                 "quit" => {
+                    close_overlay(app);
                     #[cfg(target_os = "linux")]
                     platform::kwin::stop();
                     app.exit(0);
@@ -635,7 +981,7 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 let m = main.clone();
                 main.on_window_event(move |event| {
-                    // Closing the settings window keeps Lookitan running in the tray.
+                    // Closing the main window keeps Lookitan running in the tray.
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = m.hide();
@@ -660,11 +1006,20 @@ pub fn run() {
             remove_dictionary,
             update_dictionary,
             lookup_text,
+            overlay_pick,
+            overlay_close,
+            capture_image,
             scan_now,
             hide_popup,
             set_popup_pinned,
             open_external,
-            open_settings
+            open_settings,
+            entry_html,
+            list_words,
+            save_word,
+            delete_word,
+            word_image,
+            write_text_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lookitan");

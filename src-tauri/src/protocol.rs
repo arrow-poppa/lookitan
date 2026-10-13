@@ -111,6 +111,24 @@ pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> 
     let dict_id = parts.next().unwrap_or("");
     let rest = parts.next().unwrap_or("");
     let state = app.state::<AppState>();
+    match kind {
+        // /c/<recognition>/frame.png: the captured frame shown behind a frozen overlay.
+        "c" => {
+            let id = dict_id.parse::<u64>().ok();
+            return match crate::capture_png(&state, id, "whole") {
+                Some(png) => respond(200, "image/png", png),
+                None => not_found(),
+            };
+        }
+        // /m/<file>: screenshot of a saved word.
+        "m" => {
+            return match state.cards.media(dict_id) {
+                Some(bytes) => respond(200, mime(dict_id), bytes),
+                None => not_found(),
+            };
+        }
+        _ => {}
+    }
     let dicts = state.dicts.read().clone();
     let Some(dict) = dicts.iter().find(|d| d.id == dict_id) else {
         return not_found();
