@@ -34,7 +34,12 @@ Download the installer for your system from
 
 1. Open Settings from the tray icon and add a dictionary (`.mdx`) under **Dictionaries**.
 2. Optionally, configure your AI provider under **AI**.
-3. Point at a word and press the shortcut. The default is `Ctrl+Shift+Space`.
+3. Point at a word and press the shortcut. The default is `Alt+D`.
+
+In **Settings › OCR**, choose **Region around the cursor** to use the original lookup.
+Select a region preset or set its width and height. **Original (900 × 260)** restores the
+previous capture size. These settings are saved automatically. **Full screen** remains
+available for the clickable overlay.
 
 ### KDE Plasma on Wayland
 

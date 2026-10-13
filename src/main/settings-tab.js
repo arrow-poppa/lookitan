@@ -126,6 +126,54 @@ function engineStatusText() {
     return `Detecção ${status.detModel} na ${status.detOnGpu ? 'GPU (DirectML)' : 'CPU'} · reconhecimento ${status.recModel} na ${status.recOnGpu ? 'GPU' : 'CPU'}`;
 }
 
+const CAPTURE_PRESETS = [
+    {value: 'original', label: 'Original (900 × 260)', width: 900, height: 260},
+    {value: '16:9', label: '16:9 (960 × 540)', width: 960, height: 540},
+    {value: '4:3', label: '4:3 (800 × 600)', width: 800, height: 600},
+    {value: '1:1', label: '1:1 (640 × 640)', width: 640, height: 640},
+];
+
+function captureRegionRows() {
+    const s = store.settings;
+    const currentPreset = () => CAPTURE_PRESETS.find((p) => p.width === (s.captureWidth ?? 900) &&
+        p.height === (s.captureHeight ?? 260))?.value || 'custom';
+    let presets;
+    function dimension(key, label, minimum, fallback, id) {
+        const input = el('input', {id, type: 'number', min: minimum, max: 4096, step: 1,
+            'aria-label': `${label} da captura em pixels`});
+        input.value = s[key] ?? fallback;
+        input.addEventListener('change', () => {
+            const value = Number(input.value);
+            if (!Number.isInteger(value) || value < minimum || value > 4096) {
+                input.value = s[key] ?? fallback;
+                return;
+            }
+            input.value = value;
+            if (value !== s[key]) { s[key] = value; save(); }
+            presets.value = currentPreset();
+        });
+        return {input, label: el('label', {class: 'capture-dimension'}, el('span', {}, `${label} (px)`), input)};
+    }
+    const width = dimension('captureWidth', 'Largura', 200, 900, 'cap-w');
+    const height = dimension('captureHeight', 'Altura', 60, 260, 'cap-h');
+    presets = select([...CAPTURE_PRESETS, {value: 'custom', label: 'Personalizada'}], currentPreset(), (value) => {
+        const preset = CAPTURE_PRESETS.find((p) => p.value === value);
+        if (!preset) { return; }
+        s.captureWidth = preset.width;
+        s.captureHeight = preset.height;
+        width.input.value = preset.width;
+        height.input.value = preset.height;
+        save();
+    });
+    presets.id = 'capture-preset';
+    presets.setAttribute('aria-label', 'Proporção da região de OCR');
+    return [
+        cardRow({icon: 'focus', title: 'Proporção da região', desc: 'Escolha um formato ou personalize a largura e a altura.', wide: true, control: presets}),
+        cardRow({icon: 'focus', title: 'Tamanho da captura', desc: 'Região em volta do cursor, em pixels.', wide: true,
+            control: el('div', {class: 'capture-size'}, width.label, height.label)}),
+    ];
+}
+
 function profilesCard() {
     const profiles = store.settings.profiles;
     const list = el('div', {class: 'profiles'});
@@ -243,7 +291,8 @@ function render(root) {
             control: select([
                 {value: 'screen', label: 'Tela inteira'},
                 {value: 'region', label: 'Região em volta do cursor'},
-            ], s.ocrScope, (v) => { s.ocrScope = v; save(); })}),
+            ], s.ocrScope, (v) => { s.ocrScope = v; save(); rerender(); })}),
+        s.ocrScope === 'region' ? captureRegionRows() : null,
         isWindows ? cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: 'DirectML, com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}) : null,
         el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('alert')}),
             el('div', {class: 'txt'}, el('div', {class: 't'}, 'Estado do motor'), el('div', {class: 'd', id: 'engine-status'}, engineStatusText()))),

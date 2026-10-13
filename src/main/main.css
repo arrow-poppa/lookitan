@@ -62,6 +62,9 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .card-row .ctl { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .card-row .ctl.wide { width: min(450px, 48%); }
 .card-row .ctl select, .card-row .ctl input { min-width: 220px; }
+.capture-size { display: flex; flex-wrap: wrap; gap: 8px; }
+.capture-dimension { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12.5px; }
+.card-row .ctl .capture-size input { min-width: 110px; width: 110px; }
 .card-row.stack { flex-direction: column; align-items: stretch; }
 .card-row.stack .head { display: flex; align-items: center; gap: 16px; }
 .sub { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 2px 40px; }
