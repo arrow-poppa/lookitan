@@ -60,6 +60,12 @@ the cache does not retain additional screenshot copies. Dictionary record blocks
 
 ### KDE Plasma on Wayland
 
+Use the installed `.deb` or `.rpm` package and launch Lookitan from the application menu.
+The KWin capture authorization comes from its installed desktop entry; the AppImage does not
+currently provide that installation step. Capture/relay failures are shown explicitly instead
+of falling back to an X11 capture of a Wayland desktop. The cursor relay keeps a heartbeat when
+the pointer is stationary, and regions support monitors with negative desktop coordinates.
+
 Wayland does not let apps read the global pointer position or grab global keys. Lookitan does
 two things there:
 

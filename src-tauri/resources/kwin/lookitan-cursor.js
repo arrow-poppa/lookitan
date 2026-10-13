@@ -18,6 +18,8 @@ var ACTIVE_MS = 16;
 var last = "";
 var active = false;
 var windowDirty = true;
+var lastSent = 0;
+var HEARTBEAT_MS = 1000;
 
 var pump = new QTimer();
 pump.interval = IDLE_MS;
@@ -53,14 +55,18 @@ pump.timeout.connect(function () {
     try {
         var snap = snapshot();
         var key = snap.x + "," + snap.y + "," + snap.appPid + "," + snap.appTitle;
-        if (key === last && !windowDirty) {
+        var now = Date.now();
+        if (key === last && !windowDirty && !active && now - lastSent < HEARTBEAT_MS) {
             return;
         }
-        last = key;
-        windowDirty = false;
-        snap.sentAt = Date.now();
+        snap.sentAt = now;
         callDBus(SERVICE, OBJECT, IFACE, "Update", JSON.stringify(snap),
-                 function (wantFast) { setActive(wantFast === true); });
+                 function (wantFast) {
+                     last = key;
+                     windowDirty = false;
+                     lastSent = now;
+                     setActive(wantFast === true);
+                 });
     } catch (e) {
         // Never let an exception unload the script.
     }

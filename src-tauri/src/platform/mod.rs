@@ -64,7 +64,7 @@ pub fn cursor_position(app: &AppHandle) -> Result<(f64, f64)> {
         if let Some(p) = kwin::latest_cursor() {
             return Ok(p);
         }
-        log::warn!("KWin cursor relay has not reported yet; falling back to the toolkit position");
+        return Err(anyhow!("Não foi possível obter o cursor pelo KWin. Reinicie o Lookitan pela entrada instalada no menu e confira o serviço de script do KDE."));
     }
     let p = app.cursor_position().map_err(|e| anyhow!("cursor position: {e}"))?;
     Ok((p.x, p.y))
@@ -75,11 +75,10 @@ pub fn capture_screen(cx: f64, cy: f64) -> Result<Capture> {
     #[cfg(target_os = "linux")]
     if session_kind() == SessionKind::KdeWayland {
         if let Some((x, y, w, h)) = kwin::screen_rect() {
-            match kwin::capture_rect(x as i32, y as i32, w as u32, h as u32) {
-                Ok(c) => return Ok(c),
-                Err(e) => log::warn!("KWin ScreenShot2 failed ({e:#}); trying the generic capture"),
-            }
+            return kwin::capture_rect(x as i32, y as i32, w as u32, h as u32)
+                .map_err(|e| anyhow!("Captura do KDE falhou: {e:#}. Instale o .deb ou .rpm e abra o Lookitan pelo menu de aplicativos para usar a autorização de captura."));
         }
+        return Err(anyhow!("KWin não informou o monitor sob o cursor; o serviço de captura ainda não está pronto"));
     }
     let monitor = xcap::Monitor::from_point(cx as i32, cy as i32).map_err(|e| anyhow!("monitor at pointer: {e}"))?;
     let mx = monitor.x().map_err(|e| anyhow!("{e}"))? as f64;
@@ -92,12 +91,10 @@ pub fn capture_screen(cx: f64, cy: f64) -> Result<Capture> {
 pub fn capture_around(cx: f64, cy: f64, width: u32, height: u32) -> Result<Capture> {
     #[cfg(target_os = "linux")]
     if session_kind() == SessionKind::KdeWayland {
-        let x = (cx - width as f64 / 2.0).max(0.0).round() as i32;
-        let y = (cy - height as f64 / 2.0).max(0.0).round() as i32;
-        match kwin::capture_rect(x, y, width, height) {
-            Ok(c) => return Ok(c),
-            Err(e) => log::warn!("KWin ScreenShot2 failed ({e:#}); trying the generic capture"),
-        }
+        let screen = kwin::screen_rect().ok_or_else(|| anyhow!("KWin não informou a geometria do monitor sob o cursor"))?;
+        let (x, y, width, height) = region_rect(cx, cy, width, height, screen);
+        return kwin::capture_rect(x, y, width, height)
+            .map_err(|e| anyhow!("Captura do KDE falhou: {e:#}. Instale o .deb ou .rpm e abra o Lookitan pelo menu de aplicativos para usar a autorização de captura."));
     }
     let monitor = xcap::Monitor::from_point(cx as i32, cy as i32).map_err(|e| anyhow!("monitor at pointer: {e}"))?;
     let mx = monitor.x().map_err(|e| anyhow!("{e}"))? as f64;
@@ -112,6 +109,29 @@ pub fn capture_around(cx: f64, cy: f64, width: u32, height: u32) -> Result<Captu
     let ry = (cy - my - h as f64 / 2.0).clamp(0.0, (mh.saturating_sub(h)) as f64) as u32;
     let image = monitor.capture_region(rx, ry, w.min(mw), h.min(mh)).map_err(|e| anyhow!("capture: {e}"))?;
     Ok(Capture { image, origin_x: mx + rx as f64, origin_y: my + ry as f64, scale: 1.0 })
+}
+
+/// A region in compositor coordinates, including monitors left/above the primary one.
+#[cfg(any(target_os = "linux", test))]
+fn region_rect(cx: f64, cy: f64, width: u32, height: u32, screen: (f64, f64, f64, f64)) -> (i32, i32, u32, u32) {
+    let (sx, sy, sw, sh) = screen;
+    let w = (width as f64).min(sw).max(1.0);
+    let h = (height as f64).min(sh).max(1.0);
+    let x = (cx - w / 2.0).clamp(sx, sx + sw - w);
+    let y = (cy - h / 2.0).clamp(sy, sy + sh - h);
+    (x.round() as i32, y.round() as i32, w as u32, h as u32)
+}
+
+#[cfg(test)]
+mod capture_geometry_tests {
+    use super::region_rect;
+
+    #[test]
+    fn region_stays_on_negative_and_small_monitors() {
+        assert_eq!(region_rect(-100.0, 100.0, 900, 260, (-1920.0, 0.0, 1920.0, 1080.0)), (-900, 0, 900, 260));
+        assert_eq!(region_rect(100.0, -100.0, 900, 260, (0.0, -1080.0, 1920.0, 1080.0)), (0, -260, 900, 260));
+        assert_eq!(region_rect(50.0, 25.0, 900, 260, (0.0, 0.0, 100.0, 50.0)), (0, 0, 100, 50));
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

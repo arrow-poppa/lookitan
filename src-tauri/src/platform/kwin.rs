@@ -141,6 +141,17 @@ fn get_u32(map: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
     map.get(key).and_then(|v| u32::try_from(v).ok())
 }
 
+type CaptureAreaBody<'a> = (i32, i32, i32, i32, HashMap<&'a str, Value<'a>>, Fd<'a>);
+
+fn capture_area_body<'a>(x: i32, y: i32, width: u32, height: u32,
+    options: HashMap<&'a str, Value<'a>>, fd: Fd<'a>) -> Result<CaptureAreaBody<'a>> {
+    if width == 0 || height == 0 { bail!("Empty screenshot area"); }
+    // KWin's CaptureArea signature is iiiia{sv}h, including SIGNED width/height.
+    let width = i32::try_from(width).context("Screenshot width exceeds KWin's limit")?;
+    let height = i32::try_from(height).context("Screenshot height exceeds KWin's limit")?;
+    Ok((x, y, width, height, options, fd))
+}
+
 /// The screen under the pointer, in KWin's logical coordinates.
 pub fn screen_rect() -> Option<(f64, f64, f64, f64)> {
     let r = latest()?;
@@ -165,13 +176,15 @@ pub fn capture_rect(x: i32, y: i32, width: u32, height: u32) -> Result<Capture> 
     let mut options: HashMap<&str, Value> = HashMap::new();
     options.insert("native-resolution", Value::from(true));
     options.insert("include-cursor", Value::from(false));
+    let body = capture_area_body(x, y, width, height, options, Fd::from(writer.as_fd()))?;
     let reply = conn.call_method(
         Some("org.kde.KWin"),
         "/org/kde/KWin/ScreenShot2",
         Some("org.kde.KWin.ScreenShot2"),
         "CaptureArea",
-        &(x, y, width, height, options, Fd::from(writer.as_fd())),
+        &body,
     );
+    drop(body);
     drop(writer);
     let reply = reply.context("org.kde.KWin.ScreenShot2.CaptureArea (is Lookitan installed from its package?)")?;
     let results: HashMap<String, OwnedValue> = reply.body().deserialize()?;
@@ -200,4 +213,26 @@ pub fn capture_rect(x: i32, y: i32, width: u32, height: u32) -> Result<Capture> 
     let image = RgbaImage::from_raw(w, h, rgba).ok_or_else(|| anyhow!("bad image buffer"))?;
     let scale = if width > 0 { w as f64 / width as f64 } else { 1.0 };
     Ok(Capture { image, origin_x: x as f64, origin_y: y as f64, scale })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Type;
+
+    #[test]
+    fn capture_area_matches_kwin_dbus_contract() {
+        let (_reader, writer) = std::io::pipe().unwrap();
+        let body = capture_area_body(-900, 0, 900, 260, HashMap::new(), Fd::from(writer.as_fd())).unwrap();
+        assert_eq!(body.0, -900);
+        assert_eq!(body.2, 900);
+        assert_eq!(CaptureAreaBody::SIGNATURE.to_string(), "(iiiia{sv}h)");
+    }
+
+    #[test]
+    fn invalid_capture_dimensions_are_rejected_before_dbus() {
+        let (_reader, writer) = std::io::pipe().unwrap();
+        assert!(capture_area_body(0, 0, 0, 260, HashMap::new(), Fd::from(writer.as_fd())).is_err());
+        assert!(capture_area_body(0, 0, u32::MAX, 260, HashMap::new(), Fd::from(writer.as_fd())).is_err());
+    }
 }
