@@ -184,7 +184,9 @@ function providerSection() {
         temp.addEventListener('input', () => { ai.temperature = Number(temp.value); tempLabel.textContent = ai.temperature.toFixed(2); save(); });
         wrap.append(
             cardRow({icon: 'settings', title: 'Temperatura', control: el('div', {style: 'display:flex;gap:10px;align-items:center'}, temp, tempLabel)}),
-            cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', control: toggle(ai.autoGenerateOnLookup, (v) => { ai.autoGenerateOnLookup = v; save(); })}),
+            cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', desc: 'Gera o card da palavra e a tradução de contexto.', control: toggle(ai.autoGenerateOnLookup, (v) => { ai.autoGenerateOnLookup = v; save(); })}),
+            cardRow({icon: 'sparkle', title: 'Explicar automaticamente ao consultar', desc: 'Desligado: gera a explicação somente ao clicar em Explicar.',
+                control: toggle(ai.autoExplain, (v) => { ai.autoExplain = v; save(); })}),
             cardRow({icon: 'play', title: 'Mostrar a resposta enquanto é gerada (streaming)', control: toggle(ai.streamResponse, (v) => { ai.streamResponse = v; save(); })}),
             cardRow({icon: 'close', title: 'Cancelar pedidos pendentes ao consultar outra palavra', control: toggle(ai.cancelPendingRequests, (v) => { ai.cancelPendingRequests = v; save(); })}),
             cardRow({icon: 'book', title: 'Usar a IA quando a palavra não estiver nos dicionários', control: toggle(ai.unknownWordFallback, (v) => { ai.unknownWordFallback = v; save(); })}),

@@ -22,11 +22,17 @@ let pinned = false;
 let zoom = Number(localStorage.getItem('zoom') || '1') || 1;
 let renderSequence = 0;
 /** Shared by every lookup while the popup lives, like the fork's generator cache. */
-const responses = new AiResponseCache();
+const responses = new AiResponseCache(undefined, {storage: localStorage});
 
 /** Cache key: everything that changes the answer, as the fork's options context + term + sentence. */
-function aiKey(kind, prompt, lookup = state, options = ai) {
-    return responses.key([kind, options, prompt, lookup.payload.word, lookup.payload.sentence || '']);
+async function aiKey(kind, prompt, lookup = state, options = ai) {
+    // UI switches and credentials do not alter the answer. Never put API keys in persistent cache.
+    const {apiKey: _credential, ...config} = options[options.provider] || {};
+    const stable = Object.fromEntries(Object.entries(config).sort(([a], [b]) => a.localeCompare(b)));
+    const content = responses.key([kind, options.provider, stable, options.temperature ?? 0.7,
+        options.systemPrompt || '', prompt, lookup.payload.word, lookup.payload.sentence || lookup.payload.word]);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function applyZoom() {
@@ -87,24 +93,31 @@ function renderCard(body, card, pending = false) {
         ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
         ${card.translation ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
-        ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><div class="explanation ai-text" hidden></div>`}
+        ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
         ${!pending && p.sentence ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markWord(p.sentence, p.word)}</div></details>` : ''}`;
     body.querySelector('.speak')?.addEventListener('click', () => speak(headword));
     body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => ev.currentTarget.classList.remove('hidden-tr'));
     body.querySelector('.explain-btn')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation')));
+    body.querySelector('.explain-reset')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation'), true));
+    if (!pending && ai.autoExplain === true) {
+        void runExplain(body.querySelector('.explanation'));
+    }
 }
 
-async function runExplain(target) {
+async function runExplain(target, force = false) {
+    if (!target) { return; }
     target.hidden = false;
     target.innerHTML = shimmer();
     const lookup = state;
+    const options = ai;
     try {
-        const prompt = fillLanguages(ai.customPrompt, settings);
-        const key = aiKey('explain', prompt, lookup);
+        const prompt = fillLanguages(options.customPrompt, settings);
+        const key = await aiKey('explain', prompt, lookup, options);
+        if (state !== lookup) { return; }
         lookup.keys.add(key);
         const text = await responses.run(key,
-            (signal, onChunk) => explain(ai, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
-            (_d, full) => { if (state === lookup) { target.innerHTML = renderMarkdown(full); } });
+            (signal, onChunk) => explain(options, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
+            (_d, full) => { if (state === lookup) { target.innerHTML = renderMarkdown(full); } }, {force});
         if (state === lookup) {
             lookup.explanation = text;
             target.innerHTML = renderMarkdown(text);
@@ -122,7 +135,8 @@ async function runCard(body, force = false) {
     body.innerHTML = shimmer();
     try {
         const prompt = fillLanguages(options.cardPrompt, settings);
-        const key = aiKey('card', prompt, lookup, options);
+        const key = await aiKey('card', prompt, lookup, options);
+        if (state !== lookup) { return; }
         lookup.keys.add(key);
         const text = await responses.run(key,
             (signal, onChunk) => explain(options, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
@@ -152,15 +166,17 @@ async function runCard(body, force = false) {
 
 async function runContext(body, force = false) {
     const lookup = state;
+    const options = ai;
     const p = lookup.payload;
     if (!p.sentence) { body.innerHTML = '<p class="hint">Sem frase de contexto nesta consulta.</p>'; return; }
     body.innerHTML = '<div class="shimmer w80"></div><div class="shimmer w60"></div>';
     try {
-        const prompt = fillLanguages(ai.contextPrompt, settings);
-        const key = aiKey('context', prompt, lookup);
+        const prompt = fillLanguages(options.contextPrompt, settings);
+        const key = await aiKey('context', prompt, lookup, options);
+        if (state !== lookup) { return; }
         lookup.keys.add(key);
         const text = await responses.run(key,
-            (signal, onChunk) => explain(ai, p.word, p.sentence, {signal, prompt, onChunk}),
+            (signal, onChunk) => explain(options, p.word, p.sentence, {signal, prompt, onChunk}),
             (_d, full) => { if (state === lookup) { body.innerHTML = `<div class="translation">${highlightStars(full)}</div>`; } },
             {force});
         if (state === lookup) {
@@ -354,11 +370,13 @@ async function render(payload) {
     state = {payload, keys: new Set()};
     if (ai.cancelPendingRequests !== false) {
         // Keep a request for this same word and sentence running; drop the others.
-        responses.cancelPendingExcept(new Set([
+        const keep = new Set(await Promise.all([
             aiKey('card', fillLanguages(ai.cardPrompt, settings)),
             aiKey('context', fillLanguages(ai.contextPrompt, settings)),
             aiKey('explain', fillLanguages(ai.customPrompt, settings)),
         ]));
+        if (sequence !== renderSequence) { return; }
+        responses.cancelPendingExcept(keep);
     }
     $('sections').replaceChildren();
     $('sections').scrollTop = 0;

@@ -14,6 +14,7 @@ export function defaultAiOptions() {
         contextPrompt: CONTEXT_PROMPT,
         systemPrompt: '',
         autoGenerateOnLookup: true,
+        autoExplain: false,
         streamResponse: true,
         cancelPendingRequests: true,
         unknownWordFallback: true,
@@ -46,6 +47,7 @@ export function normalizeAiOptions(stored) {
         return base;
     }
     const out = {...base, ...stored};
+    if (typeof out.autoExplain !== 'boolean') { out.autoExplain = base.autoExplain; }
     for (const key of ['openai', 'gemini', 'deepseek', 'custom']) {
         out[key] = {...base[key], ...(typeof stored[key] === 'object' && stored[key] !== null ? stored[key] : {})};
     }

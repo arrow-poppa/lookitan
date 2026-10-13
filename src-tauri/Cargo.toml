@@ -1,6 +1,6 @@
 [package]
 name = "lookitan"
-version = "0.1.2"
+version = "0.1.3"
 description = "OCR pop-up dictionary for Windows and Linux with bring-your-own-key AI"
 authors = ["arrow-poppa"]
 license = "GPL-3.0-only"

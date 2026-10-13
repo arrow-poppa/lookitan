@@ -34,6 +34,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::cards::CardStore;
 use crate::dict::{DictList, Dictionary, EntryRef};
 use crate::ocr::lens::LensOcr;
+use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
 use crate::ocr::paddle::{split_focus, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
@@ -66,6 +67,7 @@ pub struct AppState {
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
     lens: Mutex<Option<Arc<LensOcr>>>,
     recognition: Mutex<Option<Recognition>>,
+    ocr_cache: Mutex<OcrCache>,
     recognition_seq: AtomicU64,
     pub cards: CardStore,
     busy: AtomicBool,
@@ -330,6 +332,12 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     }
     // A new lookup replaces the previous overlay (and resumes a frozen app).
     close_overlay(app);
+    if let Some(popup) = app.get_webview_window("popup") {
+        let was_visible = popup.is_visible().unwrap_or(false);
+        let _ = popup.hide();
+        // Give the compositor one frame to remove our popup from the next captured bitmap.
+        if was_visible { std::thread::sleep(std::time::Duration::from_millis(20)); }
+    }
 
     let settings = state.settings.read().clone();
     let fg = platform::foreground_app();
@@ -349,13 +357,13 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     let (px, py) = capture.to_image(cx, cy);
 
     let started = Instant::now();
+    let ocr_key = frame_key(&capture.image, &format!("{:?}|{}|{}|{}", settings.ocr_engine, settings.ocr_language, settings.use_gpu,
+        if settings.ocr_engine == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
     let mut notice = None;
     let mut rest: Vec<TextBox> = Vec::new();
     let mut paddle_engine: Option<Arc<PaddleOcr>> = None;
     let (lines, engine) = match settings.ocr_engine {
-        OcrEngineKind::Lens => match lens_engine(&state)
-            .and_then(|l| l.recognize(&capture.image, &settings.lens_api_key, &settings.ocr_language))
-        {
+        OcrEngineKind::Lens => match cached_lens(&state, &capture.image, ocr_key, &settings) {
             Ok(lines) => (lines, "Google Lens".to_string()),
             Err(e) => {
                 notice = Some(format!("Google Lens failed, used PP-OCRv6 instead: {e:#}"));
@@ -370,10 +378,18 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         },
         OcrEngineKind::Paddle => {
             let p = ensure_paddle(&state)?;
-            let boxes = p.detect_boxes(&capture.image)?;
+            let cached_boxes = state.ocr_cache.lock().boxes(ocr_key);
+            let boxes = match cached_boxes {
+                Some(boxes) => boxes,
+                None => {
+                    let boxes = p.detect_boxes(&capture.image)?;
+                    state.ocr_cache.lock().save_boxes(ocr_key, &boxes);
+                    boxes
+                }
+            };
             let (focus, others) = split_focus(&boxes, px, py);
             if settings.ocr_scope == OcrScope::Screen { rest = others; }
-            let lines = p.recognize_boxes(&capture.image, &focus);
+            let lines = cached_recognize(&state, &p, &capture.image, ocr_key, &focus);
             let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
             paddle_engine = Some(p.clone());
             (lines, format!("PP-OCRv6 {} · {gpu}", p.det_model()))
@@ -445,7 +461,11 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 if !matches!(app.state::<AppState>().recognition.lock().as_ref(), Some(r) if r.id == id) {
                     return;
                 }
-                let more = p.recognize_boxes(&image, chunk);
+                let more = if settings.ocr_engine == OcrEngineKind::Paddle {
+                    cached_recognize(&app.state::<AppState>(), &p, &image, ocr_key, chunk)
+                } else {
+                    p.recognize_boxes(&image, chunk)
+                };
                 let state = app.state::<AppState>();
                 {
                     let mut guard = state.recognition.lock();
@@ -461,6 +481,28 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         });
     }
     Ok(())
+}
+
+fn cached_recognize(state: &AppState, engine: &PaddleOcr, image: &image::RgbaImage, key: FrameKey, boxes: &[TextBox]) -> Vec<OcrLine> {
+    let cached = state.ocr_cache.lock().lines(key, boxes);
+    if let Some(lines) = cached { return lines; }
+    let lines = engine.recognize_boxes(image, boxes);
+    state.ocr_cache.lock().save_lines(key, boxes, &lines);
+    lines
+}
+
+fn cached_lens(state: &AppState, image: &image::RgbaImage, key: FrameKey, settings: &Settings) -> Result<Vec<OcrLine>> {
+    let cached = {
+        let mut cache = state.ocr_cache.lock();
+        cache.boxes(key).and_then(|boxes| cache.lines(key, &boxes))
+    };
+    if let Some(lines) = cached { return Ok(lines); }
+    let lines = lens_engine(state)?.recognize(image, &settings.lens_api_key, &settings.ocr_language)?;
+    let boxes: Vec<TextBox> = lines.iter().map(|line| TextBox { x0: line.x0, y0: line.y0, x1: line.x1, y1: line.y1 }).collect();
+    let mut cache = state.ocr_cache.lock();
+    cache.save_boxes(key, &boxes);
+    cache.save_lines(key, &boxes, &lines);
+    Ok(lines)
 }
 
 fn css_rect(r: &Recognition, x0: f64, y0: f64, x1: f64, y1: f64) -> (f64, f64, f64, f64) {
@@ -930,6 +972,7 @@ pub fn run() {
                 ort_ready: Mutex::new(None),
                 lens: Mutex::new(None),
                 recognition: Mutex::new(None),
+                ocr_cache: Mutex::new(OcrCache::default()),
                 recognition_seq: AtomicU64::new(0),
                 cards: CardStore::open(&data_dir),
                 busy: AtomicBool::new(false),

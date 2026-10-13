@@ -2,6 +2,7 @@
 // horizontal span for every character so the word under the pointer can be picked.
 
 pub mod lens;
+pub mod cache;
 mod lens_proto;
 pub mod paddle;
 

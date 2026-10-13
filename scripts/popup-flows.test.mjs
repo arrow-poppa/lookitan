@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import test from 'node:test';
+import {createHash} from 'node:crypto';
 import {createContext, SourceTextModule, SyntheticModule} from 'node:vm';
 
 const project = resolve(import.meta.dirname, '..');
@@ -17,7 +18,12 @@ class Element {
     classList = {toggle() {}, remove() {}, add() {}};
     addEventListener(name, callback) { this.listeners[name] = callback; }
     setAttribute(name, value) { this[name] = value; }
-    querySelector() { return null; }
+    querySelector(selector) {
+        if (!this.innerHTML.includes(selector.slice(1))) { return null; }
+        this.parts ||= new Map();
+        if (!this.parts.has(selector)) { this.parts.set(selector, new Element()); }
+        return this.parts.get(selector);
+    }
 }
 
 async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => ''} = {}) {
@@ -50,7 +56,8 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         [file('src/lib/icons.js')]: {hydrateIcons() {}, icon: (name) => name},
     };
     const context = createContext({document, window: {addEventListener() {}}, localStorage: {getItem: () => null, setItem() {}},
-        AbortController, DOMException, console, Intl, setTimeout, clearTimeout});
+        AbortController, DOMException, crypto: {subtle: {digest: async (_algorithm, bytes) => createHash('sha256').update(bytes).digest()}},
+        TextEncoder, console, Intl, setTimeout, clearTimeout});
     const modules = new Map();
     async function get(id) {
         if (modules.has(id)) { return modules.get(id); }
@@ -58,7 +65,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         const module = stub ? new SyntheticModule(Object.keys(stub), function () {
             for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
         }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
-            '\nexport {runCard, refreshAnkiButton, onAnkiClick};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+            '\nexport {runCard, runExplain, refreshAnkiButton, onAnkiClick};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
         {context, identifier: id});
         modules.set(id, module);
         await module.link((specifier) => get(specifier.startsWith('.') ? resolve(id, '..', specifier) : specifier));
@@ -114,6 +121,82 @@ test('late streaming chunks cannot overwrite a newer lookup', async () => {
     await pending;
     assert.equal(body.innerHTML, 'new lookup');
     assert.equal(next.aiCard, undefined);
+});
+
+test('Explain stays manual until enabled and starts automatically only after the full card', async () => {
+    for (const automatic of [false, true]) {
+        const finish = deferred();
+        const calls = [];
+        const view = await fixture({explain: async (_options, _word, _sentence, request) => {
+            calls.push(request.prompt);
+            if (request.prompt === 'card') {
+                request.onChunk('', '{"headword":"run","definition":"move');
+                return finish.promise;
+            }
+            return 'Contextual explanation';
+        }});
+        view.ai.autoExplain = automatic;
+        view.ai.customPrompt = 'explanation';
+        const body = new Element();
+        const generating = view.popup.runCard(body);
+        await flush();
+        assert.deepEqual(calls, ['card']);
+        finish.resolve('{"headword":"run","definition":"move quickly"}');
+        await generating;
+        await flush();
+        assert.deepEqual(calls, automatic ? ['card', 'explanation'] : ['card']);
+        if (!automatic) {
+            body.querySelector('.explain-btn').listeners.click();
+            await flush();
+            assert.deepEqual(calls, ['card', 'explanation']);
+        }
+        assert.equal(view.lookup.explanation, 'Contextual explanation');
+        assert.equal(body.querySelector('.explanation').hidden, false);
+    }
+});
+
+test('explanation reset forces only Explain while card and normal clicks reuse cached answers', async () => {
+    const calls = [];
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => {
+        calls.push(request.prompt);
+        return request.prompt === 'card' ? '{"headword":"run","definition":"move quickly"}' : `Explanation ${calls.length}`;
+    }});
+    view.ai.customPrompt = 'explanation';
+    const body = new Element();
+    await view.popup.runCard(body);
+    const explainButton = body.querySelector('.explain-btn');
+    explainButton.listeners.click();
+    await flush();
+    explainButton.listeners.click();
+    await flush();
+    assert.deepEqual(calls, ['card', 'explanation']);
+    const card = view.lookup.aiCard;
+    body.querySelector('.explain-reset').listeners.click();
+    await flush();
+    assert.deepEqual(calls, ['card', 'explanation', 'explanation']);
+    assert.equal(view.lookup.aiCard, card);
+    await view.popup.runCard(body);
+    assert.deepEqual(calls, ['card', 'explanation', 'explanation']);
+});
+
+test('UI mode changes reuse completed AI answers but provider model, prompt and context invalidate them', async () => {
+    let requests = 0;
+    const view = await fixture({explain: async () => { requests++; return '{"headword":"run","definition":"move"}'; }});
+    await view.popup.runCard(new Element());
+    view.ai.autoExplain = false;
+    view.ai.streamResponse = false;
+    view.ai.customPrompt = 'unused explanation prompt';
+    view.ai.cancelPendingRequests = false;
+    view.ai.openai = {model: 'inactive provider'};
+    await view.popup.runCard(new Element());
+    assert.equal(requests, 1);
+    view.ai.custom.model = 'different model';
+    await view.popup.runCard(new Element());
+    view.ai.cardPrompt = 'different card prompt';
+    await view.popup.runCard(new Element());
+    view.lookup.payload.sentence = 'I run a business.';
+    await view.popup.runCard(new Element());
+    assert.equal(requests, 4);
 });
 
 test('Anki export waits for the complete streamed word card', async () => {

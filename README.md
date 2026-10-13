@@ -46,6 +46,18 @@ and map its fields (for example `{expression}` and `{glossary}`). The popup open
 when it is incomplete and shows connection errors directly. AI word cards, explanations and
 context translations respect the streaming option under **Dictionaries › AI word in context**.
 
+In that panel, **Explicar automaticamente ao consultar** chooses whether the extra Explain
+section opens automatically after the word card or waits for a click on **Explicar**.
+The refresh button beside Explain regenerates that explanation without regenerating the card.
+Completed AI responses are cached locally for 24 hours (up to 100 responses), including after
+restarting the app. The key includes the word, sentence, provider, model and prompts; changing
+streaming or automatic display switches does not discard responses. Different contexts need
+different responses. Errors and cancelled/incomplete responses are never retained.
+
+OCR detection and successfully recognized groups are reused for identical captured pixels and
+OCR settings, in a small three-frame memory cache. Changing the text/frame triggers fresh OCR;
+the cache does not retain additional screenshot copies. Dictionary record blocks are also cached.
+
 ### KDE Plasma on Wayland
 
 Wayland does not let apps read the global pointer position or grab global keys. Lookitan does
