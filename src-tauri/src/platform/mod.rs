@@ -61,7 +61,7 @@ impl Capture {
 pub fn cursor_position(app: &AppHandle) -> Result<(f64, f64)> {
     #[cfg(target_os = "linux")]
     if session_kind() == SessionKind::KdeWayland {
-        if let Some(p) = kwin::latest_cursor() {
+        if let Some(p) = kwin::wait_for_cursor(std::time::Duration::from_millis(1500)) {
             return Ok(p);
         }
         return Err(anyhow!("Não foi possível obter o cursor pelo KWin. Reinicie o Lookitan pela entrada instalada no menu e confira o serviço de script do KDE."));

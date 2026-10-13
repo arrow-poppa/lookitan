@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use image::RgbaImage;
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use serde::Deserialize;
 use zbus::zvariant::{Fd, OwnedValue, Value};
 
@@ -40,6 +40,7 @@ pub struct Report {
 }
 
 static LATEST: Mutex<Option<(Report, Instant)>> = Mutex::new(None);
+static LATEST_CHANGED: Condvar = Condvar::new();
 static TRACK_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 static CONNECTION: OnceLock<zbus::blocking::Connection> = OnceLock::new();
 
@@ -50,7 +51,10 @@ impl CursorSink {
     /// Called by the KWin script with one JSON report. Returns whether to report fast.
     fn update(&self, report: String) -> bool {
         match serde_json::from_str::<Report>(&report) {
-            Ok(r) => *LATEST.lock() = Some((r, Instant::now())),
+            Ok(r) => {
+                *LATEST.lock() = Some((r, Instant::now()));
+                LATEST_CHANGED.notify_all();
+            }
             Err(e) => log::debug!("bad cursor report: {e}"),
         }
         let until = *TRACK_UNTIL.lock();
@@ -67,8 +71,18 @@ pub fn latest() -> Option<Report> {
     Some(r.clone())
 }
 
-pub fn latest_cursor() -> Option<(f64, f64)> {
-    latest().map(|r| (r.x, r.y))
+/// --scan can start the app before the newly loaded script's first timer tick.
+pub fn wait_for_cursor(timeout: Duration) -> Option<(f64, f64)> {
+    let deadline = Instant::now() + timeout;
+    let mut guard = LATEST.lock();
+    loop {
+        if let Some((report, at)) = guard.as_ref() {
+            if at.elapsed() < Duration::from_secs(2) { return Some((report.x, report.y)); }
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return None; }
+        LATEST_CHANGED.wait_for(&mut guard, remaining);
+    }
 }
 
 /// Asks the relay to report at its fast rate for a few seconds (around a lookup).
@@ -234,5 +248,18 @@ mod tests {
         let (_reader, writer) = std::io::pipe().unwrap();
         assert!(capture_area_body(0, 0, 0, 260, HashMap::new(), Fd::from(writer.as_fd())).is_err());
         assert!(capture_area_body(0, 0, u32::MAX, 260, HashMap::new(), Fd::from(writer.as_fd())).is_err());
+    }
+
+    #[test]
+    fn first_lookup_waits_for_a_fresh_cursor_report_and_missing_relay_times_out() {
+        *LATEST.lock() = None;
+        let sender = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(10));
+            CursorSink.update(r#"{"x":-100,"y":200}"#.to_string());
+        });
+        assert_eq!(wait_for_cursor(Duration::from_secs(1)), Some((-100.0, 200.0)));
+        sender.join().unwrap();
+        *LATEST.lock() = None;
+        assert_eq!(wait_for_cursor(Duration::from_millis(5)), None);
     }
 }
