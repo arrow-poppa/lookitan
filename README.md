@@ -10,7 +10,7 @@ the word with OCR and shows dictionary entries and an AI explanation in a pop-up
   Ollama, LM Studio), with your key, your model, and your own prompt and system prompt.
 - **Optional Google Lens OCR:** a cloud engine you can switch to in Settings › OCR.
 - **Windows and Linux:** Windows 10/11, Linux X11, and KDE Plasma 6 on Wayland. Packages for
-  Windows (`.exe`, `.msi`), Fedora and openSUSE (`.rpm`), Debian and Ubuntu (`.deb`), and any
+  Windows (`.exe`), Fedora and openSUSE (`.rpm`), Debian and Ubuntu (`.deb`), and any
   distribution (`.AppImage`).
 
 Lookitan reproduces the behavior of the Lookupper app with its own code. It contains no code,
@@ -25,7 +25,7 @@ Download the installer for your system from
 
 | System | File |
 | --- | --- |
-| Windows | `Lookitan_*_x64-setup.exe` (or `.msi`) |
+| Windows | `Lookitan_*_x64-setup.exe` |
 | Fedora, openSUSE | `Lookitan-*.x86_64.rpm` (`sudo dnf install ./Lookitan-*.x86_64.rpm`) |
 | Debian, Ubuntu, KDE neon | `lookitan_*_amd64.deb` |
 | Other Linux | `Lookitan_*_amd64.AppImage` |

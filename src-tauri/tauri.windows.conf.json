@@ -1,6 +1,6 @@
 {
   "bundle": {
-    "targets": ["nsis", "msi"],
+    "targets": ["nsis"],
     "resources": {
       "resources/ort/onnxruntime.dll": "onnxruntime.dll",
       "resources/ort/DirectML.dll": "DirectML.dll",
