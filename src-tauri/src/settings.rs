@@ -142,7 +142,8 @@ impl Default for Settings {
             hotkey: "Alt+D".into(),
             mouse_hotkey: MouseHotkey::default(),
             ocr_engine: OcrEngineKind::Paddle,
-            ocr_scope: OcrScope::Screen,
+            // Keep the original lookup's small capture; full-screen overlay remains opt-in.
+            ocr_scope: OcrScope::Region,
             ocr_language: "en-US".into(),
             use_gpu: true,
             lens_api_key: String::new(),

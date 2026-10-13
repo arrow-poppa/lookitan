@@ -26,7 +26,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
@@ -184,6 +184,8 @@ fn ensure_paddle(state: &AppState) -> Result<Arc<PaddleOcr>> {
         }
     }
     let models = state.resource_dir.join("models");
+    // Drop the previous cached models before allocating their replacements.
+    *slot = None;
     match PaddleOcr::new(&models, &rec, gpu) {
         Ok(engine) => {
             let engine = Arc::new(engine);
@@ -292,6 +294,7 @@ pub fn scan(app: &AppHandle) {
         let state = app.state::<AppState>();
         let result = run_scan(&app);
         state.busy.store(false, Ordering::SeqCst);
+        let _ = app.emit("engine-status", ());
         if let Err(e) = result {
             log::warn!("lookup failed: {e:#}");
             let payload = LookupPayload { error: Some(format!("{e:#}")), ..Default::default() };
@@ -359,21 +362,21 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 let p = ensure_paddle(&state)?;
                 let boxes = p.detect_boxes(&capture.image)?;
                 let (focus, others) = split_focus(&boxes, px, py);
-                rest = others;
+                if settings.ocr_scope == OcrScope::Screen { rest = others; }
                 let lines = p.recognize_boxes(&capture.image, &focus);
                 paddle_engine = Some(p.clone());
-                (lines, format!("PP-OCRv6 {}", p.det_model))
+                (lines, format!("PP-OCRv6 {}", p.det_model()))
             }
         },
         OcrEngineKind::Paddle => {
             let p = ensure_paddle(&state)?;
             let boxes = p.detect_boxes(&capture.image)?;
             let (focus, others) = split_focus(&boxes, px, py);
-            rest = others;
+            if settings.ocr_scope == OcrScope::Screen { rest = others; }
             let lines = p.recognize_boxes(&capture.image, &focus);
-            let gpu = if p.det_on_gpu { "GPU" } else { "CPU" };
+            let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
             paddle_engine = Some(p.clone());
-            (lines, format!("PP-OCRv6 {} · {gpu}", p.det_model))
+            (lines, format!("PP-OCRv6 {} · {gpu}", p.det_model()))
         }
     };
     let ocr_ms = started.elapsed().as_millis() as u64;
@@ -438,6 +441,10 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         let image = capture.image.clone();
         std::thread::spawn(move || {
             for chunk in rest.chunks(8) {
+                // A new lookup supersedes this overlay; do not run another stale OCR batch.
+                if !matches!(app.state::<AppState>().recognition.lock().as_ref(), Some(r) if r.id == id) {
+                    return;
+                }
                 let more = p.recognize_boxes(&image, chunk);
                 let state = app.state::<AppState>();
                 {
@@ -450,6 +457,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 emit_overlay(&app, id, None, false);
             }
             emit_overlay(&app, id, None, true);
+            let _ = app.emit("engine-status", ());
         });
     }
     Ok(())
@@ -652,16 +660,18 @@ fn save_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: Se
 
 #[tauri::command]
 fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
-    let ort = state.ort_ready.lock().clone();
-    let paddle = state.paddle.lock().as_ref().map(|(_, _, e)| e.clone());
+    // This synchronous command runs on the UI thread. Model initialization holds these
+    // locks for seconds; report a loading snapshot instead of waiting and freezing the WebView.
+    let ort = state.ort_ready.try_lock().and_then(|ready| ready.clone());
+    let paddle = state.paddle.try_lock().and_then(|slot| slot.as_ref().map(|(_, _, e)| e.clone()));
     EngineStatus {
         session: platform::session_kind(),
         runtime_loaded: matches!(ort, Some(Ok(()))),
         runtime_error: ort.and_then(|r| r.err()),
-        det_model: paddle.as_ref().map(|p| p.det_model.to_string()),
-        det_on_gpu: paddle.as_ref().map(|p| p.det_on_gpu).unwrap_or(false),
+        det_model: paddle.as_ref().map(|p| p.det_model().to_string()),
+        det_on_gpu: paddle.as_ref().map(|p| p.det_on_gpu()).unwrap_or(false),
         rec_model: paddle.as_ref().map(|p| p.rec_model.clone()),
-        rec_on_gpu: paddle.as_ref().map(|p| p.rec_on_gpu).unwrap_or(false),
+        rec_on_gpu: paddle.as_ref().map(|p| p.rec_on_gpu()).unwrap_or(false),
         error: state.engine_error.read().clone(),
     }
 }
@@ -924,6 +934,12 @@ pub fn run() {
                 busy: AtomicBool::new(false),
                 pinned: AtomicBool::new(false),
             });
+
+            // Configured WebViews can invoke get_settings before setup reaches manage().
+            // Create them explicitly once AppState exists so every window's first IPC is safe.
+            for config in app.config().app.windows.clone() {
+                WebviewWindowBuilder::from_config(app, &config)?.build()?;
+            }
 
             if let Err(e) = apply_hotkey(&handle, &hotkey) {
                 log::warn!("{e}");

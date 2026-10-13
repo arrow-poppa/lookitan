@@ -69,8 +69,14 @@ jobs:
       - name: Install front-end dependencies
         run: npm ci
 
+      - name: Test UI startup
+        run: npm test
+
       - name: Generate icons
         run: npx tauri icon app-icon.svg
+
+      - name: Test OCR recovery
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Build
         uses: tauri-apps/tauri-action@v0

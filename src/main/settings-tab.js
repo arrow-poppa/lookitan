@@ -177,13 +177,25 @@ function rerender() {
 
 export async function initSettingsTab(root) {
     rootEl = root;
-    languages = await api.ocrLanguages();
-    status = await api.engineStatus();
+    // Settings must stay usable while the OCR models load (or OCR is busy).
     render(root);
+    await Promise.all([
+        api.ocrLanguages().then((available) => {
+            languages = available;
+            const control = document.getElementById('ocr-language');
+            if (control) {
+                control.replaceChildren(...languages.map((l) => el('option', {value: l.tag}, l.name)));
+                control.value = store.settings.ocrLanguage;
+            }
+        }),
+        refreshStatus(),
+    ]);
 }
 
 export async function refreshStatus() {
+    const previousSession = status?.session || 'windows';
     status = await api.engineStatus();
+    if (rootEl && status.session !== previousSession) { render(rootEl); return; }
     const s = document.getElementById('engine-status');
     if (s) { s.textContent = engineStatusText(); }
 }
@@ -195,9 +207,12 @@ function render(root) {
     const isWayland = session === 'kde-wayland' || session === 'other-wayland';
     root.replaceChildren();
 
+    const languageSelect = select(languages.length ? languages.map((l) => ({value: l.tag, label: l.name})) :
+        [{value: s.ocrLanguage, label: s.ocrLanguage}], s.ocrLanguage, (v) => { s.ocrLanguage = v; save(); });
+    languageSelect.id = 'ocr-language';
     root.append(heading('Essenciais'), el('div', {class: 'group'},
         cardRow({icon: 'scan', title: 'Idioma de reconhecimento', desc: 'O idioma do texto na tela', wide: true,
-            control: select(languages.map((l) => ({value: l.tag, label: `${l.name}`})), s.ocrLanguage, (v) => { s.ocrLanguage = v; save(); })}),
+            control: languageSelect}),
         cardRow({icon: 'swap', title: 'Modo do Lookitan', desc: 'Dicionário popup para uma palavra, ou tradução de todo o texto da tela',
             control: segmented([
                 {value: 'popup', label: 'Dicionário popup', icon: 'book'},

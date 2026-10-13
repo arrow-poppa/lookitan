@@ -21,9 +21,8 @@ function displayName(d) {
 }
 
 export async function initDictsTab() {
-    dicts = await api.listDictionaries();
     document.getElementById('add-dict').addEventListener('click', addDictionary);
-    renderList();
+    await refreshDicts();
 }
 
 export async function refreshDicts() {

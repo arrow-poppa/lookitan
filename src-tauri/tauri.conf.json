@@ -15,6 +15,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Lookitan",
         "url": "index.html",
         "width": 940,
@@ -26,6 +27,7 @@
       },
       {
         "label": "overlay",
+        "create": false,
         "title": "Lookitan Overlay",
         "url": "overlay.html",
         "width": 800,
@@ -41,6 +43,7 @@
       },
       {
         "label": "popup",
+        "create": false,
         "title": "Lookitan",
         "url": "popup.html",
         "width": 580,
