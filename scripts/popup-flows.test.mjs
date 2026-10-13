@@ -221,6 +221,27 @@ test('Anki waits for the complete explanation when automatic Explain is enabled'
     assert.equal(button.dataset.mode, 'add');
 });
 
+test('a superseded card cannot unlock Anki while its forced replacement is generating', async () => {
+    const first = deferred(), second = deferred();
+    let calls = 0;
+    const view = await fixture({explain: async () => (++calls === 1 ? first.promise : second.promise)});
+    view.options.enable = true;
+    const body = new Element();
+    const initial = view.popup.runCard(body);
+    await flush();
+    const replacement = view.popup.runCard(body, true);
+    await flush();
+    first.resolve('{"headword":"run","definition":"old"}');
+    await initial;
+    assert.equal(view.lookup.aiPending, true);
+    assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'generating');
+    assert.equal(view.lookup.aiCard, undefined);
+    second.resolve('{"headword":"run","definition":"new"}');
+    await replacement;
+    assert.equal(view.lookup.aiCard.definition, 'new');
+    assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'add');
+});
+
 test('Anki export waits for the complete streamed word card', async () => {
     const finish = deferred();
     const view = await fixture({explain: async (_options, _word, _sentence, request) => {

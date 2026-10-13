@@ -140,23 +140,26 @@ async function runExplain(target, force = false) {
 async function runCard(body, force = false) {
     const lookup = state;
     const options = ai;
+    const request = {};
+    lookup.cardRequest = request;
+    const current = () => state === lookup && lookup.cardRequest === request;
     lookup.aiPending = true;
     void refreshAnkiButton();
     body.innerHTML = shimmer();
     try {
         const prompt = fillLanguages(options.cardPrompt, settings);
         const key = await aiKey('card', prompt, lookup, options);
-        if (state !== lookup) { return; }
+        if (!current()) { return; }
         lookup.keys.add(key);
         const text = await responses.run(key,
             (signal, onChunk) => explain(options, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
             (_delta, full) => {
-                if (state !== lookup) { return; }
+                if (!current()) { return; }
                 const partial = parseCardProgress(full);
                 if (partial) { renderCard(body, partial, true); }
                 else if (!full.includes('{')) { body.innerHTML = `<div class="ai-text">${renderMarkdown(full)}</div>`; }
             }, {force});
-        if (state !== lookup) { return; }
+        if (!current()) { return; }
         const card = parseCard(text);
         if (card) {
             lookup.aiCard = card;
@@ -167,10 +170,10 @@ async function runCard(body, force = false) {
         }
         if (settings.saveWordsAutomatically && !lookup.savedId) { void saveWord(); }
     } catch (e) {
-        if (state === lookup && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
+        if (current() && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
     } finally {
-        lookup.aiPending = false;
-        if (state === lookup) { void refreshAnkiButton(); }
+        if (lookup.cardRequest === request) { lookup.aiPending = false; }
+        if (current()) { void refreshAnkiButton(); }
     }
 }
 
