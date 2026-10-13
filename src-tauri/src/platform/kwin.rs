@@ -155,14 +155,15 @@ fn get_u32(map: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
     map.get(key).and_then(|v| u32::try_from(v).ok())
 }
 
-type CaptureAreaBody<'a> = (i32, i32, i32, i32, HashMap<&'a str, Value<'a>>, Fd<'a>);
+type CaptureAreaBody<'a> = (i32, i32, u32, u32, HashMap<&'a str, Value<'a>>, Fd<'a>);
 
 fn capture_area_body<'a>(x: i32, y: i32, width: u32, height: u32,
     options: HashMap<&'a str, Value<'a>>, fd: Fd<'a>) -> Result<CaptureAreaBody<'a>> {
     if width == 0 || height == 0 { bail!("Empty screenshot area"); }
-    // KWin's CaptureArea signature is iiiia{sv}h, including SIGNED width/height.
-    let width = i32::try_from(width).context("Screenshot width exceeds KWin's limit")?;
-    let height = i32::try_from(height).context("Screenshot height exceeds KWin's limit")?;
+    // KWin's CaptureArea signature is iiuua{sv}h: signed coordinates, unsigned dimensions.
+    // Validate Qt's signed dimension limits without changing the D-Bus argument types.
+    i32::try_from(width).context("Screenshot width exceeds KWin's limit")?;
+    i32::try_from(height).context("Screenshot height exceeds KWin's limit")?;
     Ok((x, y, width, height, options, fd))
 }
 
@@ -237,17 +238,21 @@ mod tests {
     #[test]
     fn capture_area_matches_kwin_dbus_contract() {
         let (_reader, writer) = std::io::pipe().unwrap();
-        let body = capture_area_body(-900, 0, 900, 260, HashMap::new(), Fd::from(writer.as_fd())).unwrap();
+        let body = capture_area_body(-900, -260, 900, 260, HashMap::new(), Fd::from(writer.as_fd())).unwrap();
         assert_eq!(body.0, -900);
+        assert_eq!(body.1, -260);
         assert_eq!(body.2, 900);
-        assert_eq!(CaptureAreaBody::SIGNATURE.to_string(), "(iiiia{sv}h)");
+        assert_eq!(body.3, 260);
+        assert_eq!(CaptureAreaBody::SIGNATURE.to_string(), "(iiuua{sv}h)");
     }
 
     #[test]
     fn invalid_capture_dimensions_are_rejected_before_dbus() {
         let (_reader, writer) = std::io::pipe().unwrap();
         assert!(capture_area_body(0, 0, 0, 260, HashMap::new(), Fd::from(writer.as_fd())).is_err());
+        assert!(capture_area_body(0, 0, 900, 0, HashMap::new(), Fd::from(writer.as_fd())).is_err());
         assert!(capture_area_body(0, 0, u32::MAX, 260, HashMap::new(), Fd::from(writer.as_fd())).is_err());
+        assert!(capture_area_body(0, 0, 900, u32::MAX, HashMap::new(), Fd::from(writer.as_fd())).is_err());
     }
 
     #[test]
