@@ -122,6 +122,13 @@ function languageRows() {
     ];
 }
 
+function aiControl(path, label, control) {
+    control.setAttribute('data-setting', `ai.${path}`);
+    control.setAttribute('id', `ai-${path.replaceAll('.', '-')}`);
+    control.setAttribute('aria-label', label);
+    return control;
+}
+
 function providerSection() {
     const ai = store.ai;
     const cfg = () => ai[ai.provider];
@@ -129,75 +136,93 @@ function providerSection() {
     const draw = () => {
         wrap.replaceChildren();
         const models = (DEFAULT_MODELS[ai.provider] || []);
-        const modelInput = textInput(cfg().model, (v) => { cfg().model = v.trim(); save(); }, {placeholder: models[0] || 'nome-do-modelo'});
+        const modelInput = aiControl(`${ai.provider}.model`, 'Modelo', textInput(cfg().model, (v) => { cfg().model = v.trim(); save(); }, {placeholder: models[0] || 'nome-do-modelo'}));
         const listId = `models-${ai.provider}`;
         modelInput.setAttribute('list', listId);
         const datalist = el('datalist', {id: listId}, ...models.map((m) => el('option', {value: m})));
-        wrap.append(
+        wrap.append(...[
             cardRow({icon: 'cloud', title: 'Provedor', wide: true,
-                control: select([
+                control: aiControl('provider', 'Provedor', select([
                     {value: 'openai', label: 'OpenAI'},
                     {value: 'gemini', label: 'Google Gemini'},
                     {value: 'deepseek', label: 'DeepSeek'},
                     {value: 'custom', label: 'Personalizado (OpenRouter, Ollama, LM Studio…)'},
-                ], ai.provider, (v) => { ai.provider = v; save(); draw(); })}),
-            ai.provider === 'custom' ? cardRow({icon: 'cloud', title: 'Endpoint', desc: 'Compatível com OpenAI (/chat/completions).', wide: true,
-                control: textInput(ai.custom.endpoint, (v) => { ai.custom.endpoint = v.trim(); save(); }, {placeholder: 'https://openrouter.ai/api/v1/chat/completions'})}) : null,
+                ], ai.provider, (v) => { ai.provider = v; save(); draw(); }))}),
+            ai.provider === 'custom' ? cardRow({icon: 'cloud', title: 'Endpoint', desc: 'URL completa da API compatível com OpenAI. Usada exatamente como informada.', wide: true,
+                control: aiControl('custom.endpoint', 'Endpoint', textInput(ai.custom.endpoint, (v) => { ai.custom.endpoint = v.trim(); save(); }, {placeholder: 'https://openrouter.ai/api/v1/chat/completions'}))}) : null,
             cardRow({icon: 'settings', title: 'Chave da API', wide: true,
-                control: textInput(cfg().apiKey, (v) => { cfg().apiKey = v.trim(); save(); }, {type: 'password'})}),
+                control: aiControl(`${ai.provider}.apiKey`, 'Chave da API', textInput(cfg().apiKey, (v) => { cfg().apiKey = v.trim(); save(); }, {type: 'password'}))}),
             cardRow({icon: 'sparkle', title: 'Modelo', wide: true, control: el('div', {style: 'width:100%'}, modelInput, datalist)}),
-        );
+        ].filter(Boolean));
         if (ai.provider === 'gemini') {
             wrap.append(cardRow({icon: 'sparkle', title: 'Nível de raciocínio (Gemini 3)', wide: true,
-                control: select([{value: '', label: 'Padrão do modelo'}, ...['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].map((v) => ({value: v, label: v}))],
-                    ai.gemini.thinkingLevel, (v) => { ai.gemini.thinkingLevel = v; save(); })}));
+                control: aiControl('gemini.thinkingLevel', 'Nível de raciocínio (Gemini 3)', select([{value: '', label: 'Padrão do modelo'}, ...['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].map((v) => ({value: v, label: v}))],
+                    ai.gemini.thinkingLevel, (v) => { ai.gemini.thinkingLevel = v; save(); }))}));
         }
         if (ai.provider === 'deepseek' || ai.provider === 'custom') {
-            const intensities = [{value: '', label: 'Intensidade padrão'}, {value: 'high', label: 'Alta'}, {value: 'max', label: 'Máxima'}];
-            if (ai.provider === 'custom') { intensities.push({value: 'custom', label: 'Personalizada'}); }
-            wrap.append(cardRow({icon: 'sparkle', title: 'Raciocínio (thinking)', wide: true,
-                control: el('div', {style: 'display:flex;gap:8px;width:100%'},
-                    select([{value: '', label: 'Padrão'}, {value: 'enabled', label: 'Ligado'}, {value: 'disabled', label: 'Desligado'}], cfg().thinkingMode, (v) => { cfg().thinkingMode = v; save(); }),
-                    select(intensities, cfg().thinkingIntensity, (v) => { cfg().thinkingIntensity = v; save(); draw(); }))}));
-            if (ai.provider === 'custom' && ai.custom.thinkingIntensity === 'custom') {
-                wrap.append(cardRow({icon: 'sparkle', title: 'Intensidade personalizada', desc: 'Ex.: {"effort":"medium"} ou 4096', wide: true,
-                    control: textInput(ai.custom.customThinkingIntensity, (v) => { ai.custom.customThinkingIntensity = v; save(); })}));
+            const intensities = ai.provider === 'custom' ? [
+                {value: '', label: 'Padrão do modelo'}, {value: 'none', label: 'Nenhuma (none)'},
+                {value: 'minimal', label: 'Mínima (minimal)'}, {value: 'low', label: 'Baixa (low)'},
+                {value: 'medium', label: 'Média (medium)'}, {value: 'high', label: 'Alta (high)'},
+                {value: 'xhigh', label: 'Muito alta (xhigh)'}, {value: 'max', label: 'Máxima (max)'},
+                {value: 'custom', label: 'Personalizada'},
+            ] : [{value: '', label: 'Padrão do modelo'}, {value: 'high', label: 'Alta'}, {value: 'max', label: 'Máxima'}];
+            wrap.append(
+                cardRow({icon: 'sparkle', title: 'Raciocínio (thinking)', wide: true,
+                    desc: 'Use o padrão do modelo ou escolha se o raciocínio deve ficar ligado ou desligado.',
+                    control: aiControl(`${ai.provider}.thinkingMode`, 'Raciocínio (thinking)', select([
+                        {value: '', label: 'Padrão'}, {value: 'enabled', label: 'Ligado'}, {value: 'disabled', label: 'Desligado'},
+                    ], cfg().thinkingMode, (v) => { cfg().thinkingMode = v; save(); }))}),
+                cardRow({icon: 'sparkle', title: 'Esforço do raciocínio (thinking)', wide: true,
+                    desc: 'O modelo precisa aceitar o nível escolhido. Máxima equivale a xhigh no OpenRouter.',
+                    control: aiControl(`${ai.provider}.thinkingIntensity`, 'Esforço do raciocínio (thinking)', select(intensities, cfg().thinkingIntensity,
+                        (v) => { cfg().thinkingIntensity = v; save(); draw(); }))}),
+            );
+            if (ai.provider === 'custom') {
+                wrap.append(cardRow({icon: 'sparkle', title: 'Valor personalizado de thinking',
+                    desc: 'Usado quando o esforço é Personalizada. OpenRouter: medium, 2000 ou {"max_tokens":2000}. Outras APIs: reasoning_effort.', wide: true,
+                    control: aiControl('custom.customThinkingIntensity', 'Valor personalizado de thinking', textInput(ai.custom.customThinkingIntensity,
+                        (v) => { ai.custom.customThinkingIntensity = v; save(); }, {placeholder: 'medium, 2000 ou {"max_tokens":2000}'}))}));
             }
         }
         if (ai.provider === 'custom') {
             wrap.append(
                 cardRow({icon: 'list', title: 'Roteamento de provedores (OpenRouter)', wide: true,
-                    control: el('div', {style: 'display:flex;gap:8px;width:100%'},
-                        select([{value: '', label: 'Sem roteamento'}, {value: 'order', label: 'Ordem'}, {value: 'only', label: 'Somente'}, {value: 'ignore', label: 'Ignorar'}],
-                            ai.custom.providerRoutingMode, (v) => { ai.custom.providerRoutingMode = v; save(); }),
-                        textInput(ai.custom.providerSlugs, (v) => { ai.custom.providerSlugs = v; save(); }, {placeholder: 'slugs, separados por vírgula'}))}),
+                    control: aiControl('custom.providerRoutingMode', 'Roteamento de provedores (OpenRouter)', select([
+                        {value: '', label: 'Sem roteamento'}, {value: 'order', label: 'Ordem'}, {value: 'only', label: 'Somente'}, {value: 'ignore', label: 'Ignorar'},
+                    ], ai.custom.providerRoutingMode, (v) => { ai.custom.providerRoutingMode = v; save(); }))}),
+                cardRow({icon: 'list', title: 'Provedores do OpenRouter', desc: 'Slugs separados por vírgula, na ordem desejada.', wide: true,
+                    control: aiControl('custom.providerSlugs', 'Provedores do OpenRouter', textInput(ai.custom.providerSlugs,
+                        (v) => { ai.custom.providerSlugs = v; save(); }, {placeholder: 'deepinfra/turbo, fireworks'}))}),
                 cardRow({icon: 'list', title: 'Permitir outros provedores se os escolhidos falharem',
-                    control: toggle(ai.custom.providerAllowFallbacks !== false, (v) => { ai.custom.providerAllowFallbacks = v; save(); })}),
+                    control: aiControl('custom.providerAllowFallbacks', 'Permitir outros provedores', toggle(ai.custom.providerAllowFallbacks !== false, (v) => { ai.custom.providerAllowFallbacks = v; save(); }))}),
                 el('div', {class: 'card-row stack'},
                     el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'JSON extra no corpo da requisição'), el('div', {class: 'd'}, 'Mesclado ao corpo de cada pedido. Ex.: {"top_p": 0.9}'))),
-                    textArea(ai.custom.requestBodyJson, (v) => { ai.custom.requestBodyJson = v; save(); }, 3)),
+                    aiControl('custom.requestBodyJson', 'JSON extra no corpo da requisição', textArea(ai.custom.requestBodyJson, (v) => { ai.custom.requestBodyJson = v; save(); }, 3))),
             );
         }
         const temp = el('input', {type: 'range', min: '0', max: '2', step: '0.05', style: 'width:220px'});
         temp.value = String(ai.temperature);
+        aiControl('temperature', 'Temperatura', temp);
         const tempLabel = el('span', {class: 'muted', style: 'width:40px;text-align:right'}, Number(ai.temperature).toFixed(2));
         temp.addEventListener('input', () => { ai.temperature = Number(temp.value); tempLabel.textContent = ai.temperature.toFixed(2); save(); });
         wrap.append(
             cardRow({icon: 'settings', title: 'Temperatura', control: el('div', {style: 'display:flex;gap:10px;align-items:center'}, temp, tempLabel)}),
-            cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', desc: 'Gera o card da palavra e a tradução de contexto.', control: toggle(ai.autoGenerateOnLookup, (v) => { ai.autoGenerateOnLookup = v; save(); })}),
+            cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', desc: 'Gera o card da palavra e a tradução de contexto.', control: aiControl('autoGenerateOnLookup', 'Gerar automaticamente ao abrir o popup', toggle(ai.autoGenerateOnLookup, (v) => { ai.autoGenerateOnLookup = v; save(); }))}),
             cardRow({icon: 'sparkle', title: 'Explicar automaticamente ao consultar', desc: 'Desligado: gera a explicação somente ao clicar em Explicar.',
-                control: toggle(ai.autoExplain, (v) => { ai.autoExplain = v; save(); })}),
-            cardRow({icon: 'play', title: 'Mostrar a resposta enquanto é gerada (streaming)', control: toggle(ai.streamResponse, (v) => { ai.streamResponse = v; save(); })}),
-            cardRow({icon: 'close', title: 'Cancelar pedidos pendentes ao consultar outra palavra', control: toggle(ai.cancelPendingRequests, (v) => { ai.cancelPendingRequests = v; save(); })}),
-            cardRow({icon: 'book', title: 'Usar a IA quando a palavra não estiver nos dicionários', control: toggle(ai.unknownWordFallback, (v) => { ai.unknownWordFallback = v; save(); })}),
+                control: aiControl('autoExplain', 'Explicar automaticamente ao consultar', toggle(ai.autoExplain, (v) => { ai.autoExplain = v; save(); }))}),
+            cardRow({icon: 'play', title: 'Mostrar a resposta enquanto é gerada (streaming)', control: aiControl('streamResponse', 'Streaming', toggle(ai.streamResponse, (v) => { ai.streamResponse = v; save(); }))}),
+            cardRow({icon: 'close', title: 'Cancelar pedidos pendentes ao consultar outra palavra', control: aiControl('cancelPendingRequests', 'Cancelar pedidos pendentes', toggle(ai.cancelPendingRequests, (v) => { ai.cancelPendingRequests = v; save(); }))}),
+            cardRow({icon: 'book', title: 'Usar a IA quando a palavra não estiver nos dicionários', control: aiControl('unknownWordFallback', 'IA quando a palavra não estiver nos dicionários', toggle(ai.unknownWordFallback, (v) => { ai.unknownWordFallback = v; save(); }))}),
         );
     };
     draw();
     return wrap;
 }
 
-function promptCard(title, desc, get, set, fallback) {
+function promptCard(title, desc, get, set, fallback, setting = null) {
     const area = textArea(get(), (v) => { set(v); save(); }, 5);
+    if (setting) { aiControl(setting, title, area); }
     const reset = el('button', {class: 'ghost', html: `${icon('refresh', 'sm')}Restaurar padrão`});
     reset.addEventListener('click', () => { set(fallback); area.value = fallback; save(); });
     return el('div', {class: 'card-row stack'},
@@ -244,11 +269,11 @@ function renderAiWord(root) {
         providerSection(),
         el('h3', {}, 'Prompts'),
         el('div', {class: 'group'},
-            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT),
-            promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT),
+            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
+            promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT, 'customPrompt'),
             el('div', {class: 'card-row stack'},
                 el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado em todos os pedidos (card, explicação e tradução). Opcional.'))),
-                textArea(ai.systemPrompt, (v) => { ai.systemPrompt = v; save(); }, 3))),
+                aiControl('systemPrompt', 'System prompt', textArea(ai.systemPrompt, (v) => { ai.systemPrompt = v; save(); }, 3)))),
         testButton(),
     );
 }
@@ -262,6 +287,9 @@ function renderAiContext(root) {
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             languageRows()[1],
-            promptCard('Prompt da tradução', `A tradução da palavra deve vir entre **asteriscos duplos** para ser destacada. Variáveis: ${vars}.`, () => ai.contextPrompt, (v) => { ai.contextPrompt = v; }, CONTEXT_PROMPT)),
+            promptCard('Prompt da tradução', `A tradução da palavra deve vir entre **asteriscos duplos** para ser destacada. Variáveis: ${vars}.`, () => ai.contextPrompt, (v) => { ai.contextPrompt = v; }, CONTEXT_PROMPT, 'contextPrompt')),
+        el('h3', {}, 'Provedor de IA (compartilhado com a palavra no contexto)'),
+        providerSection(),
+        testButton(),
     );
 }

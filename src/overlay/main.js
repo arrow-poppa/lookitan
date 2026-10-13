@@ -18,6 +18,13 @@ function containsCenter(w, s) {
 
 function render() {
     if (!current) { return; }
+    if (current.frameRect) {
+        const r = current.frameRect;
+        frame.style.left = `${r.x}px`;
+        frame.style.top = `${r.y}px`;
+        frame.style.width = `${r.w}px`;
+        frame.style.height = `${r.h}px`;
+    }
     const frag = document.createDocumentFragment();
     for (const w of current.words) {
         const el = document.createElement('div');
@@ -48,6 +55,11 @@ void listen('overlay', (event) => {
         }
     }
     if (p.selected) { selected = p.selected; }
+    else if (selected && current?.id === p.id) {
+        // Keep selection attached to the same word when a move/DPI event changes its rectangle.
+        const i = current.words.findIndex((w) => containsCenter(w, selected));
+        selected = i >= 0 ? p.words[i] || null : null;
+    }
     current = p;
     render();
 });

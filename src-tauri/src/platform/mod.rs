@@ -4,11 +4,13 @@
 pub mod kwin;
 #[cfg(windows)]
 pub mod win;
+pub mod geometry;
 
 use anyhow::{anyhow, Result};
 use image::RgbaImage;
 use serde::Serialize;
 use tauri::AppHandle;
+use geometry::{DisplayGeometry, Rect};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -55,6 +57,32 @@ impl Capture {
     pub fn to_desktop(&self, x: f32, y: f32) -> (f64, f64) {
         (self.origin_x + x as f64 / self.scale, self.origin_y + y as f64 / self.scale)
     }
+}
+
+/// Match by output name before crossing from KWin to XWayland's desktop layout.
+pub fn display_geometry(app: &AppHandle, cx: f64, cy: f64, capture: &Capture) -> Result<DisplayGeometry> {
+    #[cfg(target_os = "linux")]
+    if session_kind() == SessionKind::KdeWayland {
+        let report = kwin::latest().ok_or_else(|| anyhow!("KWin não informou o monitor da captura"))?;
+        let monitor = app.available_monitors()?.into_iter()
+            .find(|m| m.name().map(|n| n == &report.screen).unwrap_or(false))
+            .ok_or_else(|| anyhow!("Monitor {} não encontrado pelo GTK/XWayland", report.screen))?;
+        if report.sw <= 0.0 || report.sh <= 0.0 { return Err(anyhow!("KWin informou um monitor sem tamanho")); }
+        return Ok(DisplayGeometry {
+            desktop: Rect { x: report.sx, y: report.sy, width: report.sw, height: report.sh },
+            native: Rect { x: monitor.position().x as f64, y: monitor.position().y as f64,
+                width: monitor.size().width as f64, height: monitor.size().height as f64 },
+            scale: monitor.scale_factor(),
+        });
+    }
+    let monitor = app.monitor_from_point(cx, cy)?;
+    let (rect, scale) = match monitor {
+        Some(m) => (Rect { x: m.position().x as f64, y: m.position().y as f64,
+            width: m.size().width as f64, height: m.size().height as f64 }, m.scale_factor()),
+        None => (Rect { x: capture.origin_x, y: capture.origin_y,
+            width: capture.image.width() as f64 / capture.scale, height: capture.image.height() as f64 / capture.scale }, 1.0),
+    };
+    Ok(DisplayGeometry { desktop: rect, native: rect, scale })
 }
 
 /// Pointer position in desktop coordinates.
