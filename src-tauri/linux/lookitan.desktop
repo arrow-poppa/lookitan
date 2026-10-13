@@ -1,7 +1,7 @@
 [Desktop Entry]
 Categories={{categories}}
 Comment={{comment}}
-Exec={{exec}}
+Exec=/usr/bin/{{exec}}
 StartupWMClass={{exec}}
 Icon={{icon}}
 Name={{name}}
@@ -13,4 +13,4 @@ X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
 
 [Desktop Action scan]
 Name=Look up the word under the pointer
-Exec={{exec}} --scan
+Exec=/usr/bin/{{exec}} --scan

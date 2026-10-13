@@ -93,6 +93,10 @@ jobs:
           prerelease: false
           args: --verbose
 
+      - name: Verify RPM screen capture authorization
+        if: matrix.platform == 'linux'
+        run: python scripts/check-linux-rpm.py
+
       - name: Upload installers
         if: always()
         uses: actions/upload-artifact@v4
