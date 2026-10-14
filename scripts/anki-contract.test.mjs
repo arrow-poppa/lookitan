@@ -151,6 +151,29 @@ class FakeDOMParser {
     }
 }
 
+test('{ai-card} exports the whole AI card without the context, which stays in {sentence}', async () => {
+    const {notes, options} = await clientFixture(async () => response(null), {DOMParser: FakeDOMParser});
+    options.cardFormats[0].deck = 'Study';
+    options.cardFormats[0].model = 'Basic';
+    options.cardFormats[0].fields = {A: {value: '{ai-card}'}, B: {value: '{ai-card-plain}'}, C: {value: '{sentence}'}};
+    const ctx = {
+        word: 'ran',
+        headword: 'run',
+        sentence: 'She ran home.',
+        aiCard: {definition: 'move fast', translation: 'correr', ipa: 'rʌn', cefr: 'A1', partOfSpeech: ['verb'], labels: ['informal']},
+        aiExplanation: '**Run** means to move fast.',
+    };
+    const f = (await notes.buildNote(ctx, options, null)).fields;
+    for (const part of ['<b>run</b>', '/rʌn/', '[A1]', '<i>verb, informal</i>', '<b>correr</b>', 'move fast', '<strong>Run</strong>']) {
+        assert(f.A.includes(part), `{ai-card} has ${part}`);
+    }
+    assert(!f.A.includes('She ran home'), 'the context is left to {sentence}');
+    assert.equal(f.B, 'run /rʌn/ [A1]<br>verb, informal<br>correr<br>move fast<br>Run means to move fast.');
+    assert.equal(f.C, 'She ran home.');
+    const empty = (await notes.buildNote({word: 'ran', sentence: 'She ran home.'}, options, null)).fields;
+    assert.equal(empty.A, '', 'no AI card, no field');
+});
+
 test('Yomitan glossary markers: per dictionary, first, no-dictionary, popup selection and AI explanation', async () => {
     const {notes, options} = await clientFixture(async () => response(null), {DOMParser: FakeDOMParser});
     const oxford = "Oxford Advanced Learner's Dictionary";

@@ -38,7 +38,7 @@ export const MARKERS = [
     'expression', 'reading', 'glossary', 'glossary-brief', 'glossary-no-dictionary', 'glossary-plain',
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
-    'screenshot', 'popup-selection-text', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
+    'screenshot', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
     'translation', 'context-translation', 'cefr', 'part-of-speech', 'tags', 'document-title', 'search-query',
 ];
 
@@ -179,6 +179,39 @@ function definitions(clean, ai, order) {
     return defs.map((d, i) => ({d, i})).sort((a, b) => (rank(a.d.dictionary) - rank(b.d.dictionary)) || (a.i - b.i)).map(({d}) => d);
 }
 
+/**
+ * The whole AI word card as in the pop-up, without its "Context" part (that goes to {sentence}):
+ * headword, IPA, CEFR, part of speech and labels, translation, definition and, when it was
+ * generated, the explanation.
+ */
+function aiCardHtml(ctx, ai) {
+    const headword = ctx.headword || ctx.word || '';
+    if (!ai.definition && !ai.translation && !ai.ipa && !ctx.aiExplanation) { return ''; }
+    const meta = [ai.ipa ? `/${escapeHtml(ai.ipa)}/` : '', ai.cefr ? `[${escapeHtml(ai.cefr)}]` : ''].filter(Boolean).join(' ');
+    const tags = [...(ai.partOfSpeech || []), ...(ai.labels || [])].map(escapeHtml).join(', ');
+    const parts = [
+        `<div><b>${escapeHtml(headword)}</b>${meta ? ` ${meta}` : ''}</div>`,
+        tags ? `<div><i>${tags}</i></div>` : '',
+        ai.translation ? `<div><b>${escapeHtml(ai.translation)}</b></div>` : '',
+        ai.definition ? `<div>${escapeHtml(ai.definition)}</div>` : '',
+        ctx.aiExplanation ? `<div>${renderMarkdown(ctx.aiExplanation)}</div>` : '',
+    ];
+    return `<div style="text-align: left;">${parts.join('')}</div>`;
+}
+
+function aiCardPlain(ctx, ai) {
+    const headword = ctx.headword || ctx.word || '';
+    if (!ai.definition && !ai.translation && !ai.ipa && !ctx.aiExplanation) { return ''; }
+    const lines = [
+        [headword, ai.ipa ? `/${ai.ipa}/` : '', ai.cefr ? `[${ai.cefr}]` : ''].filter(Boolean).join(' '),
+        [...(ai.partOfSpeech || []), ...(ai.labels || [])].join(', '),
+        ai.translation || '',
+        ai.definition || '',
+        markdownToText(ctx.aiExplanation || ''),
+    ].filter(Boolean);
+    return lines.map(escapeHtml).join('<br>').replace(/\n/g, '<br>');
+}
+
 function cloze(sentence, word) {
     if (!sentence || !word) { return {prefix: '', body: word || '', suffix: ''}; }
     const i = sentence.toLowerCase().indexOf(word.toLowerCase());
@@ -234,6 +267,8 @@ export async function buildNote(ctx, anki, conn) {
         'cloze-body': escapeHtml(c.body),
         'cloze-suffix': escapeHtml(c.suffix),
         'dictionary': escapeHtml(first[0] ? first[0].dictionary : ''),
+        'ai-card': aiCardHtml(ctx, ai),
+        'ai-card-plain': aiCardPlain(ctx, ai),
         'ai-definition': escapeHtml(ai.definition || ''),
         'ai-explanation': renderMarkdown(ctx.aiExplanation || ''),
         'ai-explanation-plain': escapeHtml(markdownToText(ctx.aiExplanation || '')).replace(/\n/g, '<br>'),
