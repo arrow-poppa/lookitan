@@ -23,6 +23,8 @@
         /* Whole-screen lookup: the captured frame, slightly blurred, with each word drawn as a sharp
            cut-out of it so the words stand out. The yellow highlights sit on top of the cut-out. */
         #frame.spotlight { filter: blur(2.5px) brightness(0.85); }
+        /* Live screen (no freeze): the same slight dim, with holes where the words are. */
+        #dim { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; pointer-events: none; display: none; }
         #words.spotlight .w, #words.spotlight .w:hover, #words.spotlight .w.seen, #words.spotlight .w.sel {
             background-color: transparent;
             background-repeat: no-repeat;
@@ -41,6 +43,7 @@
 <body>
     <img id="frame" alt="">
     <div id="shade"></div>
+    <canvas id="dim"></canvas>
     <div id="words"></div>
     <div id="hint">Clique em outra palavra · Esc para fechar</div>
     <script type="module" src="/src/overlay/main.js"></script>

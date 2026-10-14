@@ -41,7 +41,7 @@ async function fixture() {
         for (const [key, value] of Object.entries(stubs[name])) { this.setExport(key, value); }
     }, {context}));
     await module.evaluate();
-    return {root, frame, hint: others.hint, window, handlers, requests, emit: (payload) => emit(payload)};
+    return {root, frame, hint: others.hint, dim: others.dim, window, handlers, requests, emit: (payload) => emit(payload)};
 }
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {
@@ -152,4 +152,26 @@ test('with the frame loaded, a whole-screen lookup blurs it lightly and keeps wo
         spotlight: false, viewportWidth: 1920, viewportHeight: 1080});
     assert(!view.root.classList.contains('spotlight'));
     assert.equal(view.root.children[0].style.backgroundImage, undefined);
+});
+
+test('a live whole-screen lookup dims the screen slightly except under the words', async () => {
+    const view = await fixture();
+    const ops = [];
+    view.dim.getContext = () => ({
+        setTransform() {}, set fillStyle(v) { ops.push(['style', v]); },
+        clearRect: (...a) => ops.push(['clear', ...a]), fillRect: (...a) => ops.push(['fill', ...a]),
+    });
+    const word = {text: 'but', x: 10, y: 20, w: 30, h: 18};
+    view.emit({id: 1, words: [word], spotlight: true, viewportWidth: 1920, viewportHeight: 1080});
+    assert.equal(view.dim.style.display, 'block');
+    assert.deepEqual(ops.find((op) => op[0] === 'style'), ['style', 'rgba(0, 0, 0, 0.15)']);
+    assert.deepEqual(ops.find((op) => op[0] === 'fill'), ['fill', 0, 0, 1920, 1080]);
+    assert.deepEqual(ops.at(-1), ['clear', 9, 19, 32, 20], 'the word keeps its normal brightness');
+
+    // A frozen frame dims through its own filter; a lookup on a word does not dim.
+    view.emit({id: 2, words: [word], frameUrl: '/c/2/frame.png', frameRect: {text: '', x: 0, y: 0, w: 1920, h: 1080},
+        spotlight: true, viewportWidth: 1920, viewportHeight: 1080});
+    assert.equal(view.dim.style.display, 'none');
+    view.emit({id: 3, words: [word], spotlight: false, viewportWidth: 1920, viewportHeight: 1080});
+    assert.equal(view.dim.style.display, 'none');
 });

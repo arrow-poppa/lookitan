@@ -8,6 +8,9 @@ import {schemeBase} from '../lib/api.js';
 const root = document.getElementById('words');
 const frame = document.getElementById('frame');
 const hint = document.getElementById('hint');
+const dim = document.getElementById('dim');
+/** Same darkness as the frozen frame's brightness(0.85). */
+const DIM_ALPHA = 0.15;
 let current = null;
 let selected = null;
 /** Words already looked up in this overlay; they keep a faint highlight, as in Lookupper. */
@@ -42,6 +45,27 @@ function setSpotlight(on, blurred) {
     }
 }
 
+/**
+ * Whole-screen lookup on a live screen: darken it slightly except under the words, like
+ * Lookupper. A frozen frame does this with its own filter instead.
+ */
+function drawDim(on, scale) {
+    if (!dim || typeof dim.getContext !== 'function') { return; }
+    if (!on) { dim.style.display = 'none'; return; }
+    const ratio = window.devicePixelRatio || 1;
+    dim.width = Math.round(window.innerWidth * ratio);
+    dim.height = Math.round(window.innerHeight * ratio);
+    dim.style.display = 'block';
+    const ctx = dim.getContext('2d');
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.fillStyle = `rgba(0, 0, 0, ${DIM_ALPHA})`;
+    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    for (const w of current.words) {
+        ctx.clearRect(w.x * scale.x - 1, w.y * scale.y - 1, w.w * scale.x + 2, w.h * scale.y + 2);
+    }
+}
+
 /** Shows the part of the captured frame under the word, so it stays sharp over the blur. */
 function cutOut(el, w, f, scale) {
     el.style.backgroundImage = `url("${frame.src}")`;
@@ -57,6 +81,7 @@ function render() {
     }
     const blurred = Boolean(current.spotlight && current.frameRect && frame.src);
     setSpotlight(Boolean(current.spotlight), blurred);
+    drawDim(Boolean(current.spotlight) && !blurred, scale);
     const frag = document.createDocumentFragment();
     for (const w of current.words) {
         const el = document.createElement('div');

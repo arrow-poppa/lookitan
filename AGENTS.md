@@ -95,6 +95,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): whole-screen lookups on a live screen ("Sem congelar") are dimmed slightly too, like Lookupper. A `#dim` canvas fills black at 0.15 alpha, the same darkness as the frozen frame's brightness(0.85), with holes cleared over the words. A live screen cannot be blurred from the webview, so blur stays frozen-frame only.
+
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): the frozen, blurred screen of whole-screen lookups now depends on the app profile, as in Lookupper's "No freeze" menu. With "Sem congelar" (the default) the screen stays live under the yellow highlights; with "Congelar o quadro" it is frozen, and on whole-screen lookups also blurred and dimmed with sharp cut-outs.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): whole-screen lookups (`spotlight`) show the frame lightly blurred again (CSS blur 2.5 px, brightness 0.85: a slight dim the user asked for), with words as sharp cut-outs and the yellow highlights drawn on top via `::after`. Lookupper does this with OpenCV `imgproc_GaussianBlur` (OpenCvSharp) and `CroppedImage`; its exact kernel and sigma are not decompiled yet. The earlier 7 px blur with dimming looked wrong to the user.
