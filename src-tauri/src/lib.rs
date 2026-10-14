@@ -93,7 +93,12 @@ pub struct AppState {
 #[serde(rename_all = "camelCase")]
 pub struct LookupPayload {
     pub word: String,
+    /// The sentence holding the word: context translation and Anki.
     pub sentence: String,
+    /// The paragraph holding the word: what the AI reads and the pop-up shows as context.
+    pub context: String,
+    /// Where the word starts in `context`, in characters, when known.
+    pub context_at: Option<usize>,
     pub candidates: Vec<String>,
     pub entries: Vec<EntryRef>,
     pub engine: String,
@@ -480,6 +485,8 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 entries: lookup_words(&state, &pick.candidates),
                 word: pick.word,
                 sentence: pick.sentence,
+                context: pick.context,
+                context_at: Some(pick.context_at),
                 candidates: pick.candidates,
                 engine,
                 ocr_ms,
@@ -968,12 +975,13 @@ async fn update_dictionary(app: AppHandle, id: String, enabled: Option<bool>, mo
 }
 
 #[tauri::command]
-fn lookup_text(state: tauri::State<'_, AppState>, text: String, sentence: Option<String>) -> LookupPayload {
+fn lookup_text(state: tauri::State<'_, AppState>, text: String, sentence: Option<String>, context: Option<String>) -> LookupPayload {
     let candidates = manual_candidates(&text);
     let entries = lookup_words(&state, &candidates);
     LookupPayload {
         word: text.trim().to_string(),
         sentence: sentence.unwrap_or_default(),
+        context: context.unwrap_or_default(),
         candidates,
         entries,
         manual: true,
@@ -1003,6 +1011,8 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
         entries: lookup_words(&state, &pick.candidates),
         word: pick.word,
         sentence: pick.sentence,
+        context: pick.context,
+        context_at: Some(pick.context_at),
         candidates: pick.candidates,
         engine,
         ocr_ms,

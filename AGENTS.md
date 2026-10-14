@@ -73,6 +73,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - `words::paragraph` grows from the pointer line. It adds lines right above or below in the same column (gap ≤ 1 line height, height ratio ≤ 1.6) and pieces of the same row.
   - `sentence::split` applies Lookupper's rules (see the module header). Text longer than 400 characters without sentence marks falls back to the pointer row ±1.
   - `Pick.sentence_lines` frames the "sentence" screenshot (`focus_lines`).
+  - `Pick.context` is the whole paragraph, as Lookupper shows and sends it to its AI. Past 1500 characters it keeps the whole sentences nearest the word's. `context_at` locates the word in it.
+  - Who reads what (`aiText` in the popup): the AI word card and Explicar read `context`, and so does their `{{sentence}}` placeholder. The context translator and Anki's `{sentence}` read only `sentence`.
   - Lookupper's own paragraph thresholds (XpressOCR's layout analyzer) are not decoded; ours are our own.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
@@ -101,6 +103,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): the AI word card, Explicar and the pop-up's "Contexto" box use the word's whole paragraph (`Pick.context`, `LookupPayload.context`/`contextAt`), as in Lookupper. The context translator and Anki keep the sentence. `lookup_text` carries the context to lookups typed in the pop-up.
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): with "Cancelar pedidos pendentes" on, closing the pop-up now aborts its pending AI requests too, like Yomitan (where hiding the pop-up clears it). Before, only a new word did. This covers Esc/X, losing focus while unpinned, overlay dismissal, and a lookup that ends in the overlay without a pop-up. Rust emits `popup-hidden` (`dismiss_popup`/`popup_hidden`); the pop-up calls `responses.cancelPending()`. A new scan's own hide does not emit, so looking up the same word again keeps its request.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): sentence detection like Lookupper. The context was the pointer line ±1; it is now the sentence cut from the word's paragraph (`sentence.rs`, `words::paragraph`/`sentence_of`). The "sentence" screenshot frames that sentence's lines. The rules come from a disassembly of Lookupper's `ParseSentences`; behavior only, no code copied.

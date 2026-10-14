@@ -10,8 +10,13 @@ pub struct Pick {
     pub word: String,
     /// Forms to look up, best first. For unspaced scripts these are prefixes starting at the pointer.
     pub candidates: Vec<String>,
-    /// The sentence holding the word, cut from its paragraph (AI context and Anki's {sentence}).
+    /// The sentence holding the word, cut from its paragraph (context translation and Anki's
+    /// {sentence}).
     pub sentence: String,
+    /// The paragraph holding the word, as Lookupper shows and sends it to the AI.
+    pub context: String,
+    /// Where the word starts in `context`, in characters.
+    pub context_at: usize,
     /// Indices of the lines the sentence spans, for the "sentence" screenshot.
     #[serde(skip)]
     pub sentence_lines: Vec<usize>,
@@ -171,12 +176,14 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32) -> Option<Pick> {
     // For unspaced scripts the run past the pointer is only a guess; the pointer character
     // is enough to find the sentence.
     let span = if unspaced { ci..ci + 1 } else { start..end };
-    let (sentence, sentence_lines) = sentence_of(lines, line_idx, span);
+    let Context { sentence, sentence_lines, context, context_at } = context_of(lines, line_idx, span);
     Some(Pick {
         word,
         candidates,
         sentence,
         sentence_lines,
+        context,
+        context_at,
         x0: chars[start].x0,
         y0: line.y0,
         x1: chars[end.saturating_sub(1).max(start)].x1,
@@ -192,7 +199,8 @@ fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
 }
 
 // Like Lookupper, the context of a word is its paragraph, and its sentence is cut from it at the
-// sentence marks (see sentence.rs). Paragraphs are grown from the pointer line.
+// sentence marks (see sentence.rs). Paragraphs are grown from the pointer line. The AI gets the
+// paragraph; the context translation and Anki get the sentence.
 
 /// Vertical gap between two lines of one paragraph, in line heights.
 const MAX_LINE_GAP: f32 = 1.0;
@@ -205,6 +213,8 @@ const MAX_PARAGRAPH_LINES: usize = 60;
 /// Longest sentence kept whole. Longer text without sentence marks (menus, a wall of
 /// unpunctuated text) falls back to the pointer line and the lines directly around it.
 const MAX_SENTENCE_CHARS: usize = 400;
+/// Longest paragraph kept whole as context. A longer one keeps the sentences nearest the word's.
+const MAX_CONTEXT_CHARS: usize = 1500;
 
 fn height(l: &OcrLine) -> f32 {
     (l.y1 - l.y0).max(4.0)
@@ -297,11 +307,22 @@ fn join(lines: &[OcrLine], order: &[usize]) -> (Vec<char>, Vec<Piece>) {
     (text, pieces)
 }
 
-/// The sentence holding characters `span` of line `idx`, and the lines it spans.
-fn sentence_of(lines: &[OcrLine], idx: usize, span: std::ops::Range<usize>) -> (String, Vec<usize>) {
+/// What surrounds a picked word.
+struct Context {
+    sentence: String,
+    sentence_lines: Vec<usize>,
+    context: String,
+    context_at: usize,
+}
+
+/// The sentence and the paragraph holding characters `span` of line `idx`.
+fn context_of(lines: &[OcrLine], idx: usize, span: std::ops::Range<usize>) -> Context {
     let order = paragraph(lines, idx);
     let (text, pieces) = join(lines, &order);
-    let Some(p) = pieces.iter().find(|p| p.line == idx) else { return (lines[idx].text.trim().to_string(), vec![idx]) };
+    let Some(p) = pieces.iter().find(|p| p.line == idx) else {
+        let line = lines[idx].text.trim().to_string();
+        return Context { sentence: line.clone(), sentence_lines: vec![idx], context: line, context_at: 0 };
+    };
     let ws = p.at + span.start.saturating_sub(p.first).min(p.len);
     let we = (p.at + span.end.saturating_sub(p.first).min(p.len)).max(ws + 1);
     let ranges = crate::sentence::split(&text);
@@ -328,7 +349,46 @@ fn sentence_of(lines: &[OcrLine], idx: usize, span: std::ops::Range<usize>) -> (
         to -= 1;
     }
     let used = pieces.iter().filter(|q| q.len > 0 && q.at < to && q.at + q.len > from).map(|q| q.line).collect();
-    (text[from..to].iter().collect(), used)
+    let (a, b) = around(&text, &ranges, from, to);
+    Context {
+        sentence: text[from..to].iter().collect(),
+        sentence_lines: used,
+        context: text[a..b].iter().collect(),
+        context_at: ws.clamp(a, b) - a,
+    }
+}
+
+/// The span of the paragraph `text` used as context for the sentence `from..to`: all of it, or,
+/// past MAX_CONTEXT_CHARS, the whole sentences nearest it on both sides that fit.
+fn around(text: &[char], ranges: &[std::ops::Range<usize>], from: usize, to: usize) -> (usize, usize) {
+    let (mut a, mut b) = (0, text.len());
+    if b > MAX_CONTEXT_CHARS {
+        (a, b) = (from, to);
+        let mut before = ranges.iter().rev().filter(|r| r.end <= from).peekable();
+        let mut after = ranges.iter().filter(|r| r.start >= to).peekable();
+        loop {
+            let left = before.peek().filter(|r| b - r.start <= MAX_CONTEXT_CHARS).map(|r| r.start);
+            if let Some(s) = left {
+                a = s;
+                before.next();
+            }
+            let right = after.peek().filter(|r| r.end - a <= MAX_CONTEXT_CHARS).map(|r| r.end);
+            if let Some(e) = right {
+                b = e;
+                after.next();
+            }
+            if left.is_none() && right.is_none() {
+                break;
+            }
+        }
+    }
+    while a < b && text[a].is_whitespace() {
+        a += 1;
+    }
+    while b > a && text[b - 1].is_whitespace() {
+        b -= 1;
+    }
+    (a, b)
 }
 
 #[cfg(test)]
@@ -370,6 +430,33 @@ mod tests {
         let p = pick(&lines, 105.0, 270.0).unwrap();
         assert_eq!(p.sentence, "Another paragraph far below.");
         assert_eq!(p.sentence_lines, [3]);
+    }
+
+    #[test]
+    fn context_is_the_whole_paragraph_with_the_word_located() {
+        let lines = [
+            line("The quick brown fox jumps over the", 100.0, 100.0),
+            line("lazy dog. A second sentence starts", 100.0, 125.0),
+            line("here and ends here.", 100.0, 150.0),
+            line("Another paragraph far below.", 100.0, 260.0),
+        ];
+        let p = pick(&lines, 225.0, 135.0).unwrap();
+        assert_eq!(p.sentence, "A second sentence starts here and ends here.");
+        assert_eq!(p.context, "The quick brown fox jumps over the lazy dog. A second sentence starts here and ends here.");
+        let at: String = p.context.chars().skip(p.context_at).take(6).collect();
+        assert_eq!(at, "second");
+    }
+
+    #[test]
+    fn a_long_paragraph_keeps_the_whole_sentences_nearest_the_word() {
+        let lines: Vec<_> = (0..60).map(|i| line(&format!("Line {i:02} ends here with a few more words."), 100.0, 100.0 + i as f32 * 25.0)).collect();
+        let p = pick(&lines, 105.0, 100.0 + 30.0 * 25.0 + 10.0).unwrap();
+        assert_eq!(p.sentence, "Line 30 ends here with a few more words.");
+        assert!(p.context.chars().count() <= super::MAX_CONTEXT_CHARS);
+        assert!(p.context.starts_with("Line ") && p.context.ends_with("more words."));
+        let at: String = p.context.chars().skip(p.context_at).take(4).collect();
+        assert_eq!(at, "Line");
+        assert!(p.context.contains("Line 25 ") && p.context.contains("Line 35 "));
     }
 
     #[test]

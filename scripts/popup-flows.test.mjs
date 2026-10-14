@@ -71,7 +71,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         const module = stub ? new SyntheticModule(Object.keys(stub), function () {
             for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
         }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
-            '\nexport {runCard, runExplain, refreshAnkiButton, onAnkiClick};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+            '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
         {context, identifier: id});
         modules.set(id, module);
         await module.link((specifier) => get(specifier.startsWith('.') ? resolve(id, '..', specifier) : specifier));
@@ -107,6 +107,21 @@ test('popup forwards the streaming option and renders a safe card before complet
     await pending;
     assert.equal(view.lookup.aiCard.translation, 'correr');
     assert(!body.innerHTML.includes('Gerando'));
+});
+
+test('the word card and the explanation read the whole paragraph, the context translation only the sentence', async () => {
+    const texts = [];
+    const view = await fixture({explain: async (_options, _word, text) => { texts.push(text); return '{"headword":"run","definition":"move quickly"}'; }});
+    const paragraph = 'Run club. I run daily. It keeps me well.';
+    view.lookup.payload.context = paragraph;
+    view.lookup.payload.contextAt = 12;
+    Object.assign(view.ai, {customPrompt: 'explain', contextPrompt: 'translate'});
+    const card = new Element();
+    await view.popup.runCard(card);
+    await view.popup.runExplain(new Element());
+    await view.popup.runContext(new Element());
+    assert.deepEqual(texts, [paragraph, paragraph, 'I run daily.']);
+    assert(card.innerHTML.includes('Run club. I <mark>run</mark> daily.'), 'the word is marked where the OCR found it');
 });
 
 test('turning the word translation off drops it from the prompt and from the card', async () => {

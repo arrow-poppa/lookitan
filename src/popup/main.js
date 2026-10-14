@@ -24,13 +24,21 @@ let renderSequence = 0;
 /** Shared by every lookup while the popup lives, like the fork's generator cache. */
 const responses = new AiResponseCache(undefined, {storage: localStorage});
 
+/**
+ * The text the AI reads with the word. As in Lookupper, the word card and the explanation get the
+ * whole paragraph, and the context translation gets only the sentence.
+ */
+function aiText(kind, payload) {
+    return (kind === 'context' ? payload.sentence : payload.context || payload.sentence) || payload.word;
+}
+
 /** Cache key: everything that changes the answer, as the fork's options context + term + sentence. */
 async function aiKey(kind, prompt, lookup = state, options = ai) {
     // UI switches and credentials do not alter the answer. Never put API keys in persistent cache.
     const {apiKey: _credential, ...config} = options[options.provider] || {};
     const stable = Object.fromEntries(Object.entries(config).sort(([a], [b]) => a.localeCompare(b)));
     const content = responses.key([kind, options.provider, stable, options.temperature ?? 0.7,
-        options.systemPrompt || '', prompt, lookup.payload.word, lookup.payload.sentence || lookup.payload.word]);
+        options.systemPrompt || '', prompt, lookup.payload.word, aiText(kind, lookup.payload)]);
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
     return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -46,6 +54,18 @@ function markWord(text, word) {
     const i = text.toLowerCase().indexOf(word.toLowerCase());
     if (i < 0) { return safe; }
     return `${escapeHtml(text.slice(0, i))}<mark>${escapeHtml(text.slice(i, i + word.length))}</mark>${escapeHtml(text.slice(i + word.length))}`;
+}
+
+/** The paragraph around the word, the word marked where the OCR found it (else at its first match). */
+function markContext(p) {
+    const text = p.context || p.sentence || '';
+    const chars = Array.from(text);
+    const at = p.context ? p.contextAt : null;
+    const n = Array.from(p.word || '').length;
+    if (Number.isInteger(at) && n > 0 && chars.slice(at, at + n).join('').toLowerCase() === p.word.toLowerCase()) {
+        return `${escapeHtml(chars.slice(0, at).join(''))}<mark>${escapeHtml(chars.slice(at, at + n).join(''))}</mark>${escapeHtml(chars.slice(at + n).join(''))}`;
+    }
+    return markWord(text, p.word);
 }
 
 function section(title, {ai: isAi = false, onRegenerate = null} = {}) {
@@ -94,7 +114,7 @@ function renderCard(body, card, pending = false) {
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
-        ${!pending && p.sentence ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markWord(p.sentence, p.word)}</div></details>` : ''}`;
+        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markContext(p)}</div></details>` : ''}`;
     body.querySelector('.speak')?.addEventListener('click', () => speak(headword));
     body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => ev.currentTarget.classList.remove('hidden-tr'));
     body.querySelector('.explain-btn')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation')));
@@ -122,7 +142,7 @@ async function runExplain(target, force = false) {
         if (!current()) { return; }
         lookup.keys.add(key);
         const text = await responses.run(key,
-            (signal, onChunk) => explain(options, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
+            (signal, onChunk) => explain(options, lookup.payload.word, aiText('explain', lookup.payload), {signal, prompt, onChunk}),
             (_d, full) => { if (current()) { target.innerHTML = renderMarkdown(full); } }, {force});
         if (current()) {
             lookup.explanation = text;
@@ -152,7 +172,7 @@ async function runCard(body, force = false) {
         if (!current()) { return; }
         lookup.keys.add(key);
         const text = await responses.run(key,
-            (signal, onChunk) => explain(options, lookup.payload.word, lookup.payload.sentence || lookup.payload.word, {signal, prompt, onChunk}),
+            (signal, onChunk) => explain(options, lookup.payload.word, aiText('card', lookup.payload), {signal, prompt, onChunk}),
             (_delta, full) => {
                 if (!current()) { return; }
                 const partial = parseCardProgress(full);
@@ -458,7 +478,7 @@ async function render(payload) {
 async function lookup(text) {
     const t = text.trim();
     if (!t) { return; }
-    const payload = await api.lookupText(t, state?.payload.sentence || '');
+    const payload = await api.lookupText(t, state?.payload.sentence || '', state?.payload.context || '');
     payload.recognition = state?.payload.recognition ?? null;
     payload.app = state?.payload.app ?? null;
     await render(payload);

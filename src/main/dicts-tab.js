@@ -256,7 +256,7 @@ function testButton() {
 function renderAiWord(root) {
     const ai = store.ai;
     const s = store.settings;
-    const vars = escapeHtml('{{target}} (palavra), {{sentence}} (frase), {{definitionLanguage}}, {{translationLanguage}}');
+    const vars = escapeHtml('{{target}} (palavra), {{sentence}} (o parágrafo em volta da palavra), {{definitionLanguage}}, {{translationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-word']),
         el('p', {class: 'lead'}, 'Explica a palavra no sentido exato em que aparece na tela, com forma de dicionário, IPA, nível CEFR, classe gramatical, definição e tradução. Usa o seu provedor e o seu modelo (BYOK); nada passa por servidores do Lookitan.'),
@@ -283,7 +283,7 @@ function renderAiWord(root) {
 
 function renderAiContext(root) {
     const ai = store.ai;
-    const vars = escapeHtml('{{target}}, {{sentence}}, {{translationLanguage}}');
+    const vars = escapeHtml('{{target}}, {{sentence}} (só a frase da palavra), {{translationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-context']),
         el('p', {class: 'lead'}, 'Traduz a frase em volta da palavra e destaca a tradução da palavra. Usa o mesmo provedor de IA configurado em "IA — palavra no contexto".'),
