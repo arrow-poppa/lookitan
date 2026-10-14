@@ -135,8 +135,8 @@ const CAPTURE_PRESETS = [
 
 function captureRegionRows() {
     const s = store.settings;
-    const currentPreset = () => CAPTURE_PRESETS.find((p) => p.width === (s.captureWidth ?? 900) &&
-        p.height === (s.captureHeight ?? 260))?.value || 'custom';
+    const currentPreset = () => (s.captureAuto === true ? 'auto' : CAPTURE_PRESETS.find((p) => p.width === (s.captureWidth ?? 900) &&
+        p.height === (s.captureHeight ?? 260))?.value || 'custom');
     let presets;
     function dimension(key, label, minimum, fallback, id) {
         const input = el('input', {id, type: 'number', min: minimum, max: 4096, step: 1,
@@ -159,20 +159,27 @@ function captureRegionRows() {
     const size = cardRow({icon: 'focus', title: 'Tamanho da captura', desc: 'Região em volta do cursor, em pixels.', wide: true,
         control: el('div', {class: 'capture-size'}, width.label, height.label)});
     size.hidden = currentPreset() !== 'custom';
-    presets = select([...CAPTURE_PRESETS, {value: 'custom', label: 'Personalizada'}], currentPreset(), (value) => {
+    // "Automático" reads the whole monitor but recognizes only the block of text under the
+    // pointer, like Lookupper's pointer mode; the other choices read a fixed region.
+    const choices = [{value: 'auto', label: 'Automático (o bloco de texto sob o cursor)'}, ...CAPTURE_PRESETS, {value: 'custom', label: 'Personalizada'}];
+    presets = select(choices, currentPreset(), (value) => {
         size.hidden = value !== 'custom';
+        const auto = value === 'auto';
+        const modeChanged = (s.captureAuto === true) !== auto;
+        s.captureAuto = auto;
         const preset = CAPTURE_PRESETS.find((p) => p.value === value);
-        if (!preset) { return; }
-        s.captureWidth = preset.width;
-        s.captureHeight = preset.height;
-        width.input.value = preset.width;
-        height.input.value = preset.height;
-        save();
+        if (preset) {
+            s.captureWidth = preset.width;
+            s.captureHeight = preset.height;
+            width.input.value = preset.width;
+            height.input.value = preset.height;
+        }
+        if (preset || modeChanged) { save(); }
     });
     presets.id = 'capture-preset';
-    presets.setAttribute('aria-label', 'Proporção da região de OCR');
+    presets.setAttribute('aria-label', 'Região de captura do OCR');
     return [
-        cardRow({icon: 'focus', title: 'Proporção da região', desc: 'Escolha um formato ou personalize a largura e a altura.', wide: true, control: presets}),
+        cardRow({icon: 'focus', title: 'Região de captura', desc: 'Automático lê só o bloco de texto sob o cursor, como o Lookupper. Os formatos leem uma região fixa em volta dele.', wide: true, control: presets}),
         size,
     ];
 }

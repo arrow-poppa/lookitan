@@ -11,6 +11,9 @@ const root = document.getElementById('words');
 const frame = document.getElementById('frame');
 const hint = document.getElementById('hint');
 const dim = document.getElementById('dim');
+const block = document.getElementById('block');
+/** Margin around the highlighted block, in CSS pixels. */
+const BLOCK_PAD = 6;
 /** Same darkness as the frozen frame's brightness(0.85). */
 const DIM_ALPHA = 0.15;
 /** A whole-screen lookup fades in, so the screen darkens smoothly. */
@@ -65,6 +68,8 @@ function drawDim(on, scale) {
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     ctx.fillStyle = `rgba(0, 0, 0, ${DIM_ALPHA})`;
     ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    const b = blockRect();
+    if (b) { ctx.clearRect(b.x * scale.x, b.y * scale.y, b.w * scale.x, b.h * scale.y); }
     for (const w of current.words) {
         ctx.clearRect(w.x * scale.x - 1, w.y * scale.y - 1, w.w * scale.x + 2, w.h * scale.y + 2);
     }
@@ -77,6 +82,19 @@ function cutOut(el, w, f, scale) {
     el.style.backgroundPosition = `${(f.x - w.x) * scale.x}px ${(f.y - w.y) * scale.y}px`;
 }
 
+/** The block of text the shortcut was pressed on, with a margin; null when there is none. */
+function blockRect() {
+    const b = current?.block;
+    return b ? {x: b.x - BLOCK_PAD, y: b.y - BLOCK_PAD, w: b.w + 2 * BLOCK_PAD, h: b.h + 2 * BLOCK_PAD} : null;
+}
+
+function drawBlock(scale) {
+    if (!block) { return; }
+    const b = blockRect();
+    if (b) { position(block, b, scale); }
+    block.style.display = b ? 'block' : 'none';
+}
+
 function render() {
     if (!current) { return; }
     const scale = viewportScale();
@@ -86,6 +104,7 @@ function render() {
     const blurred = Boolean(current.spotlight && current.frameRect && frame.src);
     setSpotlight(Boolean(current.spotlight), blurred);
     drawDim(Boolean(current.spotlight) && !blurred, scale);
+    drawBlock(scale);
     const frag = document.createDocumentFragment();
     for (const w of current.words) {
         const el = document.createElement('div');

@@ -122,6 +122,10 @@ pub struct Settings {
     pub use_gpu: bool,
     /// Key for the Google Lens endpoint; Lookitan ships none.
     pub lens_api_key: String,
+    /// Automatic capture, as in Lookupper's pointer mode: the whole monitor is captured and
+    /// detected, and only the block of text under the pointer is recognized (see block.rs).
+    /// When off, the fixed region below is read.
+    pub capture_auto: bool,
     /// Size of the captured region around the pointer (region scope), in logical pixels.
     pub capture_width: u32,
     pub capture_height: u32,
@@ -162,6 +166,7 @@ impl Default for Settings {
             ocr_language: "en-US".into(),
             use_gpu: true,
             lens_api_key: String::new(),
+            capture_auto: true,
             capture_width: 900,
             capture_height: 260,
             dictionaries: builtin_dictionaries(),

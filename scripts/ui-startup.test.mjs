@@ -257,6 +257,27 @@ test('custom capture dimensions save on change and presets restore the original 
     assert.equal(view.document.getElementById('cap-w'), width, 'OCR status updates must preserve the editable region controls');
 });
 
+test('Automático is a capture choice that hides the size fields and leaves the size alone', async () => {
+    const fixture = await settingsFixture({ocrScope: 'region', captureAuto: true, captureWidth: 960, captureHeight: 540});
+    const {view, settings} = fixture;
+    const preset = view.document.getElementById('capture-preset');
+    const sizeRow = descendants(fixture.root).find((node) => node.className === 'card-row' && node.textContent.includes('Tamanho da captura'));
+    assert.equal(preset.value, 'auto');
+    assert.equal(sizeRow.hidden, true);
+    preset.value = 'custom';
+    preset.dispatch('change');
+    assert.equal(settings.captureAuto, false, 'a fixed region turns the automatic capture off');
+    assert.equal(sizeRow.hidden, false);
+    assert.equal(fixture.saves(), 1);
+    preset.value = 'auto';
+    preset.dispatch('change');
+    assert.equal(settings.captureAuto, true);
+    assert.equal(sizeRow.hidden, true);
+    assert.equal(settings.captureWidth, 960, 'the fixed size is kept for when the region is chosen again');
+    assert.equal(fixture.saves(), 2);
+    await fixture.finish();
+});
+
 test('invalid capture dimensions never persist and valid boundary values remain editable', async () => {
     const fixture = await settingsFixture({ocrScope: 'region', captureWidth: 810, captureHeight: 220});
     const {view, settings} = fixture;

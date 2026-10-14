@@ -43,7 +43,7 @@ async function fixture() {
         for (const [key, value] of Object.entries(stubs[name])) { this.setExport(key, value); }
     }, {context}));
     await module.evaluate();
-    return {root, frame, body, hint: others.hint, dim: others.dim, window, handlers, requests,
+    return {root, frame, body, hint: others.hint, dim: others.dim, block: others.block, window, handlers, requests,
         emit: (payload) => listeners.overlay({payload}), close: () => listeners['overlay-closed']({payload: null})};
 }
 
@@ -205,4 +205,17 @@ test('an empty click asks the backend to dismiss (pop-up first when pinned) and 
     view.handlers.mousedown({preventDefault() {}, target: null, clientX: 500, clientY: 500});
     view.handlers.keydown({key: 'Escape'});
     assert.deepEqual(view.requests.map((r) => r.command), ['overlay_pick', 'overlay_dismiss', 'overlay_close']);
+});
+
+test('a block of text pressed off its words is outlined, and only while the lookup has one', async () => {
+    const view = await fixture();
+    const word = {text: 'target', x: 110, y: 120, w: 50, h: 18};
+    view.emit({id: 1, words: [word], spotlight: true, block: {x: 100, y: 110, w: 300, h: 60}});
+    assert.equal(view.block.style.display, 'block');
+    assert.equal(view.block.style.left, '94px');
+    assert.equal(view.block.style.top, '104px');
+    assert.equal(view.block.style.width, '312px');
+    assert.equal(view.block.style.height, '72px');
+    view.emit({id: 2, words: [word]});
+    assert.equal(view.block.style.display, 'none');
 });

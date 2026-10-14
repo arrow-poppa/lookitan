@@ -76,6 +76,12 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - `Pick.context` is the whole paragraph, as Lookupper shows and sends it to its AI. Past 1500 characters it keeps the whole sentences nearest the word's. `context_at` locates the word in it.
   - Who reads what (`aiText` in the popup): the AI word card and Explicar read `context`, and so does their `{{sentence}}` placeholder. The context translator reads only `sentence`. Anki's `{sentence}` and cloze markers follow `anki.contextMode` (Anki › "Contexto no card"): `sentence` (the default) or `paragraph`. With `paragraph`, a lookup without a paragraph falls back to the sentence. Saved words keep `context` too, so exports from the Words tab follow the option.
   - Lookupper's own paragraph thresholds (XpressOCR's layout analyzer) are not decoded; ours are our own.
+- **Automatic capture (`captureAuto`, the default, "Automático" in Configurações › OCR › Região de captura):** as in Lookupper's pointer mode.
+  - The whole monitor is captured and detected, but only the block of text under the pointer is recognized (`block::under` on the detected boxes, `Reading::Block` in `ocr_pass`). The block is the pointed line plus the lines close around it: vertical gap ≤ 0.6 line height, row pieces ≤ 1.5, height ratio ≤ 1.6, at most 40 boxes. These thresholds are our own.
+  - Pointer on a word of the block: the pop-up opens, with no background pass.
+  - Pointer on the block but off its words: no pop-up. The overlay shows only that block's words and outlines the block (`Recognition.block`, `#block` in overlay.html), as Lookupper does.
+  - Pointer on no line: the whole-screen overlay, on the same capture.
+  - Choosing a fixed region turns it off (`captureAuto: false`).
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
@@ -103,6 +109,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): automatic capture, as in Lookupper's pointer mode. It detects the whole monitor and recognizes only the block under the pointer (`block.rs`, `Reading`). Pressed off the block's words, it outlines the block and shows only its words. It is the default (`Settings.capture_auto`), and the capture selector has "Automático". Lookupper findings behind it: the capture is on demand, through a kept-open DXGI duplication that is drained with a 0 ms timeout (not a background loop). The box under the cursor is a rotated-box test with the short side widened 20% per side; with no such box, everything is recognized.
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): Anki option "Contexto no card ({sentence})" (`anki.contextMode`): just the sentence, as before, or the whole paragraph sent to the AI. It applies to `{sentence}` and `{cloze-*}` in `buildNote`.
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): the AI word card, Explicar and the pop-up's "Contexto" box use the word's whole paragraph (`Pick.context`, `LookupPayload.context`/`contextAt`), as in Lookupper. The context translator and Anki keep the sentence. `lookup_text` carries the context to lookups typed in the pop-up.
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): with "Cancelar pedidos pendentes" on, closing the pop-up now aborts its pending AI requests too, like Yomitan (where hiding the pop-up clears it). Before, only a new word did. This covers Esc/X, losing focus while unpinned, overlay dismissal, and a lookup that ends in the overlay without a pop-up. Rust emits `popup-hidden` (`dismiss_popup`/`popup_hidden`); the pop-up calls `responses.cancelPending()`. A new scan's own hide does not emit, so looking up the same word again keeps its request.

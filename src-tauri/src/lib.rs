@@ -4,6 +4,7 @@
 // This program is free software: you can redistribute it and/or modify it under the terms of the
 // GNU General Public License version 3 as published by the Free Software Foundation.
 
+mod block;
 mod cards;
 mod dict;
 mod mdict;
@@ -64,6 +65,9 @@ struct Recognition {
     /// The whole monitor, captured with a region lookup when Anki's {screenshot} asks for the
     /// whole screen. `None` when `capture` already is the whole monitor.
     screen: Option<Capture>,
+    /// The block of text the shortcut was pressed on but off any of its words (automatic
+    /// capture), in image coordinates: the overlay highlights it, as Lookupper does.
+    block: Option<TextBox>,
     engine: String,
     ocr_ms: u64,
 }
@@ -130,6 +134,7 @@ struct OverlayPayload {
     frame_url: Option<String>,
     frame_rect: Option<OverlayWord>,
     spotlight: bool,
+    block: Option<OverlayWord>,
     viewport_width: f64,
     viewport_height: f64,
     complete: bool,
@@ -371,7 +376,9 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     let profile = fg.as_ref().map(|f| profile_for(app, f)).unwrap_or_default();
     let (cx, cy) = platform::cursor_position(app)?;
     let whole_screen = settings.ocr_scope == OcrScope::Screen;
-    let mut capture = if whole_screen {
+    // The automatic capture reads the whole monitor but recognizes only the block under the pointer.
+    let auto = !whole_screen && settings.capture_auto;
+    let mut capture = if whole_screen || auto {
         platform::capture_screen(cx, cy)?
     } else {
         platform::capture_around(cx, cy, settings.capture_width, settings.capture_height)?
@@ -380,7 +387,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     // what the user looked up.
     let anki_whole_screen = settings.anki.get("enable").and_then(|v| v.as_bool()).unwrap_or(false)
         && settings.anki.get("screenshotArea").and_then(|v| v.as_str()) == Some("whole");
-    let mut screen = if anki_whole_screen && !whole_screen {
+    let mut screen = if anki_whole_screen && !whole_screen && !auto {
         platform::capture_screen(cx, cy).map_err(|e| log::warn!("whole-screen capture for Anki failed: {e:#}")).ok()
     } else {
         None
@@ -403,22 +410,26 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     let (mut px, mut py) = capture.to_image(cx, cy);
 
     let started = Instant::now();
-    let mut pass = ocr_pass(&state, &settings, settings.engine_for(whole_screen), &capture.image, px, py, whole_screen)?;
+    let reading = if whole_screen { Reading::Screen } else if auto { Reading::Block } else { Reading::Region };
+    let mut pass = ocr_pass(&state, &settings, settings.engine_for(whole_screen), &capture.image, px, py, reading)?;
     let mut pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
     // Like Lookupper: a shortcut pressed away from text reads the whole screen and shows the
-    // clickable words without a pop-up; clicking one of them looks it up.
-    if pick.is_none() && !whole_screen {
-        // Reuse the whole-screen capture taken for Anki, if any.
-        capture = match screen.take() {
-            Some(s) => s,
-            None => platform::capture_screen(cx, cy)?,
-        };
-        monitor = platform::display_geometry(app, cx, cy, &capture)?;
+    // clickable words without a pop-up; clicking one of them looks it up. Pressed on a block of
+    // text but off its words, the automatic capture shows that block's words instead.
+    if pick.is_none() && !whole_screen && pass.block.is_none() {
+        if !auto {
+            // Reuse the whole-screen capture taken for Anki, if any.
+            capture = match screen.take() {
+                Some(s) => s,
+                None => platform::capture_screen(cx, cy)?,
+            };
+            monitor = platform::display_geometry(app, cx, cy, &capture)?;
+            (px, py) = capture.to_image(cx, cy);
+        }
         // From the moment of the capture, hold the clicks and the scroll wheel with the still
         // transparent overlay, so the screen cannot move away from the frame the OCR reads.
         show_overlay_window(app, monitor, true);
-        (px, py) = capture.to_image(cx, cy);
-        pass = ocr_pass(&state, &settings, settings.engine_for(true), &capture.image, px, py, true)?;
+        pass = ocr_pass(&state, &settings, settings.engine_for(true), &capture.image, px, py, Reading::Screen)?;
         pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
         // A click or Esc on the transparent overlay cancelled this lookup while it was read.
         if state.scan_seq.load(Ordering::SeqCst) != scan {
@@ -426,7 +437,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
             return Ok(());
         }
     }
-    let OcrPass { lines, engine, kind: ocr_kind, rest, paddle: paddle_engine, notice, key: ocr_key } = pass;
+    let OcrPass { lines, engine, kind: ocr_kind, rest, paddle: paddle_engine, notice, key: ocr_key, block: text_block } = pass;
     let ocr_ms = started.elapsed().as_millis() as u64;
 
     let id = state.recognition_seq.fetch_add(1, Ordering::SeqCst) + 1;
@@ -446,6 +457,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         freeze_frame: freeze == FreezeMode::Frame,
         spotlight: pick.is_none() && !(lines.is_empty() && rest.is_empty()),
         screen,
+        block: text_block.filter(|_| pick.is_none()),
         engine: engine.clone(),
         ocr_ms,
     });
@@ -549,17 +561,30 @@ struct OcrPass {
     paddle: Option<Arc<PaddleOcr>>,
     notice: Option<String>,
     key: FrameKey,
+    /// The block of text under the pointer (`Reading::Block`), when the pointer is on one.
+    block: Option<TextBox>,
+}
+
+/// What an OCR pass recognizes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// A region capture: the lines around the pointer.
+    Region,
+    /// The automatic capture: only the block of text under the pointer, out of the whole monitor.
+    Block,
+    /// A whole-screen capture: the lines around the pointer, then the rest in the background.
+    Screen,
 }
 
 /// Recognizes the lines around the pointer first. In a whole-screen pass the other boxes are
 /// returned in `rest` so the overlay can fill in while the user reads.
-fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, whole_screen: bool) -> Result<OcrPass> {
+fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, reading: Reading) -> Result<OcrPass> {
     let key = frame_key(image, &format!("{:?}|{}|{}|{}", kind, settings.ocr_language, settings.use_gpu,
         if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
     let mut notice = None;
     if kind == OcrEngineKind::Lens {
         match cached_lens(state, image, key, settings) {
-            Ok(lines) => return Ok(OcrPass { lines, engine: "Google Lens".into(), kind, rest: Vec::new(), paddle: None, notice, key }),
+            Ok(lines) => return Ok(OcrPass { lines, engine: "Google Lens".into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None }),
             Err(e) => notice = Some(format!("Google Lens failed, used PP-OCRv6 instead: {e:#}")),
         }
     }
@@ -573,13 +598,20 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
             boxes
         }
     };
-    let (focus, others) = split_focus(&boxes, px, py);
-    let rest = if whole_screen { others } else { Vec::new() };
-    // The lines around the pointer stay one run per line: the pop-up waits only for these.
-    let lines = cached_recognize(state, &p, image, key, &focus, false);
+    let (focus, rest, block) = if reading == Reading::Block {
+        let focus: Vec<TextBox> = block::under(&boxes, px, py).into_iter().map(|i| boxes[i]).collect();
+        let bounds = block::bounds(&focus);
+        (focus, Vec::new(), bounds)
+    } else {
+        let (focus, others) = split_focus(&boxes, px, py);
+        (focus, if reading == Reading::Screen { others } else { Vec::new() }, None)
+    };
+    // The lines around the pointer stay one run per line: the pop-up waits only for these. A
+    // larger block shares recognizer runs between lines of similar width.
+    let lines = cached_recognize(state, &p, image, key, &focus, reading == Reading::Block && focus.len() > 6);
     let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
     let engine = format!("PP-OCRv6 {} · {gpu}", p.det_model());
-    Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key })
+    Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key, block })
 }
 
 fn cached_recognize(state: &AppState, engine: &PaddleOcr, image: &image::RgbaImage, key: FrameKey, boxes: &[TextBox], batched: bool) -> Vec<OcrLine> {
@@ -654,6 +686,12 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             frame_url: with_frame.then(|| format!("/c/{id}/frame.png")),
             frame_rect,
             spotlight: r.spotlight,
+            block: r.block.map(|b| {
+                let (x0, y0) = r.capture.to_desktop(b.x0, b.y0);
+                let (x1, y1) = r.capture.to_desktop(b.x1, b.y1);
+                let (x, y, w, h) = css_rect(x0, y0, x1, y1);
+                OverlayWord { text: String::new(), x, y, w, h }
+            }),
             viewport_width,
             viewport_height,
             complete,

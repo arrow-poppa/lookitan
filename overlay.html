@@ -21,7 +21,12 @@
         #hint.spotlight { display: none; }
         /* Between lookups, and while a whole-screen lookup is still being read: nothing visible.
            The near-transparent shade stays, so the window still takes the clicks and the wheel. */
-        body.idle #frame, body.idle #dim, body.idle #words, body.idle #hint { visibility: hidden; }
+        body.idle #frame, body.idle #dim, body.idle #block, body.idle #words, body.idle #hint { visibility: hidden; }
+        /* The block of text the shortcut was pressed on, off its words (automatic capture). */
+        #block {
+            position: fixed; display: none; pointer-events: none; border-radius: 8px;
+            background: rgba(255, 255, 255, 0.07); box-shadow: 0 0 0 1px rgba(255, 221, 0, 0.6);
+        }
 
         /* Whole-screen lookup: the captured frame, slightly blurred, with each word drawn as a sharp
            cut-out of it so the words stand out. The yellow highlights sit on top of the cut-out. */
@@ -47,6 +52,7 @@
     <img id="frame" alt="">
     <div id="shade"></div>
     <canvas id="dim"></canvas>
+    <div id="block"></div>
     <div id="words"></div>
     <div id="hint">Clique em outra palavra · Esc para fechar</div>
     <script type="module" src="/src/overlay/main.js"></script>
