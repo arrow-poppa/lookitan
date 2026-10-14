@@ -322,26 +322,16 @@ test('whole-screen OCR engine is chosen separately and defaults to the pointer e
     await fixture.finish();
 });
 
-test('region geometry appears when selected and screen mode preserves the custom dimensions', async () => {
+test('the capture region is always editable and there is no scope selector', async () => {
     const fixture = await settingsFixture({captureWidth: 1000, captureHeight: 300});
     const {view, root, settings} = fixture;
-    const scopeControl = () => {
-        const row = descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes('Área lida'));
-        return descendants(row).find((node) => node.tagName === 'select');
-    };
-    assert.equal(view.document.getElementById('cap-w'), undefined);
-    scopeControl().value = 'region';
-    scopeControl().dispatch('change');
-    assert.equal(settings.ocrScope, 'region');
+    assert(!descendants(root).some((node) => node.className === 'card-row' && node.textContent.includes('Área lida')));
     assert.equal(view.document.getElementById('cap-w').value, '1000');
     assert.equal(view.document.getElementById('cap-h').value, '300');
     assert.equal(view.document.getElementById('capture-preset').value, 'custom');
-    scopeControl().value = 'screen';
-    scopeControl().dispatch('change');
-    assert.equal(view.document.getElementById('cap-w'), undefined);
     assert.equal(settings.captureWidth, 1000);
     assert.equal(settings.captureHeight, 300);
-    assert.equal(fixture.saves(), 2);
+    assert.equal(fixture.saves(), 0);
     await fixture.finish();
 });
 

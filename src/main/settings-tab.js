@@ -281,7 +281,7 @@ function render(root) {
 
     const lensKey = textInput(s.lensApiKey, (v) => { s.lensApiKey = v.trim(); save(); }, {type: 'password', placeholder: 'x-goog-api-key'});
     const screenEngine = s.screenOcrEngine ?? s.ocrEngine;
-    const usesLens = screenEngine === 'lens' || (s.ocrEngine === 'lens' && s.ocrScope !== 'screen');
+    const usesLens = screenEngine === 'lens' || s.ocrEngine === 'lens';
     const engineDesc = (engine) => engine === 'lens'
         ? 'Envia a captura ao Google (API não oficial). Se falhar, o PP-OCRv6 assume.'
         : 'Roda no seu computador; nada sai dele.';
@@ -290,19 +290,12 @@ function render(root) {
         {value: 'lens', label: 'Google Lens (nuvem)'},
     ], value, (v) => { set(v); save(); rerender(); });
     root.append(heading('OCR'), el('div', {class: 'group'},
-        cardRow({icon: 'scan', title: 'OCR em volta do cursor', desc: s.ocrScope === 'screen'
-                ? 'Não é usado quando a leitura é sempre da tela inteira.'
-                : `Lê a palavra sob o cursor. ${engineDesc(s.ocrEngine)}`, wide: true,
+        cardRow({icon: 'scan', title: 'OCR em volta do cursor', desc: `Lê a palavra sob o cursor. ${engineDesc(s.ocrEngine)}`, wide: true,
             control: engineSelect(s.ocrEngine, (v) => { s.ocrEngine = v; })}),
-        cardRow({icon: 'scan', title: 'OCR da tela inteira', desc: `Usado quando o atalho é apertado fora de uma palavra, ou quando a leitura é sempre da tela inteira. ${engineDesc(screenEngine)}`, wide: true,
+        cardRow({icon: 'scan', title: 'OCR da tela inteira', desc: `Usado quando o atalho é apertado fora de uma palavra; depois é só clicar na palavra. ${engineDesc(screenEngine)}`, wide: true,
             control: engineSelect(screenEngine, (v) => { s.screenOcrEngine = v; })}),
         usesLens ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'O Lookitan não vem com chave embutida.', wide: true, control: lensKey}) : null,
-        cardRow({icon: 'focus', title: 'Área lida', desc: 'Tela inteira deixa você clicar em qualquer outra palavra depois do OCR.', wide: true,
-            control: select([
-                {value: 'screen', label: 'Tela inteira'},
-                {value: 'region', label: 'Região em volta do cursor'},
-            ], s.ocrScope, (v) => { s.ocrScope = v; save(); rerender(); })}),
-        s.ocrScope === 'region' ? captureRegionRows() : null,
+        captureRegionRows(),
         cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: isWindows ? 'DirectML, com volta automática para a CPU.' : 'WebGPU via Vulkan (experimental), com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}),
         el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('alert')}),
             el('div', {class: 'txt'}, el('div', {class: 't'}, 'Estado do motor'), el('div', {class: 'd', id: 'engine-status'}, engineStatusText()))),
