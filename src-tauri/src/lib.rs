@@ -54,8 +54,9 @@ struct Recognition {
     app: Option<ForegroundApp>,
     frozen_pid: Option<u32>,
     freeze_frame: bool,
-    /// Whole-screen lookup without a pop-up: like Lookupper, the overlay shows the captured frame
-    /// slightly blurred (Lookupper uses OpenCV's GaussianBlur) with the words as sharp cut-outs.
+    /// Whole-screen lookup without a pop-up. With the app profile's "freeze frame", the overlay
+    /// shows the captured frame slightly blurred and dimmed (Lookupper uses OpenCV's GaussianBlur)
+    /// with the words as sharp cut-outs; without it the screen stays live, as in Lookupper.
     spotlight: bool,
     /// The whole monitor, captured with a region lookup when Anki's {screenshot} asks for the
     /// whole screen. `None` when `capture` already is the whole monitor.
@@ -586,7 +587,9 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             let (x, y, w, h) = css_rect(x0, y0, x1, y1);
             OverlayWord { text: String::new(), x, y, w, h }
         });
-        let with_frame = r.freeze_frame || r.spotlight;
+        // Only a profile set to freeze the frame shows the captured frame; otherwise the screen
+        // stays live under the word highlights.
+        let with_frame = r.freeze_frame;
         let frame_rect = with_frame.then(|| {
             let c = &r.capture;
             let (x, y, w, h) = css_rect(c.origin_x, c.origin_y,

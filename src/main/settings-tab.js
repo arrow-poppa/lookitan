@@ -179,7 +179,7 @@ function profilesCard() {
     const list = el('div', {class: 'profiles'});
     const header = el('div', {class: 'card-row', style: 'border-radius: 8px 8px 0 0'},
         el('span', {class: 'ico', html: icon('list')}),
-        el('div', {class: 'txt'}, el('div', {class: 't'}, `Perfis de jogos e programas (${profiles.length})`), el('div', {class: 'd'}, 'Configure cada jogo ou programa separadamente. Eles aparecem aqui quando você usa o Lookitan neles.')),
+        el('div', {class: 'txt'}, el('div', {class: 't'}, `Perfis de jogos e programas (${profiles.length})`), el('div', {class: 'd'}, 'Configure cada jogo ou programa separadamente. Eles aparecem aqui quando você usa o Lookitan neles. Por padrão, a tela não congela.')),
         el('div', {class: 'ctl'}));
     const addInput = textInput('', () => {}, {placeholder: 'programa.exe ou classe da janela'});
     addInput.style.minWidth = '220px';
@@ -204,6 +204,8 @@ function profilesCard() {
             {value: 'frame', label: 'Congelar o quadro'},
             {value: 'process', label: 'Congelar o processo'},
         ], p.freeze, (v) => { p.freeze = v; save(); });
+        freeze.title = 'Sem congelar: a tela continua ao vivo. Congelar o quadro: a tela fica parada durante a consulta e, ' +
+            'na leitura da tela inteira, levemente desfocada com as palavras em destaque. Congelar o processo: pausa o programa.';
         const del = el('button', {class: 'ghost icon', title: 'Remover', html: icon('trash', 'sm')});
         del.addEventListener('click', () => {
             store.settings.profiles = profiles.filter((x) => x !== p);
