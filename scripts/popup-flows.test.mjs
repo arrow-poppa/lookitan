@@ -103,6 +103,21 @@ test('popup forwards the streaming option and renders a safe card before complet
     assert(!body.innerHTML.includes('Gerando'));
 });
 
+test('the word translation can be turned off without changing the card', async () => {
+    const answer = '{"headword":"run","definition":"move quickly","translation":"correr"}';
+    const view = await fixture({explain: async () => answer});
+    view.settings.showWordTranslation = false;
+    const body = new Element();
+    await view.popup.runCard(body);
+    assert(body.innerHTML.includes('move quickly'));
+    assert(!body.innerHTML.includes('correr'));
+    assert.equal(view.lookup.aiCard.translation, 'correr', 'the translation stays in the card for Anki and saved words');
+    view.settings.showWordTranslation = true;
+    const shown = new Element();
+    await view.popup.runCard(shown);
+    assert(shown.innerHTML.includes('correr'));
+});
+
 test('late streaming chunks cannot overwrite a newer lookup', async () => {
     const finish = deferred();
     let chunk;

@@ -90,6 +90,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-14 (Claude): `showWordTranslation` (default on) turns the word translation on the AI card on or off; it is display-only, so the translation stays in the card data for Anki and saved words.
+
 - 2026-10-14 (Claude): reverted 5ab8870 (GPU retry after a failure); the original fallback is back, as the user prefers.
 
 - 2026-10-14 (Claude): removed the "Área lida" (scope) setting at the user's request; the scope is always Region.

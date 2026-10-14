@@ -130,6 +130,8 @@ pub struct Settings {
     /// Language of definitions and of AI explanations and translations.
     pub definition_language: String,
     pub translation_language: String,
+    /// Shows the word's translation on the AI word card.
+    pub show_word_translation: bool,
     pub hide_word_translation: bool,
     /// AI options, owned by the front end (same shape as the yomitan-byok-ai `ai` options).
     pub ai: serde_json::Value,
@@ -166,6 +168,7 @@ impl Default for Settings {
             save_words_automatically: false,
             definition_language: "en-US".into(),
             translation_language: "pt-BR".into(),
+            show_word_translation: true,
             hide_word_translation: false,
             ai: serde_json::Value::Null,
             anki: serde_json::Value::Null,

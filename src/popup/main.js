@@ -91,7 +91,7 @@ function renderCard(body, card, pending = false) {
     body.innerHTML = `
         <div class="hw"><span class="word">${escapeHtml(headword)}</span>${'speechSynthesis' in window ? `<button class="ghost icon speak" title="Ouvir">${icon('speaker')}</button>` : ''}</div>
         ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
-        ${card.translation ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
+        ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
         ${!pending && p.sentence ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markWord(p.sentence, p.word)}</div></details>` : ''}`;
