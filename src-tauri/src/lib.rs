@@ -427,9 +427,9 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         ocr_ms,
     });
 
-    // A whole-screen lookup without a pop-up dims the screen at once, and its words appear only
-    // when the background pass below has read the whole screen (see `emit_overlay`).
-    let spotlight = pick.is_none();
+    // Like Lookupper, the whole-screen overlay appears only once the whole screen is read: the
+    // background pass below shows it when it finishes.
+    let deferred = pick.is_none() && !rest.is_empty() && paddle_engine.is_some();
     match pick {
         None if lines.is_empty() && rest.is_empty() => {
             let payload = LookupPayload {
@@ -443,8 +443,9 @@ fn run_scan(app: &AppHandle) -> Result<()> {
             };
             show_popup(app, &payload, Some((cx, cy, cx, cy)));
         }
+        None if deferred => {}
         // Focus the overlay so Esc and clicks reach it.
-        None => show_overlay(app, id, None, rest.is_empty(), true),
+        None => show_overlay(app, id, None, true, true),
         Some(pick) => {
             let (x0, y0) = capture.to_desktop(pick.x0, pick.y0);
             let (x1, y1) = capture.to_desktop(pick.x1, pick.y1);
@@ -496,9 +497,18 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                         _ => return,
                     }
                 }
-                if !spotlight { emit_overlay(&app, id, None, false); }
+                if !deferred { emit_overlay(&app, id, None, false); }
             }
-            if current(&app) { emit_overlay(&app, id, None, true); }
+            if deferred {
+                if !current(&app) { return; }
+                show_overlay(&app, id, None, true, true);
+                // A scan that started meanwhile has already hidden the overlay; keep it hidden.
+                if !current(&app) {
+                    if let Some(w) = app.get_webview_window("overlay") { let _ = w.hide(); }
+                }
+            } else {
+                emit_overlay(&app, id, None, true);
+            }
             let _ = app.emit("engine-status", ());
         });
     }
@@ -591,10 +601,7 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
         let Some(r) = guard.as_mut().filter(|r| r.id == id) else { return };
         r.complete = complete;
         let css_rect = |x0, y0, x1, y1| r.monitor.css_rect((x0, y0, x1, y1), origin, scale);
-        // Like Lookupper, a whole-screen lookup shows its words all at once when the OCR is done,
-        // not one batch at a time; until then the overlay only dims the screen.
-        let lines: &[OcrLine] = if r.spotlight && !complete { &[] } else { &r.lines };
-        let words = words::word_boxes(lines)
+        let words = words::word_boxes(&r.lines)
             .into_iter()
             .map(|w| {
                 let (x0, y0) = r.capture.to_desktop(w.x0, w.y0);
