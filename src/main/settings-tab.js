@@ -150,13 +150,17 @@ function captureRegionRows() {
             }
             input.value = value;
             if (value !== s[key]) { s[key] = value; save(); }
-            presets.value = currentPreset();
         });
         return {input, label: el('label', {class: 'capture-dimension'}, el('span', {}, `${label} (px)`), input)};
     }
     const width = dimension('captureWidth', 'Largura', 200, 900, 'cap-w');
     const height = dimension('captureHeight', 'Altura', 60, 260, 'cap-h');
+    // The size is edited only under "Personalizada"; a preset sets it.
+    const size = cardRow({icon: 'focus', title: 'Tamanho da captura', desc: 'Região em volta do cursor, em pixels.', wide: true,
+        control: el('div', {class: 'capture-size'}, width.label, height.label)});
+    size.hidden = currentPreset() !== 'custom';
     presets = select([...CAPTURE_PRESETS, {value: 'custom', label: 'Personalizada'}], currentPreset(), (value) => {
+        size.hidden = value !== 'custom';
         const preset = CAPTURE_PRESETS.find((p) => p.value === value);
         if (!preset) { return; }
         s.captureWidth = preset.width;
@@ -169,8 +173,7 @@ function captureRegionRows() {
     presets.setAttribute('aria-label', 'Proporção da região de OCR');
     return [
         cardRow({icon: 'focus', title: 'Proporção da região', desc: 'Escolha um formato ou personalize a largura e a altura.', wide: true, control: presets}),
-        cardRow({icon: 'focus', title: 'Tamanho da captura', desc: 'Região em volta do cursor, em pixels.', wide: true,
-            control: el('div', {class: 'capture-size'}, width.label, height.label)}),
+        size,
     ];
 }
 

@@ -226,7 +226,12 @@ test('custom capture dimensions save on change and presets restore the original 
     const width = view.document.getElementById('cap-w');
     const height = view.document.getElementById('cap-h');
     const preset = view.document.getElementById('capture-preset');
+    const sizeRow = descendants(fixture.root).find((node) => node.className === 'card-row' && node.textContent.includes('Tamanho da captura'));
     assert.equal(preset.value, 'original');
+    assert.equal(sizeRow.hidden, true, 'a preset hides the size fields');
+    preset.value = 'custom';
+    preset.dispatch('change');
+    assert.equal(sizeRow.hidden, false, 'Personalizada shows the size fields');
     width.value = '1200';
     width.dispatch('input');
     assert.equal(settings.captureWidth, 900, 'partial typing must not save dimensions');
@@ -245,6 +250,7 @@ test('custom capture dimensions save on change and presets restore the original 
         assert.equal(settings.captureHeight, expectedHeight);
         assert.equal(width.value, String(expectedWidth));
         assert.equal(height.value, String(expectedHeight));
+        assert.equal(sizeRow.hidden, true);
     }
     assert.equal(fixture.saves(), 6);
     await fixture.finish();
@@ -286,7 +292,7 @@ test('invalid capture dimensions never persist and valid boundary values remain 
     await fixture.finish();
 });
 
-test('manual dimensions recognize a preset and choosing custom preserves the current capture size', async () => {
+test('typing a preset size keeps Personalizada, and choosing custom preserves the current capture size', async () => {
     const fixture = await settingsFixture({ocrScope: 'region'});
     const {view, settings} = fixture;
     const preset = view.document.getElementById('capture-preset');
@@ -301,7 +307,8 @@ test('manual dimensions recognize a preset and choosing custom preserves the cur
     width.dispatch('change');
     height.value = '540';
     height.dispatch('change');
-    assert.equal(preset.value, '16:9');
+    assert.equal(preset.value, 'custom', 'the fields stay open while they are edited');
+    assert.equal(settings.captureWidth, 960);
     assert.equal(fixture.saves(), 2);
     await fixture.finish();
 });
