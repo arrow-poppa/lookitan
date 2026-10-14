@@ -78,6 +78,9 @@ pub struct AppState {
     recognition: Mutex<Option<Recognition>>,
     ocr_cache: Mutex<OcrCache>,
     recognition_seq: AtomicU64,
+    /// Bumped when a scan starts, so background OCR of an older scan stops and never shows its
+    /// overlay over the new one.
+    scan_seq: AtomicU64,
     pub cards: CardStore,
     busy: AtomicBool,
     pinned: AtomicBool,
@@ -343,6 +346,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     if platform::session_kind() == SessionKind::KdeWayland {
         platform::kwin::track_for(std::time::Duration::from_secs(3));
     }
+    let scan = state.scan_seq.fetch_add(1, Ordering::SeqCst) + 1;
     // A new lookup replaces the previous overlay (and resumes a frozen app).
     close_overlay(app);
     if let Some(popup) = app.get_webview_window("popup") {
@@ -418,6 +422,9 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         ocr_ms,
     });
 
+    // Like Lookupper, the whole-screen overlay appears only once the whole screen is read: the
+    // background pass below shows it when it finishes.
+    let deferred = pick.is_none() && !rest.is_empty() && paddle_engine.is_some();
     match pick {
         None if lines.is_empty() && rest.is_empty() => {
             let payload = LookupPayload {
@@ -431,8 +438,9 @@ fn run_scan(app: &AppHandle) -> Result<()> {
             };
             show_popup(app, &payload, Some((cx, cy, cx, cy)));
         }
+        None if deferred => {}
         // Focus the overlay so Esc and clicks reach it.
-        None => show_overlay(app, id, None, rest.is_empty(), true),
+        None => show_overlay(app, id, None, true, true),
         Some(pick) => {
             let (x0, y0) = capture.to_desktop(pick.x0, pick.y0);
             let (x1, y1) = capture.to_desktop(pick.x1, pick.y1);
@@ -460,10 +468,15 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         let app = app.clone();
         let image = capture.image.clone();
         std::thread::spawn(move || {
+            let current = |app: &AppHandle| {
+                let state = app.state::<AppState>();
+                state.scan_seq.load(Ordering::SeqCst) == scan
+                    && matches!(state.recognition.lock().as_ref(), Some(r) if r.id == id)
+            };
             // Lines of similar width share one recognizer run.
             for chunk in plan_batches(&rest) {
                 // A new lookup supersedes this overlay; do not run another stale OCR batch.
-                if !matches!(app.state::<AppState>().recognition.lock().as_ref(), Some(r) if r.id == id) {
+                if !current(&app) {
                     return;
                 }
                 let more = if ocr_kind == OcrEngineKind::Paddle {
@@ -479,9 +492,18 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                         _ => return,
                     }
                 }
-                emit_overlay(&app, id, None, false);
+                if !deferred { emit_overlay(&app, id, None, false); }
             }
-            emit_overlay(&app, id, None, true);
+            if deferred {
+                if !current(&app) { return; }
+                show_overlay(&app, id, None, true, true);
+                // A scan that started meanwhile has already hidden the overlay; keep it hidden.
+                if !current(&app) {
+                    if let Some(w) = app.get_webview_window("overlay") { let _ = w.hide(); }
+                }
+            } else {
+                emit_overlay(&app, id, None, true);
+            }
             let _ = app.emit("engine-status", ());
         });
     }
@@ -1081,6 +1103,7 @@ pub fn run() {
                 recognition: Mutex::new(None),
                 ocr_cache: Mutex::new(OcrCache::default()),
                 recognition_seq: AtomicU64::new(0),
+                scan_seq: AtomicU64::new(0),
                 cards: CardStore::open(&data_dir),
                 busy: AtomicBool::new(false),
                 pinned: AtomicBool::new(false),
