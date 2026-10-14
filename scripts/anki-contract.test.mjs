@@ -49,6 +49,40 @@ test('Anki legacy RPC preserves version, authentication, model fields and note p
     assert.deepEqual(requests.find(({body}) => body.action === 'addNote').body.params, {note});
 });
 
+function forbidden() { return {ok: false, status: 403, text: async () => ''}; }
+
+test('a 403 from AnkiConnect asks for permission once and retries the request', async () => {
+    const actions = [];
+    let trusted = false;
+    const {client} = await clientFixture(async (_url, init) => {
+        const {action} = JSON.parse(init.body);
+        actions.push(action);
+        if (action === 'requestPermission') { trusted = true; return response({permission: 'granted', requireApikey: false, version: 6}); }
+        if (!trusted) { return forbidden(); }
+        return response({version: 6, deckNames: ['Study']}[action]);
+    });
+    const [decks, again] = await Promise.all([client.getDeckNames(), client.getDeckNames()]);
+    assert.deepEqual([...decks], ['Study']);
+    assert.deepEqual([...again], ['Study']);
+    assert.equal(actions.filter((a) => a === 'requestPermission').length, 1, 'concurrent requests share one Anki prompt');
+});
+
+test('a denied AnkiConnect permission explains what to do in Anki', async () => {
+    const {client} = await clientFixture(async (_url, init) => JSON.parse(init.body).action === 'requestPermission' ?
+        response({permission: 'denied'}) : forbidden());
+    await assert.rejects(client.getDeckNames(), /recusou o acesso do Lookitan/);
+});
+
+test('a 403 after permission was granted is reported instead of looping', async () => {
+    let permissions = 0;
+    const {client} = await clientFixture(async (_url, init) => {
+        if (JSON.parse(init.body).action === 'requestPermission') { permissions++; return response({permission: 'granted'}); }
+        return forbidden();
+    });
+    await assert.rejects(client.getDeckNames(), /bloqueou o Lookitan \(403\)/);
+    assert.equal(permissions, 1);
+});
+
 test('Anki wrapped success replies do not treat error:null as failure', async () => {
     const replies = {version: 6, deckNames: ['Study'], addNote: null};
     const {client} = await clientFixture(async (_url, init) => response({result: replies[JSON.parse(init.body).action], error: null}));

@@ -44,6 +44,8 @@ export class AnkiConnect {
         this._versionCheckPromise = null;
         /** @type {?string} */
         this._apiKey = null;
+        /** @type {?Promise<void>} */
+        this._permissionPromise = null;
     }
 
     /**
@@ -478,12 +480,13 @@ export class AnkiConnect {
      * @param {import('core').SerializableObject} params
      * @returns {Promise<unknown>}
      */
-    async _invoke(action, params) {
+    async _invoke(action, params, {timeoutMs = 5000, retried = false} = {}) {
         /** @type {import('anki').MessageBody} */
         const body = {action, params, version: this._localVersion};
         if (this._apiKey !== null) { body.key = this._apiKey; }
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const timedOut = `Tempo de conexão com o Anki esgotado (${Math.round(timeoutMs / 1000)} s)`;
         try {
             let response;
             try {
@@ -498,14 +501,25 @@ export class AnkiConnect {
                     connectTimeout: 5000,
                 });
             } catch (e) {
-                const error = new ExtensionError(controller.signal.aborted ? 'Tempo de conexão com o Anki esgotado (5 s)' :
+                const error = new ExtensionError(controller.signal.aborted ? timedOut :
                     `Falha na conexão com o Anki: ${e?.message || e}`);
                 error.data = {action, params, originalError: e};
                 throw error;
             }
 
+            // AnkiConnect answers 403 to every origin outside webCorsOriginList. Unlike Yomitan's
+            // extension origin, the Lookitan webview origin is not allowed by default, so ask
+            // AnkiConnect for permission once (Anki shows a Yes/No prompt) and retry.
+            if (response.status === 403 && action !== 'requestPermission' && !retried) {
+                clearTimeout(timeout);
+                await this._requestPermission();
+                return await this._invoke(action, params, {timeoutMs, retried: true});
+            }
+
             if (!response.ok) {
-                const error = new ExtensionError(`Anki connection error: ${response.status}`);
+                const error = new ExtensionError(response.status === 403 ?
+                    'O AnkiConnect bloqueou o Lookitan (403). Aceite o pedido de permissão que aparece no Anki.' :
+                    `Anki connection error: ${response.status}`);
                 error.data = {action, params, status: response.status};
                 throw error;
             }
@@ -517,7 +531,7 @@ export class AnkiConnect {
                 responseText = await response.text();
                 result = parseJson(responseText);
             } catch (e) {
-                const error = new ExtensionError(controller.signal.aborted ? 'Tempo de conexão com o Anki esgotado (5 s)' : 'Invalid Anki response');
+                const error = new ExtensionError(controller.signal.aborted ? timedOut : 'Invalid Anki response');
                 error.data = {action, params, status: response.status, responseText, originalError: e};
                 throw error;
             }
@@ -537,6 +551,25 @@ export class AnkiConnect {
 
             return result;
         } finally { clearTimeout(timeout); }
+    }
+
+    /**
+     * Asks AnkiConnect to trust this app's origin. Anki shows a Yes/No prompt and waits for the
+     * user, so this call gets a long timeout. Concurrent requests share one prompt.
+     * @returns {Promise<void>}
+     */
+    _requestPermission() {
+        if (this._permissionPromise === null) {
+            this._permissionPromise = (async () => {
+                const result = await this._invoke('requestPermission', {}, {timeoutMs: 120000});
+                const permission = typeof result === 'object' && result !== null ? /** @type {{permission?: unknown}} */ (result).permission : null;
+                if (permission !== 'granted') {
+                    throw new ExtensionError('O Anki recusou o acesso do Lookitan. Tente de novo e clique em "Sim" no aviso do AnkiConnect. ' +
+                        'Se você marcou "Ignorar", remova o Lookitan da lista ignoreOriginList nas configurações do AnkiConnect.');
+                }
+            })().finally(() => { this._permissionPromise = null; });
+        }
+        return this._permissionPromise;
     }
 
     /**

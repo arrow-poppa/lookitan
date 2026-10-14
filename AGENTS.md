@@ -76,6 +76,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - On Wayland, the global shortcut is a system shortcut that runs `lookitan --scan`.
 - **AI cache:** same semantics as the fork. It has a 60 s TTL, joins in-flight requests and never caches partial or failed answers. `cancelPendingExcept` drops requests the pop-up no longer shows.
 - **Anki:** uses Yomitan's `anki` options shape and field markers, through AnkiConnect.
+  - tauri-plugin-http always sends `Origin: http://tauri.localhost` (Windows) or `tauri://localhost` (Linux). AnkiConnect allows only `http://localhost`, 127.0.0.1 and browser-extension origins by default (that is why Yomitan works) and answers 403 to anything else.
+  - On a 403, `AnkiConnect._invoke` calls `requestPermission` once, with a 120 s timeout because Anki shows a Yes/No prompt, then retries. On "Yes", AnkiConnect adds the origin to `webCorsOriginList` for good.
 
 ## Working
 
@@ -89,6 +91,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-14 (Claude): fixed Anki always failing with 403: Lookitan now asks AnkiConnect for permission (`requestPermission`) and retries.
 
 - 2026-10-14 (Claude): `showWordTranslation` (default on) turns the word translation on the AI card on or off; it is display-only, so the translation stays in the card data for Anki and saved words.
 
