@@ -1,8 +1,14 @@
 // Prompts and parsing for the two built-in AI "dictionaries": the word card (word in context, with
 // IPA, CEFR level, part of speech, definition and translation) and the context translator.
 
-/** The translation key of CARD_PROMPT, left out when the word translation is turned off. */
-export const CARD_TRANSLATION_FIELD = ', "translation": the translation of the word in this context into {{translationLanguage}}';
+/** Default instruction for the card's "translation" key (the "Prompt da tradução da palavra"). */
+export const WORD_TRANSLATION_PROMPT = 'the translation of the word in this context into {{translationLanguage}}';
+
+/** Where the card prompt receives the translation key; empty when the word translation is off. */
+export const TRANSLATION_FIELD = '{{translationField}}';
+
+/** The translation clause of the card prompt before it had its own field (for migration). */
+export const LEGACY_TRANSLATION_FIELD = `, "translation": ${WORD_TRANSLATION_PROMPT}`;
 
 export const CARD_PROMPT =
     "Word: '{{target}}'\n" +
@@ -13,8 +19,8 @@ export const CARD_PROMPT =
     '"cefr": CEFR level (A1, A2, B1, B2, C1 or C2) or "", ' +
     '"partOfSpeech": ["noun", ...], ' +
     '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
-    '"definition": a one or two sentence definition in {{definitionLanguage}}, ' +
-    '"translation": the translation of the word in this context into {{translationLanguage}}}';
+    '"definition": a one or two sentence definition in {{definitionLanguage}}' +
+    TRANSLATION_FIELD + '}';
 
 export const CONTEXT_PROMPT =
     'Translate the text below into {{translationLanguage}}. ' +
@@ -42,13 +48,18 @@ export function fillLanguages(template, settings) {
 }
 
 /**
- * The word-card prompt as sent: languages filled in and, when the word translation is turned off,
- * without the translation key so the model does not spend tokens on it. A custom prompt that
- * does not contain that key is left as it is.
+ * The word-card prompt as sent. {{translationField}} becomes the "translation" key with the word
+ * translation prompt, or nothing when the word translation is turned off, so the model spends no
+ * tokens on it. A card prompt without the marker is sent as written.
+ * @param {string} template
+ * @param {{showWordTranslation?: boolean}} settings
+ * @param {{wordTranslationPrompt?: string}} [ai]
  */
-export function cardPrompt(template, settings) {
-    const prompt = settings.showWordTranslation === false ? template.replace(CARD_TRANSLATION_FIELD, '') : template;
-    return fillLanguages(prompt, settings);
+export function cardPrompt(template, settings, ai = {}) {
+    const instruction = typeof ai.wordTranslationPrompt === 'string' && ai.wordTranslationPrompt.trim() !== '' ?
+        ai.wordTranslationPrompt.trim() : WORD_TRANSLATION_PROMPT;
+    const field = settings.showWordTranslation === false ? '' : `, "translation": ${instruction}`;
+    return fillLanguages(template.replaceAll(TRANSLATION_FIELD, field), settings);
 }
 
 /**

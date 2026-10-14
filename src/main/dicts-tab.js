@@ -5,7 +5,7 @@ import {open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {DEFAULT_PROMPT} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
-import {CARD_PROMPT, CONTEXT_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
+import {CARD_PROMPT, CONTEXT_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
 import {cardRow, el, languageOptions, select, textArea, textInput, toggle} from './ui.js';
@@ -263,7 +263,7 @@ function renderAiWord(root) {
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             ...languageRows(),
-            cardRow({icon: 'eye', title: 'Tradução da palavra', desc: 'Desligada, a IA nem gera a tradução, o que gasta menos tokens. Com um prompt do card personalizado, só some da tela.',
+            cardRow({icon: 'eye', title: 'Tradução da palavra', desc: 'Desligada, a IA nem gera a tradução, o que gasta menos tokens.',
                 control: toggle(s.showWordTranslation !== false, (v) => { s.showWordTranslation = v; save(); renderDetail(); })}),
             s.showWordTranslation !== false ? cardRow({icon: 'eyeOff', title: 'Ocultar a tradução da palavra', desc: 'A tradução só aparece quando você clica nela.',
                 control: toggle(s.hideWordTranslation, (v) => { s.hideWordTranslation = v; save(); })}) : null),
@@ -271,7 +271,8 @@ function renderAiWord(root) {
         providerSection(),
         el('h3', {}, 'Prompts'),
         el('div', {class: 'group'},
-            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
+            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
+            promptCard('Prompt da tradução da palavra', `O que a IA põe no campo "translation" do card. Só é enviado com a tradução da palavra ligada. Variáveis: ${vars}.`, () => ai.wordTranslationPrompt, (v) => { ai.wordTranslationPrompt = v; }, WORD_TRANSLATION_PROMPT, 'wordTranslationPrompt'),
             promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT, 'customPrompt'),
             el('div', {class: 'card-row stack'},
                 el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado em todos os pedidos (card, explicação e tradução). Opcional.'))),

@@ -150,7 +150,7 @@ test('every BYOK provider option remains reachable when switching AI providers',
         fixture.change('provider', provider);
         for (const key of keys) { assert(fixture.control(`${provider}.${key}`), `${provider}.${key} must be visible`); }
         for (const key of ['provider', 'temperature', 'customPrompt', 'systemPrompt', 'autoGenerateOnLookup',
-            'streamResponse', 'cancelPendingRequests', 'unknownWordFallback', 'autoExplain', 'cardPrompt']) {
+            'streamResponse', 'cancelPendingRequests', 'unknownWordFallback', 'autoExplain', 'cardPrompt', 'wordTranslationPrompt']) {
             assert(fixture.control(key), `${key} must be visible`);
         }
         assert(!descendants(fixture.root).some((node) => node.tagName === '#text' && node.textContent === 'null'));

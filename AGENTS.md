@@ -94,7 +94,7 @@ Newest first. One line per change that matters to the next agent.
 
 - 2026-10-14 (Claude): fixed Anki always failing with 403: Lookitan now asks AnkiConnect for permission (`requestPermission`) and retries.
 
-- 2026-10-14 (Claude): `showWordTranslation` (default on) turns the word translation on the AI card on or off. When off, `cardPrompt()` drops the translation key from the default card prompt, so the model does not generate it and Anki/saved words get no translation. A custom card prompt without that exact key is only hidden on screen.
+- 2026-10-14 (Claude): `showWordTranslation` (default on) turns the word translation on the AI card on or off. The card prompt has a `{{translationField}}` marker; `cardPrompt()` fills it with `, "translation": <wordTranslationPrompt>` when the option is on and with nothing when it is off, so the model spends no tokens on it. `normalizeAiOptions` migrates older saved card prompts by replacing the old default translation clause with the marker.
 
 - 2026-10-14 (Claude): reverted 5ab8870 (GPU retry after a failure); the original fallback is back, as the user prefers.
 

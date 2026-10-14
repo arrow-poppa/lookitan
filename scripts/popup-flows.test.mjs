@@ -117,9 +117,11 @@ test('turning the word translation off drops it from the prompt and from the car
     assert(body.innerHTML.includes('move quickly'));
     assert(!body.innerHTML.includes('correr'));
     view.settings.showWordTranslation = true;
+    view.ai.wordTranslationPrompt = 'one word only, in {{translationLanguage}}';
     const shown = new Element();
     await view.popup.runCard(shown);
-    assert(prompts[1].includes('"translation"'));
+    assert(prompts[1].includes('"translation": one word only, in '), 'the word translation prompt fills the marker');
+    assert(!prompts[1].includes('{{translationField}}'));
     assert(shown.innerHTML.includes('correr'));
 });
 

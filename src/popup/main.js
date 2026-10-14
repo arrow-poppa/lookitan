@@ -147,7 +147,7 @@ async function runCard(body, force = false) {
     void refreshAnkiButton();
     body.innerHTML = shimmer();
     try {
-        const prompt = cardPrompt(options.cardPrompt, settings);
+        const prompt = cardPrompt(options.cardPrompt, settings, options);
         const key = await aiKey('card', prompt, lookup, options);
         if (!current()) { return; }
         lookup.keys.add(key);
@@ -384,7 +384,7 @@ async function render(payload) {
     if (ai.cancelPendingRequests !== false) {
         // Keep a request for this same word and sentence running; drop the others.
         const keep = new Set(await Promise.all([
-            aiKey('card', cardPrompt(ai.cardPrompt, settings)),
+            aiKey('card', cardPrompt(ai.cardPrompt, settings, ai)),
             aiKey('context', fillLanguages(ai.contextPrompt, settings)),
             aiKey('explain', fillLanguages(ai.customPrompt, settings)),
         ]));
