@@ -54,6 +54,9 @@ struct Recognition {
     app: Option<ForegroundApp>,
     frozen_pid: Option<u32>,
     freeze_frame: bool,
+    /// Whole-screen lookup without a pop-up: the overlay blurs the captured frame and shows the
+    /// words as sharp cut-outs of it, as Lookupper does.
+    spotlight: bool,
     engine: String,
     ocr_ms: u64,
 }
@@ -111,6 +114,7 @@ struct OverlayPayload {
     selected: Option<OverlayWord>,
     frame_url: Option<String>,
     frame_rect: Option<OverlayWord>,
+    spotlight: bool,
     viewport_width: f64,
     viewport_height: f64,
     complete: bool,
@@ -391,6 +395,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         app: fg.clone(),
         frozen_pid,
         freeze_frame: profile.freeze == FreezeMode::Frame,
+        spotlight: pick.is_none() && !(lines.is_empty() && rest.is_empty()),
         engine: engine.clone(),
         ocr_ms,
     });
@@ -564,7 +569,8 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             let (x, y, w, h) = css_rect(x0, y0, x1, y1);
             OverlayWord { text: String::new(), x, y, w, h }
         });
-        let frame_rect = r.freeze_frame.then(|| {
+        let with_frame = r.freeze_frame || r.spotlight;
+        let frame_rect = with_frame.then(|| {
             let c = &r.capture;
             let (x, y, w, h) = css_rect(c.origin_x, c.origin_y,
                 c.origin_x + c.image.width() as f64 / c.scale, c.origin_y + c.image.height() as f64 / c.scale);
@@ -574,8 +580,9 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             id,
             words,
             selected,
-            frame_url: r.freeze_frame.then(|| format!("/c/{id}/frame.png")),
+            frame_url: with_frame.then(|| format!("/c/{id}/frame.png")),
             frame_rect,
+            spotlight: r.spotlight,
             viewport_width,
             viewport_height,
             complete,
@@ -664,7 +671,16 @@ pub fn capture_png(state: &AppState, id: Option<u64>, area: &str) -> Option<Vec<
         img.clone()
     };
     let mut png = Vec::new();
-    image::DynamicImage::ImageRgba8(cropped).write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    if area == "whole" {
+        // The overlay waits for this frame; favour encoding speed over file size.
+        use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
+        use image::ImageEncoder;
+        PngEncoder::new_with_quality(&mut png, CompressionType::Fast, PngFilter::NoFilter)
+            .write_image(cropped.as_raw(), cropped.width(), cropped.height(), image::ExtendedColorType::Rgba8)
+            .ok()?;
+    } else {
+        image::DynamicImage::ImageRgba8(cropped).write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    }
     Some(png)
 }
 

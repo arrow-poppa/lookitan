@@ -19,6 +19,7 @@ The user is on **Fedora with KDE Plasma on Wayland**. Linux, KDE Wayland and the
 | `main` | Claude (Claude Code) | Claude commits here. |
 | `codex/restore-stable-lookup` | Codex | Codex commits here. |
 
+- Feature branches named `claude/…` are Claude's experiments; they reach `main` only when the user approves.
 - Do not commit to the other agent's branch.
 - To take the other agent's work, merge its branch into yours. Fast-forward when possible. Do not rebase or force-push a shared branch.
 - On 2026-10-13, `main` was fast-forwarded to the codex tip `9ce4339`, so both branches started from the same commit.
@@ -93,6 +94,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): Lookupper-style overlay. A whole-screen lookup without a pop-up (`Recognition.spotlight`) blurs and dims the captured frame and draws each word as a sharp cut-out of it, like Lookupper's `CroppedImage`. Word boxes have no borders. The full frame is encoded as a fast PNG.
 
 - 2026-10-14 (Claude): Yomitan's per-dictionary and popup-selection Anki markers, plus `{ai-explanation-plain}`; Markdown helpers moved to `src/lib/markdown.js`.
 

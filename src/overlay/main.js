@@ -7,6 +7,7 @@ import {schemeBase} from '../lib/api.js';
 
 const root = document.getElementById('words');
 const frame = document.getElementById('frame');
+const shade = document.getElementById('shade');
 let current = null;
 let selected = null;
 
@@ -32,12 +33,28 @@ function containsCenter(w, s) {
     return cx >= w.x && cx <= w.x + w.w && cy >= w.y && cy <= w.y + w.h;
 }
 
+function setSpotlight(on) {
+    for (const el of [root, frame, shade]) {
+        if (!el) { continue; }
+        if (on) { el.classList.add('spotlight'); } else { el.classList.remove('spotlight'); }
+    }
+}
+
+/** Shows the part of the captured frame under the word, so it stays sharp over the blur. */
+function cutOut(el, w, f, scale) {
+    el.style.backgroundImage = `url("${frame.src}")`;
+    el.style.backgroundSize = `${f.w * scale.x}px ${f.h * scale.y}px`;
+    el.style.backgroundPosition = `${(f.x - w.x) * scale.x}px ${(f.y - w.y) * scale.y}px`;
+}
+
 function render() {
     if (!current) { return; }
     const scale = viewportScale();
     if (current.frameRect) {
         position(frame, current.frameRect, scale);
     }
+    const spotlight = Boolean(current.spotlight && current.frameRect && frame.src);
+    setSpotlight(spotlight);
     const frag = document.createDocumentFragment();
     for (const w of current.words) {
         const el = document.createElement('div');
@@ -46,6 +63,7 @@ function render() {
             el.classList.add('sel');
         }
         position(el, w, scale);
+        if (spotlight) { cutOut(el, w, current.frameRect, scale); }
         el.title = w.text;
         frag.appendChild(el);
     }

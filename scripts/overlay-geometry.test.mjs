@@ -114,3 +114,21 @@ test('a browser viewport resize updates borders before another OCR or backend ev
     assert.equal(view.requests[0].args.x, 150);
     assert.equal(view.requests[0].args.y, 110);
 });
+
+test('a whole-screen lookup blurs the frame and shows each word as a sharp cut-out of it', async () => {
+    const view = await fixture();
+    const frameRect = {text: '', x: 0, y: 0, w: 1920, h: 1080};
+    view.emit({id: 1, words: [{text: 'word', x: 10, y: 20, w: 50, h: 18}], frameUrl: '/c/1/frame.png', frameRect,
+        spotlight: true, viewportWidth: 1920, viewportHeight: 1080});
+    assert(view.root.classList.contains('spotlight') && view.frame.classList.contains('spotlight'));
+    const word = view.root.children[0];
+    assert.equal(word.style.backgroundImage, 'url("lkt://localhost/c/1/frame.png")');
+    assert.equal(word.style.backgroundSize, '1920px 1080px');
+    assert.equal(word.style.backgroundPosition, '-10px -20px');
+
+    // A frozen frame without spotlight (a lookup on a word) keeps the plain translucent boxes.
+    view.emit({id: 2, words: [{text: 'word', x: 10, y: 20, w: 50, h: 18}], frameUrl: '/c/2/frame.png', frameRect,
+        spotlight: false, viewportWidth: 1920, viewportHeight: 1080});
+    assert(!view.root.classList.contains('spotlight'));
+    assert.equal(view.root.children[0].style.backgroundImage, undefined);
+});
