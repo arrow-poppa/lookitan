@@ -4,8 +4,9 @@
 Everything comes from official sources at pinned versions:
   * PaddleOCR ONNX models from huggingface.co/PaddlePaddle (Apache-2.0), pinned by commit; each
     file is checked against the SHA-256 that Hugging Face reports for that commit.
-  * ONNX Runtime 1.24.4 (MIT): the DirectML build from NuGet on Windows, the official release
-    archive on Linux (checked against the GitHub release digest).
+  * ONNX Runtime (MIT): the 1.24.4 DirectML build from NuGet on Windows; on Linux, the native
+    library of Microsoft's onnxruntime-webgpu 1.27.0 wheel from PyPI (CPU plus the WebGPU provider,
+    with Dawn linked in), checked against the SHA-256 that PyPI reports.
 The character list of each recognition model is extracted from its inference.yml.
 
 Usage: python scripts/fetch-assets.py --platform windows|linux
@@ -17,7 +18,6 @@ import io
 import json
 import shutil
 import sys
-import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -47,7 +47,13 @@ MODEL_REPOS = {
 
 ORT_VERSION = "1.24.4"
 DIRECTML_VERSION = "1.15.4"
-ORT_LINUX_SHA256 = "3a211fbea252c1e66290658f1b735b772056149f28321e71c308942cdb54b747"
+# The native library is the same in every CPython variant of the wheel; this pins the cp312 one.
+ORT_LINUX_VERSION = "1.27.0"
+ORT_LINUX_WHEEL = (
+    "https://files.pythonhosted.org/packages/24/11/6cd5f840be97819cbd172bacc1868726ab5fa54ceaaa79508c5a64e61233/"
+    f"onnxruntime_webgpu-{ORT_LINUX_VERSION}-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+)
+ORT_LINUX_SHA256 = "fe5e49e00ad71bc667316d57670bfbf525438783d4a3468e0d337314ec985cbe"
 
 
 def get(url: str) -> bytes:
@@ -130,15 +136,14 @@ def fetch_ort_linux() -> None:
     if have(ORT_DIR / "libonnxruntime.so"):
         print("ONNX Runtime: cached")
         return
-    name = f"onnxruntime-linux-x64-{ORT_VERSION}"
-    tgz = get(f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}/{name}.tgz")
-    if sha256(tgz) != ORT_LINUX_SHA256:
-        sys.exit("checksum mismatch for the ONNX Runtime Linux archive")
-    with tarfile.open(fileobj=io.BytesIO(tgz), mode="r:gz") as t:
-        member = t.getmember(f"{name}/lib/libonnxruntime.so.{ORT_VERSION}")
-        src = t.extractfile(member)
-        with open(ORT_DIR / "libonnxruntime.so", "wb") as out:
-            shutil.copyfileobj(src, out)
+    whl = get(ORT_LINUX_WHEEL)
+    if sha256(whl) != ORT_LINUX_SHA256:
+        sys.exit("checksum mismatch for the onnxruntime-webgpu wheel")
+    with zipfile.ZipFile(io.BytesIO(whl)) as z:
+        with z.open(f"onnxruntime/capi/libonnxruntime.so.{ORT_LINUX_VERSION}") as src:
+            with open(ORT_DIR / "libonnxruntime.so", "wb") as out:
+                shutil.copyfileobj(src, out)
+    print(f"onnxruntime-webgpu {ORT_LINUX_VERSION}: libonnxruntime.so")
 
 
 def main() -> None:

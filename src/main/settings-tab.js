@@ -123,7 +123,7 @@ function engineStatusText() {
     if (status.runtimeError) { return `ONNX Runtime: ${status.runtimeError}`; }
     if (status.error) { return status.error; }
     if (!status.detModel) { return 'Carregando o motor…'; }
-    return `Detecção ${status.detModel} na ${status.detOnGpu ? 'GPU (DirectML)' : 'CPU'} · reconhecimento ${status.recModel} na ${status.recOnGpu ? 'GPU' : 'CPU'}`;
+    return `Detecção ${status.detModel} na ${status.detOnGpu ? (status.session === 'windows' ? 'GPU (DirectML)' : 'GPU (WebGPU)') : 'CPU'} · reconhecimento ${status.recModel} na ${status.recOnGpu ? 'GPU' : 'CPU'}`;
 }
 
 const CAPTURE_PRESETS = [
@@ -293,7 +293,7 @@ function render(root) {
                 {value: 'region', label: 'Região em volta do cursor'},
             ], s.ocrScope, (v) => { s.ocrScope = v; save(); rerender(); })}),
         s.ocrScope === 'region' ? captureRegionRows() : null,
-        isWindows ? cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: 'DirectML, com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}) : null,
+        cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: isWindows ? 'DirectML, com volta automática para a CPU.' : 'WebGPU via Vulkan (experimental), com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}),
         el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('alert')}),
             el('div', {class: 'txt'}, el('div', {class: 't'}, 'Estado do motor'), el('div', {class: 'd', id: 'engine-status'}, engineStatusText()))),
     ));

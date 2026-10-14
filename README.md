@@ -4,7 +4,8 @@ Point at a word anywhere on screen (an app, a game, a video) and press a shortcu
 the word with OCR and shows dictionary entries and an AI explanation in a pop-up next to it.
 
 - **Fast local OCR:** PaddleOCR PP-OCRv6 on ONNX Runtime. It uses the GPU through DirectML on
-  Windows and the CPU on Linux, and only reads the line under the pointer.
+  Windows and through WebGPU on Vulkan on Linux (experimental), falls back to the CPU, and only
+  reads the line under the pointer.
 - **Offline dictionaries:** MDict (`.mdx` + `.mdd`), with styles, images and audio.
 - **Your own AI:** OpenAI, Gemini, DeepSeek or any OpenAI-compatible endpoint (OpenRouter,
   Ollama, LM Studio), with your key, your model, and your own prompt and system prompt.

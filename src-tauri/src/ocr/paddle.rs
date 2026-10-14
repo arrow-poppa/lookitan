@@ -1,8 +1,9 @@
 // PP-OCRv6 / PP-OCRv5 text detection (DB) and recognition (CTC) on ONNX Runtime.
 //
-// Engine choice mirrors Lookupper: try the `small` detector on the GPU (DirectML) first and fall
-// back to the `tiny` detector on the CPU with full graph optimization. Parameters (normalization,
-// thresholds, unclip ratio) come from the official PaddlePaddle `inference.yml` of each model.
+// Engine choice mirrors Lookupper: try the `small` detector on the GPU (DirectML on Windows, WebGPU
+// on Linux) first and fall back to the `tiny` detector on the CPU with full graph optimization.
+// Parameters (normalization, thresholds, unclip ratio) come from the official PaddlePaddle
+// `inference.yml` of each model.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -297,7 +298,7 @@ impl<S> InferenceSession<S> {
             Ok(output) => Ok(output),
             Err(gpu_error) if self.on_gpu.load(Ordering::Relaxed) => {
                 log::warn!("Ocr.GpuFallback.{} during inference: {gpu_error:#}", self.stage);
-                // Release the failed DirectML graph and its allocations before loading the CPU model.
+                // Release the failed GPU graph and its allocations before loading the CPU model.
                 drop(self.session.take());
                 self.on_gpu.store(false, Ordering::Relaxed);
                 self.session = Some(
@@ -339,9 +340,26 @@ fn gpu_session(path: &Path) -> Result<Session> {
     Ok(s)
 }
 
-#[cfg(not(windows))]
+// Linux has no DirectML; the bundled ONNX Runtime build carries the WebGPU provider, which runs on
+// Vulkan through Dawn (Mesa RADV, ANV, NVIDIA).
+#[cfg(target_os = "linux")]
+fn gpu_session(path: &Path) -> Result<Session> {
+    use ort::ep::webgpu::DawnBackendType;
+    use ort::ep::WebGPU;
+    let b = ortx!(Session::builder());
+    let b = ortx!(b.with_optimization_level(GraphOptimizationLevel::Level1));
+    let mut b = ortx!(b.with_execution_providers([WebGPU::default()
+        .with_dawn_backend_type(DawnBackendType::Vulkan)
+        .with_device_id(0)
+        .build()
+        .error_on_failure()]));
+    let s = ortx!(b.commit_from_file(path));
+    Ok(s)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn gpu_session(_path: &Path) -> Result<Session> {
-    bail!("GPU inference is only available on Windows (DirectML)")
+    bail!("GPU inference is only available on Windows (DirectML) and Linux (WebGPU)")
 }
 
 impl PaddleOcr {

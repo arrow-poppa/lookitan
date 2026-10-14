@@ -177,7 +177,7 @@ fn ensure_paddle(state: &AppState) -> Result<Arc<PaddleOcr>> {
     ensure_ort(state)?;
     let (rec, gpu) = {
         let s = state.settings.read();
-        (ocr::language(&s.ocr_language).rec.to_string(), s.use_gpu && cfg!(windows))
+        (ocr::language(&s.ocr_language).rec.to_string(), s.use_gpu && cfg!(any(windows, target_os = "linux")))
     };
     let mut slot = state.paddle.lock();
     if let Some((r, g, engine)) = slot.as_ref() {

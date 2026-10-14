@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OcrEngineKind {
-    /// PP-OCRv6 on the local GPU (DirectML) or CPU.
+    /// PP-OCRv6 on the local GPU (DirectML on Windows, WebGPU on Linux) or CPU.
     Paddle,
     /// Google Lens over the network.
     Lens,
