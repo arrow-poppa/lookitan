@@ -503,7 +503,40 @@ $('btn-search').addEventListener('click', () => {
     if (!$('search').hidden) { $('query').focus(); $('query').select(); }
 });
 $('search').addEventListener('submit', (ev) => { ev.preventDefault(); void lookup($('query').value); });
-$('btn-close').addEventListener('click', () => { void api.hidePopup(); });
+// ------------------------------------------------------------------ open and close animation
+
+function animateOpen(origin) {
+    const card = $('card');
+    card.style.setProperty('--tip-x', origin.relative ? `${origin.x * 100}%` : `${origin.x}px`);
+    card.style.setProperty('--tip-y', `${origin.y}px`);
+    card.classList.remove('tip-close', 'tip-open');
+    void card.offsetWidth; // restart the animation for back-to-back lookups
+    card.classList.add('tip-open');
+}
+
+let closeTimer = null;
+/** Plays the close animation, then hides the window (the backend hides it at once for a new scan). */
+function closePopup() {
+    const card = $('card');
+    if (closeTimer !== null) { return; }
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) { void api.hidePopup(); return; }
+    card.classList.remove('tip-open');
+    card.classList.add('tip-close');
+    closeTimer = setTimeout(() => {
+        closeTimer = null;
+        void api.hidePopup();
+        card.classList.remove('tip-close');
+    }, 200);
+}
+
+void listen('popup-open', (event) => {
+    // A new lookup during the close animation keeps the popup open.
+    if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
+    animateOpen(event.payload);
+});
+
+$('btn-close').addEventListener('click', () => { closePopup(); });
 $('btn-pin').addEventListener('click', () => {
     pinned = !pinned;
     $('btn-pin').classList.toggle('on', pinned);
@@ -512,7 +545,7 @@ $('btn-pin').addEventListener('click', () => {
 $('btn-save').addEventListener('click', () => { void saveWord(); });
 $('btn-anki').addEventListener('click', () => { void onAnkiClick(); });
 document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') { void api.hidePopup(); }
+    if (ev.key === 'Escape') { closePopup(); }
     if (ev.ctrlKey && (ev.key === '+' || ev.key === '=')) { zoom = Math.min(2, zoom + 0.1); applyZoom(); }
     if (ev.ctrlKey && ev.key === '-') { zoom = Math.max(0.6, zoom - 0.1); applyZoom(); }
     if (ev.ctrlKey && ev.key === '0') { zoom = 1; applyZoom(); }

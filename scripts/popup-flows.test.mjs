@@ -33,7 +33,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
         return nodes.get(id);
     }, addEventListener() {}};
-    const calls = {settings: 0, events: [], notes: [], listeners: new Map()};
+    const calls = {settings: 0, hides: 0, events: [], notes: [], listeners: new Map()};
     const lookup = {payload: {word: 'run', sentence: 'I run daily.', entries: []}, keys: new Set()};
     const options = {enable: false, checkForDuplicates: false};
     const settings = {hideWordTranslation: false, saveWordsAutomatically: false, ocrLanguage: 'en-US'};
@@ -42,7 +42,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
     const stubs = {
         '@tauri-apps/api/event': {listen: async (name, handler) => { calls.listeners.set(name, handler); return () => {}; }, emit: async (...args) => { calls.events.push(args); }},
         [file('src/lib/api.js')]: {
-            api: {openSettings: async () => { calls.settings++; }, entryHtml},
+            api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, entryHtml},
             entryUrl: () => '', escapeHtml: (value) => String(value).replace(/[&<>"']/g, (c) =>
                 ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]),
             loadAllSettings: async () => ({settings, ai, anki: options}), renderMarkdown: (text) => String(text),
@@ -125,6 +125,29 @@ test('turning the word translation off drops it from the prompt and from the car
     assert(prompts[1].includes('"translation": one word only, in '), 'the word translation prompt fills the marker');
     assert(!prompts[1].includes('{{translationField}}'));
     assert(shown.innerHTML.includes('correr'));
+});
+
+test('the popup grows from the word like a TeachingTip and a new lookup cancels a pending close', async () => {
+    const view = await fixture({explain: async () => '{}'});
+    const card = view.document.getElementById('card');
+    const vars = {};
+    const classes = new Set();
+    card.style.setProperty = (key, value) => { vars[key] = value; };
+    card.classList = {add: (...names) => names.forEach((n) => classes.add(n)), remove: (...names) => names.forEach((n) => classes.delete(n)), toggle() {}};
+    const open = view.calls.listeners.get('popup-open');
+    open({payload: {x: 120, y: 0, relative: false}});
+    assert.equal(vars['--tip-x'], '120px');
+    assert.equal(vars['--tip-y'], '0px');
+    assert(classes.has('tip-open'));
+    view.document.getElementById('btn-close').listeners.click();
+    assert(classes.has('tip-close') && !classes.has('tip-open'));
+    open({payload: {x: 0.5, y: 0, relative: true}});
+    await new Promise((done) => setTimeout(done, 250));
+    assert.equal(view.calls.hides, 0, 'the reopened popup is not hidden by the earlier close');
+    assert.equal(vars['--tip-x'], '50%');
+    view.document.getElementById('btn-close').listeners.click();
+    await new Promise((done) => setTimeout(done, 250));
+    assert.equal(view.calls.hides, 1, 'closing hides the window after the 200 ms animation');
 });
 
 test('late streaming chunks cannot overwrite a newer lookup', async () => {

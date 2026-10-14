@@ -641,12 +641,15 @@ fn close_overlay(app: &AppHandle) {
 fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64, f64, f64)>) {
     let Some(win) = app.get_webview_window("popup") else { return };
     let _ = app.emit_to("popup", "lookup", payload);
-    if let Some((x0, y0, _x1, y1)) = anchor {
+    // Where the open animation grows from, in CSS pixels of the popup: the edge facing the word,
+    // like the tail of Lookupper's TeachingTip. Centre of the top edge without a word.
+    let mut origin = (0.5_f64, 0.0_f64, true);
+    if let Some((x0, y0, x1, y1)) = anchor {
         let state = app.state::<AppState>();
         let display = state.recognition.lock().as_ref()
             .filter(|r| payload.recognition == Some(r.id)).map(|r| r.monitor);
-        let ((x0, y0), (_, y1)) = display.map(|d| (d.to_native(x0, y0), d.to_native(x0, y1)))
-            .unwrap_or(((x0, y0), (x0, y1)));
+        let ((x0, y0), (x1, y1)) = display.map(|d| (d.to_native(x0, y0), d.to_native(x1, y1)))
+            .unwrap_or(((x0, y0), (x1, y1)));
         let size = win.outer_size().unwrap_or(PhysicalSize::new(560, 520));
         let (w, h) = (size.width as f64, size.height as f64);
         let mut x = x0 - 24.0;
@@ -662,7 +665,13 @@ fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64
             x = x.clamp(mx, (mx + mw - w).max(mx));
         }
         let _ = win.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+        let scale = win.scale_factor().unwrap_or(1.0).max(0.5);
+        let word_x = ((x0 + x1) / 2.0 - x).clamp(0.0, w);
+        let word_y = if y >= y1 { 0.0 } else { h };
+        origin = (word_x / scale, word_y / scale, false);
     }
+    let (ox, oy, relative) = origin;
+    let _ = app.emit_to("popup", "popup-open", serde_json::json!({ "x": ox, "y": oy, "relative": relative }));
     let _ = win.show();
     let _ = win.set_focus();
 }
