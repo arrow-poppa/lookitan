@@ -95,7 +95,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
-- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): whole-screen lookups (`spotlight`) show the frame lightly blurred again (CSS blur 2.5 px, no dimming), with words as sharp cut-outs and the yellow highlights drawn on top via `::after`. Lookupper does this with OpenCV `imgproc_GaussianBlur` (OpenCvSharp) and `CroppedImage`; its exact kernel and sigma are not decompiled yet. The earlier 7 px blur with dimming looked wrong to the user.
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): whole-screen lookups (`spotlight`) show the frame lightly blurred again (CSS blur 2.5 px, brightness 0.85: a slight dim the user asked for), with words as sharp cut-outs and the yellow highlights drawn on top via `::after`. Lookupper does this with OpenCV `imgproc_GaussianBlur` (OpenCvSharp) and `CroppedImage`; its exact kernel and sigma are not decompiled yet. The earlier 7 px blur with dimming looked wrong to the user.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): popup open/close animation like Lookupper's `WordTeachingTip`, a WinUI TeachingTip. It uses WinUI's values: scale from 0.01 to 1 in 300 ms with cubic-bezier(0.1, 0.9, 0.2, 1) from the edge facing the word, sent by `show_popup` as the `popup-open` event. Close: 200 ms with cubic-bezier(0.7, 0, 1, 0.5). The backend still hides the popup at once before a new scan.
 
