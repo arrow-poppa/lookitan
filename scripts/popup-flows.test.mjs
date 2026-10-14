@@ -17,6 +17,9 @@ function deferred() {
 class Element {
     constructor() { this.style = {}; this.dataset = {}; this.innerHTML = ''; this.textContent = ''; this.listeners = {}; }
     classList = {toggle() {}, remove() {}, add() {}};
+    children = [];
+    append(...nodes) { this.children.push(...nodes); }
+    replaceChildren(...nodes) { this.children = [...nodes]; }
     addEventListener(name, callback) { this.listeners[name] = callback; }
     setAttribute(name, value) { this[name] = value; }
     querySelector(selector) {
@@ -27,12 +30,12 @@ class Element {
     }
 }
 
-async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => ''} = {}) {
+async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = []} = {}) {
     const nodes = new Map();
     const document = {getElementById: (id) => {
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
         return nodes.get(id);
-    }, addEventListener() {}};
+    }, createElement: () => new Element(), addEventListener() {}};
     const calls = {settings: 0, hides: 0, events: [], notes: [], listeners: new Map()};
     const lookup = {payload: {word: 'run', sentence: 'I run daily.', entries: []}, keys: new Set()};
     const options = {enable: false, checkForDuplicates: false};
@@ -42,7 +45,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
     const stubs = {
         '@tauri-apps/api/event': {listen: async (name, handler) => { calls.listeners.set(name, handler); return () => {}; }, emit: async (...args) => { calls.events.push(args); }},
         [file('src/lib/api.js')]: {
-            api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, entryHtml},
+            api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, entryHtml, listDictionaries: async () => dictionaries},
             entryUrl: () => '', escapeHtml: (value) => String(value).replace(/[&<>"']/g, (c) =>
                 ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]),
             loadAllSettings: async () => ({settings, ai, anki: options}), renderMarkdown: (text) => String(text),
@@ -148,6 +151,39 @@ test('the popup grows from the word like a TeachingTip and a new lookup cancels 
     view.document.getElementById('btn-close').listeners.click();
     await new Promise((done) => setTimeout(done, 250));
     assert.equal(view.calls.hides, 1, 'closing hides the window after the 200 ms animation');
+});
+
+async function cancelFixture(cancelPendingRequests) {
+    const requests = [];
+    const view = await fixture({
+        explain: async (_options, word, _sentence, request) => {
+            requests.push({word, signal: request.signal});
+            return new Promise(() => {});
+        },
+        dictionaries: [{kind: 'ai-word', enabled: true, name: 'IA'}],
+    });
+    Object.assign(view.ai, {autoGenerateOnLookup: true, cancelPendingRequests, contextPrompt: 'context', customPrompt: 'explain'});
+    const show = async (word) => {
+        void view.calls.listeners.get('lookup')({payload: {word, sentence: `I ${word} daily.`, entries: []}});
+        for (let i = 0; i < 20; i++) { await flush(); }
+    };
+    return {requests, show};
+}
+
+test('looking up another word aborts the previous AI request when cancelling is on', async () => {
+    const {requests, show} = await cancelFixture(true);
+    await show('run');
+    await show('walk');
+    assert.deepEqual(requests.map((r) => r.word), ['run', 'walk']);
+    assert.equal(requests[0].signal.aborted, true, 'the request for the previous word is aborted');
+    assert.equal(requests[1].signal.aborted, false);
+});
+
+test('with cancelling off the previous AI request keeps running', async () => {
+    const {requests, show} = await cancelFixture(false);
+    await show('run');
+    await show('walk');
+    assert.equal(requests[0].signal.aborted, false);
 });
 
 test('late streaming chunks cannot overwrite a newer lookup', async () => {
