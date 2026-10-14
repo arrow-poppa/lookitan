@@ -418,6 +418,21 @@ test('Anki controls render before connecting and stale responses cannot overwrit
     assert.equal(fixture.root.textContent.includes('Conectado ao AnkiConnect'), false);
 });
 
+test('the Anki section collapses below its on/off switch and expands again', async () => {
+    const fixture = await ankiPanelFixture(() => ({getVersion: async () => 6, getDeckNames: async () => ['Study'], getModelNames: async () => ['Basic']}));
+    await fixture.initialization;
+    const head = fixture.rowFor('Integração com o Anki');
+    const button = descendants(head).find((node) => node.tagName === 'button' && node.className.includes('collapse'));
+    assert(button, 'the switch row has a collapse button');
+    assert.notEqual(fixture.rowFor('Baralho').hidden, true);
+    button.dispatch('click');
+    assert.equal(fixture.rowFor('Baralho').hidden, true);
+    assert.equal(fixture.rowFor('Conexão').hidden, true);
+    assert.notEqual(head.hidden, true, 'the switch stays visible');
+    button.dispatch('click');
+    assert.equal(fixture.rowFor('Baralho').hidden, false);
+});
+
 test('Anki connection errors stay visible alongside usable setup controls', async () => {
     const fixture = await ankiPanelFixture(() => ({getVersion: async () => { throw new Error('URL denied by HTTP scope'); }}));
     await fixture.initialization;

@@ -95,7 +95,10 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
-- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): Lookupper-style overlay. A whole-screen lookup without a pop-up (`Recognition.spotlight`) blurs and dims the captured frame and draws each word as a sharp cut-out of it, like Lookupper's `CroppedImage`. Word boxes have no borders. The full frame is encoded as a fast PNG.
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): Lookupper-style overlay, matched to the user's screenshots. The screen is not blurred or dimmed and word boxes are invisible. Hover and words already looked up in this overlay (`seen`) get a faint yellow (0.26); the word being looked up gets a strong yellow (0.62). A whole-screen lookup without a pop-up (`spotlight`) also hides the hint pill. A first blurred/cut-out attempt was rejected.
+- 2026-10-14 (Claude): Anki's "A tela inteira" screenshot was only the region around the pointer once the scope became Region. `run_scan` now also captures the whole monitor (`Recognition.screen`) when Anki is on with `screenshotArea: whole`. `capture_png` areas are "sentence", "frame" (the image OCR read, used by the overlay route) and "whole". When merging `claude/overlay-spotlight`, its fast-PNG branch must apply to "frame".
+
+- 2026-10-14 (Claude): the Anki section and the game/program profiles card collapse with a chevron, like Lookupper (`collapser()` in ui.js; the state is kept in localStorage per window).
 
 - 2026-10-14 (Claude): Yomitan's per-dictionary and popup-selection Anki markers, plus `{ai-explanation-plain}`; Markdown helpers moved to `src/lib/markdown.js`.
 

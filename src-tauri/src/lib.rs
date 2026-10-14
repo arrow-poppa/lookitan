@@ -54,9 +54,12 @@ struct Recognition {
     app: Option<ForegroundApp>,
     frozen_pid: Option<u32>,
     freeze_frame: bool,
-    /// Whole-screen lookup without a pop-up: the overlay blurs the captured frame and shows the
-    /// words as sharp cut-outs of it, as Lookupper does.
+    /// Whole-screen lookup without a pop-up: the overlay shows only the word highlights, like
+    /// Lookupper (no hint pill).
     spotlight: bool,
+    /// The whole monitor, captured with a region lookup when Anki's {screenshot} asks for the
+    /// whole screen. `None` when `capture` already is the whole monitor.
+    screen: Option<Capture>,
     engine: String,
     ocr_ms: u64,
 }
@@ -358,6 +361,15 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     } else {
         platform::capture_around(cx, cy, settings.capture_width, settings.capture_height)?
     };
+    // Anki's {screenshot} can ask for the whole screen; grab it now, while the screen still shows
+    // what the user looked up.
+    let anki_whole_screen = settings.anki.get("enable").and_then(|v| v.as_bool()).unwrap_or(false)
+        && settings.anki.get("screenshotArea").and_then(|v| v.as_str()) == Some("whole");
+    let mut screen = if anki_whole_screen && !whole_screen {
+        platform::capture_screen(cx, cy).map_err(|e| log::warn!("whole-screen capture for Anki failed: {e:#}")).ok()
+    } else {
+        None
+    };
     // Resolve the output before OCR: the pointer may move to another monitor while it runs.
     let mut monitor = platform::display_geometry(app, cx, cy, &capture)?;
     let frozen_pid = match (profile.freeze, fg.as_ref()) {
@@ -375,7 +387,11 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     // Like Lookupper: a shortcut pressed away from text reads the whole screen and shows the
     // clickable words without a pop-up; clicking one of them looks it up.
     if pick.is_none() && !whole_screen {
-        capture = platform::capture_screen(cx, cy)?;
+        // Reuse the whole-screen capture taken for Anki, if any.
+        capture = match screen.take() {
+            Some(s) => s,
+            None => platform::capture_screen(cx, cy)?,
+        };
         monitor = platform::display_geometry(app, cx, cy, &capture)?;
         (px, py) = capture.to_image(cx, cy);
         pass = ocr_pass(&state, &settings, settings.engine_for(true), &capture.image, px, py, true)?;
@@ -396,6 +412,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         frozen_pid,
         freeze_frame: profile.freeze == FreezeMode::Frame,
         spotlight: pick.is_none() && !(lines.is_empty() && rest.is_empty()),
+        screen,
         engine: engine.clone(),
         ocr_ms,
     });
@@ -569,8 +586,7 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             let (x, y, w, h) = css_rect(x0, y0, x1, y1);
             OverlayWord { text: String::new(), x, y, w, h }
         });
-        let with_frame = r.freeze_frame || r.spotlight;
-        let frame_rect = with_frame.then(|| {
+        let frame_rect = r.freeze_frame.then(|| {
             let c = &r.capture;
             let (x, y, w, h) = css_rect(c.origin_x, c.origin_y,
                 c.origin_x + c.image.width() as f64 / c.scale, c.origin_y + c.image.height() as f64 / c.scale);
@@ -580,7 +596,7 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             id,
             words,
             selected,
-            frame_url: with_frame.then(|| format!("/c/{id}/frame.png")),
+            frame_url: r.freeze_frame.then(|| format!("/c/{id}/frame.png")),
             frame_rect,
             spotlight: r.spotlight,
             viewport_width,
@@ -651,11 +667,17 @@ fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64
     let _ = win.set_focus();
 }
 
-/// PNG of the last capture: the whole frame, or the lines around the word with some margin.
+/// PNG of the last capture: "sentence" (the lines around the word with some margin), "frame" (the
+/// image OCR read) or "whole" (the whole monitor when it was captured for Anki, else the frame).
 pub fn capture_png(state: &AppState, id: Option<u64>, area: &str) -> Option<Vec<u8>> {
     let guard = state.recognition.lock();
     let r = guard.as_ref().filter(|r| id.map(|i| i == r.id).unwrap_or(true))?;
-    let img = &r.capture.image;
+    // "whole" means the whole monitor, even when OCR only read the region around the pointer;
+    // "frame" is always the image OCR read (the overlay's frozen frame).
+    let img = match (area, &r.screen) {
+        ("whole", Some(screen)) => &screen.image,
+        _ => &r.capture.image,
+    };
     let cropped = if area == "sentence" && !r.focus_lines.is_empty() {
         let pad = 24.0;
         let x0 = r.focus_lines.iter().map(|l| l.x0).fold(f32::MAX, f32::min) - pad;
@@ -671,7 +693,7 @@ pub fn capture_png(state: &AppState, id: Option<u64>, area: &str) -> Option<Vec<
         img.clone()
     };
     let mut png = Vec::new();
-    if area == "whole" {
+    if area == "frame" {
         // The overlay waits for this frame; favour encoding speed over file size.
         use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
         use image::ImageEncoder;

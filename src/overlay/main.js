@@ -7,9 +7,11 @@ import {schemeBase} from '../lib/api.js';
 
 const root = document.getElementById('words');
 const frame = document.getElementById('frame');
-const shade = document.getElementById('shade');
+const hint = document.getElementById('hint');
 let current = null;
 let selected = null;
+/** Words already looked up in this overlay; they keep a faint highlight, as in Lookupper. */
+let seen = [];
 
 // GTK's integer scale factor can differ from WebKit's fractional CSS pixel scale. Compare
 // the actual viewport sizes rather than assuming a toolkit pixel is one browser pixel.
@@ -34,17 +36,8 @@ function containsCenter(w, s) {
 }
 
 function setSpotlight(on) {
-    for (const el of [root, frame, shade]) {
-        if (!el) { continue; }
-        if (on) { el.classList.add('spotlight'); } else { el.classList.remove('spotlight'); }
-    }
-}
-
-/** Shows the part of the captured frame under the word, so it stays sharp over the blur. */
-function cutOut(el, w, f, scale) {
-    el.style.backgroundImage = `url("${frame.src}")`;
-    el.style.backgroundSize = `${f.w * scale.x}px ${f.h * scale.y}px`;
-    el.style.backgroundPosition = `${(f.x - w.x) * scale.x}px ${(f.y - w.y) * scale.y}px`;
+    if (!hint) { return; }
+    if (on) { hint.classList.add('spotlight'); } else { hint.classList.remove('spotlight'); }
 }
 
 function render() {
@@ -53,17 +46,17 @@ function render() {
     if (current.frameRect) {
         position(frame, current.frameRect, scale);
     }
-    const spotlight = Boolean(current.spotlight && current.frameRect && frame.src);
-    setSpotlight(spotlight);
+    setSpotlight(Boolean(current.spotlight));
     const frag = document.createDocumentFragment();
     for (const w of current.words) {
         const el = document.createElement('div');
         el.className = 'w';
         if (selected && containsCenter(w, selected)) {
             el.classList.add('sel');
+        } else if (seen.some((s) => containsCenter(w, s))) {
+            el.classList.add('seen');
         }
         position(el, w, scale);
-        if (spotlight) { cutOut(el, w, current.frameRect, scale); }
         el.title = w.text;
         frag.appendChild(el);
     }
@@ -74,6 +67,7 @@ void listen('overlay', (event) => {
     const p = event.payload;
     if (!current || current.id !== p.id) {
         selected = null;
+        seen = [];
         if (p.frameUrl) {
             frame.src = `${schemeBase()}${p.frameUrl}`;
             frame.style.display = 'block';
@@ -96,7 +90,9 @@ document.addEventListener('mousedown', (ev) => {
     ev.preventDefault();
     const target = ev.target;
     if (target instanceof HTMLElement && target.classList.contains('w')) {
-        for (const el of root.querySelectorAll('.w.sel')) { el.classList.remove('sel'); }
+        for (const el of root.querySelectorAll('.w.sel')) { el.classList.remove('sel'); el.classList.add('seen'); }
+        if (selected) { seen.push(selected); }
+        target.classList.remove('seen');
         target.classList.add('sel');
         const scale = viewportScale();
         void invoke('overlay_pick', {x: ev.clientX / scale.x, y: ev.clientY / scale.y});

@@ -121,7 +121,8 @@ pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> 
         // /c/<recognition>/frame.png: the captured frame shown behind a frozen overlay.
         "c" => {
             let id = dict_id.parse::<u64>().ok();
-            return match crate::capture_png(&state, id, "whole") {
+            // The overlay's frozen frame: exactly the image OCR read, so word boxes line up.
+            return match crate::capture_png(&state, id, "frame") {
                 Some(png) => respond(200, "image/png", png),
                 None => not_found(),
             };

@@ -5,7 +5,7 @@ import {escapeHtml} from '../lib/api.js';
 import {icon} from '../lib/icons.js';
 import {createConnection, dictionaryMarkers, fieldValue, glossaryDictionaryNames, MARKERS, suggestMarker} from '../lib/anki/notes.js';
 import {store, save} from './store.js';
-import {cardRow, el, select, textInput, toggle} from './ui.js';
+import {cardRow, collapser, el, select, textInput, toggle} from './ui.js';
 
 let decks = [];
 let models = [];
@@ -88,9 +88,13 @@ function render(root) {
     const format = anki.cardFormats[0];
     root.replaceChildren();
 
-    root.append(cardRow({icon: 'cards', title: 'Integração com o Anki', desc: 'Adiciona cards pelo botão + do popup, via o add-on AnkiConnect.',
-        control: toggle(anki.enable, async (v) => { anki.enable = v; save(); await renderAnkiSection(root); })}));
+    const head = cardRow({icon: 'cards', title: 'Integração com o Anki', desc: 'Adiciona cards pelo botão + do popup, via o add-on AnkiConnect.',
+        control: toggle(anki.enable, async (v) => { anki.enable = v; save(); await renderAnkiSection(root); })});
+    root.append(head);
     if (!anki.enable) { return; }
+    // Collapse every Anki row below the on/off switch, as Lookupper's settings groups do.
+    const collapse = collapser('anki', () => [...root.children].filter((node) => node !== head));
+    head.querySelector('.ctl').append(collapse.button);
 
     const status = el('div', {class: connection.ok === true ? 'd ok' : connection.ok === false ? 'd error' : 'd'}, connection.message);
     const changeConnection = () => {
@@ -152,4 +156,5 @@ function render(root) {
             {value: 'whole', label: 'A tela inteira'},
         ], anki.screenshotArea, (v) => { anki.screenshotArea = v; save(); })}));
     root.append(cardRow({icon: 'pause', title: 'Suspender cards novos', control: toggle(anki.suspendNewCards, (v) => { anki.suspendNewCards = v; save(); })}));
+    collapse.apply();
 }
