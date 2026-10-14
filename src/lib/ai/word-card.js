@@ -1,6 +1,9 @@
 // Prompts and parsing for the two built-in AI "dictionaries": the word card (word in context, with
 // IPA, CEFR level, part of speech, definition and translation) and the context translator.
 
+/** The translation key of CARD_PROMPT, left out when the word translation is turned off. */
+export const CARD_TRANSLATION_FIELD = ', "translation": the translation of the word in this context into {{translationLanguage}}';
+
 export const CARD_PROMPT =
     "Word: '{{target}}'\n" +
     "Context: '{{sentence}}'\n\n" +
@@ -36,6 +39,16 @@ export function fillLanguages(template, settings) {
     return template
         .replaceAll('{{definitionLanguage}}', languageName(settings.definitionLanguage || 'en-US'))
         .replaceAll('{{translationLanguage}}', languageName(settings.translationLanguage || 'en-US'));
+}
+
+/**
+ * The word-card prompt as sent: languages filled in and, when the word translation is turned off,
+ * without the translation key so the model does not spend tokens on it. A custom prompt that
+ * does not contain that key is left as it is.
+ */
+export function cardPrompt(template, settings) {
+    const prompt = settings.showWordTranslation === false ? template.replace(CARD_TRANSLATION_FIELD, '') : template;
+    return fillLanguages(prompt, settings);
 }
 
 /**

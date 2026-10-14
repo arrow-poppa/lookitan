@@ -5,7 +5,7 @@ import {emit, listen} from '@tauri-apps/api/event';
 import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib/api.js';
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
+import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, createConnection, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
@@ -147,7 +147,7 @@ async function runCard(body, force = false) {
     void refreshAnkiButton();
     body.innerHTML = shimmer();
     try {
-        const prompt = fillLanguages(options.cardPrompt, settings);
+        const prompt = cardPrompt(options.cardPrompt, settings);
         const key = await aiKey('card', prompt, lookup, options);
         if (!current()) { return; }
         lookup.keys.add(key);
@@ -384,7 +384,7 @@ async function render(payload) {
     if (ai.cancelPendingRequests !== false) {
         // Keep a request for this same word and sentence running; drop the others.
         const keep = new Set(await Promise.all([
-            aiKey('card', fillLanguages(ai.cardPrompt, settings)),
+            aiKey('card', cardPrompt(ai.cardPrompt, settings)),
             aiKey('context', fillLanguages(ai.contextPrompt, settings)),
             aiKey('explain', fillLanguages(ai.customPrompt, settings)),
         ]));

@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
+import {CARD_PROMPT} from '../src/lib/ai/word-card.js';
 import {createContext, SourceTextModule, SyntheticModule} from 'node:vm';
 
 const project = resolve(import.meta.dirname, '..');
@@ -103,18 +104,22 @@ test('popup forwards the streaming option and renders a safe card before complet
     assert(!body.innerHTML.includes('Gerando'));
 });
 
-test('the word translation can be turned off without changing the card', async () => {
+test('turning the word translation off drops it from the prompt and from the card', async () => {
     const answer = '{"headword":"run","definition":"move quickly","translation":"correr"}';
-    const view = await fixture({explain: async () => answer});
+    const prompts = [];
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => { prompts.push(request.prompt); return answer; }});
+    view.ai.cardPrompt = CARD_PROMPT;
     view.settings.showWordTranslation = false;
     const body = new Element();
     await view.popup.runCard(body);
+    assert(!prompts[0].includes('"translation"'), 'the model is not asked for a translation');
+    assert(prompts[0].includes('"definition"'));
     assert(body.innerHTML.includes('move quickly'));
     assert(!body.innerHTML.includes('correr'));
-    assert.equal(view.lookup.aiCard.translation, 'correr', 'the translation stays in the card for Anki and saved words');
     view.settings.showWordTranslation = true;
     const shown = new Element();
     await view.popup.runCard(shown);
+    assert(prompts[1].includes('"translation"'));
     assert(shown.innerHTML.includes('correr'));
 });
 

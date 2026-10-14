@@ -263,7 +263,7 @@ function renderAiWord(root) {
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             ...languageRows(),
-            cardRow({icon: 'eye', title: 'Tradução da palavra', desc: 'Mostra a tradução da palavra no card da IA.',
+            cardRow({icon: 'eye', title: 'Tradução da palavra', desc: 'Desligada, a IA nem gera a tradução, o que gasta menos tokens. Com um prompt do card personalizado, só some da tela.',
                 control: toggle(s.showWordTranslation !== false, (v) => { s.showWordTranslation = v; save(); renderDetail(); })}),
             s.showWordTranslation !== false ? cardRow({icon: 'eyeOff', title: 'Ocultar a tradução da palavra', desc: 'A tradução só aparece quando você clica nela.',
                 control: toggle(s.hideWordTranslation, (v) => { s.hideWordTranslation = v; save(); })}) : null),
