@@ -16,6 +16,7 @@ export function cardFromLookup(lookup, settings) {
         explanation: lookup.explanation || '',
         contextTranslation: lookup.contextTranslation || '',
         sentence: lookup.payload.sentence || '',
+        context: lookup.payload.context || '',
         ipa: ai.ipa || '',
         cefr: ai.cefr || '',
         partOfSpeech: ai.partOfSpeech || [],
@@ -38,6 +39,7 @@ export function noteContextFromCard(card, dictionaryOrder = []) {
         word: card.word,
         headword: card.dictionaryForm,
         sentence: card.sentence,
+        context: card.context,
         glossaries: card.glossaries || [],
         aiCard: {
             ipa: card.ipa,

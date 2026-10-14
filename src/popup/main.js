@@ -285,6 +285,7 @@ function noteContext(lookup = state, options = anki) {
         word: lookup.payload.word,
         headword: lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword,
         sentence: lookup.payload.sentence,
+        context: lookup.payload.context,
         glossaries: lookup.glossaries || [],
         aiCard: lookup.aiCard || {},
         aiExplanation: lookup.explanation,

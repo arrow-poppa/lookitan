@@ -141,6 +141,23 @@ test('Anki note construction fills markers and respects duplicate scope without 
     assert.equal(built.options.duplicateScopeOptions.checkChildren, true);
 });
 
+test('{sentence} and the cloze hold the sentence by default and the whole paragraph when chosen', async () => {
+    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); });
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
+        Front: {value: '{sentence}', overwriteMode: 'coalesce'},
+        Back: {value: '{cloze-prefix}[{cloze-body}]{cloze-suffix}', overwriteMode: 'coalesce'},
+    }}];
+    const ctx = {word: 'run', sentence: 'I run daily.', context: 'We train. I run daily.'};
+    assert.equal(notes.normalizeAnkiOptions({}).contextMode, 'sentence');
+    let built = await notes.buildNote(ctx, options, null);
+    assert.deepEqual({...built.fields}, {Front: 'I run daily.', Back: 'I [run] daily.'});
+    options.contextMode = 'paragraph';
+    built = await notes.buildNote(ctx, options, null);
+    assert.deepEqual({...built.fields}, {Front: 'We train. I run daily.', Back: 'We train. I [run] daily.'});
+    built = await notes.buildNote({word: 'run', sentence: 'I run daily.'}, options, null);
+    assert.equal(built.fields.Front, 'I run daily.', 'a lookup without a paragraph keeps the sentence');
+});
+
 // Enough of DOMParser for cleanGlossaryHtml and htmlToText on simple, script-free entries.
 class FakeDOMParser {
     parseFromString(html) {

@@ -13,6 +13,9 @@ export function defaultAnkiOptions() {
         tags: ['lookitan'],
         screenshot: {format: 'png', quality: 92},
         screenshotArea: 'sentence',
+        // What {sentence} and the cloze markers hold: the sentence (as translated) or the whole
+        // paragraph (as sent to the AI).
+        contextMode: 'sentence',
         cardFormats: [{name: 'Expression', icon: 'big-circle', deck: '', model: '', type: 'term', fields: {}}],
         duplicateScope: 'collection',
         duplicateScopeCheckAllModels: false,
@@ -28,6 +31,7 @@ export function normalizeAnkiOptions(stored) {
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) { return base; }
     const out = {...base, ...stored};
     out.screenshot = {...base.screenshot, ...(stored.screenshot || {})};
+    if (out.contextMode !== 'paragraph') { out.contextMode = 'sentence'; }
     if (!Array.isArray(out.cardFormats) || out.cardFormats.length === 0) { out.cardFormats = base.cardFormats; }
     out.cardFormats = out.cardFormats.map((f) => ({...base.cardFormats[0], ...f, fields: {...(f.fields || {})}}));
     return out;
@@ -220,6 +224,7 @@ function cloze(sentence, word) {
  * @property {string} word Word as read on screen.
  * @property {string} [headword] Dictionary form.
  * @property {string} [sentence]
+ * @property {string} [context] The paragraph around the word, used when contextMode is 'paragraph'.
  * @property {{name: string, html: string}[]} [glossaries]
  * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string}} [aiCard]
  * @property {string} [aiExplanation]
@@ -244,7 +249,8 @@ export async function buildNote(ctx, anki, conn) {
     const ai = ctx.aiCard || {};
     const defs = definitions(clean, ai, ctx.dictionaryOrder);
     const first = defs.slice(0, 1);
-    const c = cloze(ctx.sentence || '', ctx.word);
+    const sentence = (anki.contextMode === 'paragraph' && ctx.context) || ctx.sentence || '';
+    const c = cloze(sentence, ctx.word);
     const values = {
         'expression': escapeHtml(ctx.headword || ctx.word),
         'reading': escapeHtml(ai.ipa || ''),
@@ -258,7 +264,7 @@ export async function buildNote(ctx, anki, conn) {
         'glossary-first-no-dictionary': glossaryHtml(first, {noDictionary: true}),
         'glossary-first-plain': glossaryPlain(first, {noDictionary: true}),
         'popup-selection-text': escapeHtml(ctx.popupSelection || ''),
-        'sentence': escapeHtml(ctx.sentence || ''),
+        'sentence': escapeHtml(sentence),
         'cloze-prefix': escapeHtml(c.prefix),
         'cloze-body': escapeHtml(c.body),
         'cloze-suffix': escapeHtml(c.suffix),

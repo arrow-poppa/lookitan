@@ -150,6 +150,11 @@ function render(root) {
             {value: 'new', label: 'Permitir adicionar outra nota'},
             {value: 'prevent', label: 'Não adicionar'},
         ], anki.duplicateBehavior === 'prevent' ? 'prevent' : 'new', (v) => { anki.duplicateBehavior = v; save(); })}));
+    root.append(cardRow({icon: 'list', title: 'Contexto no card ({sentence})', desc: 'Também vale para os marcadores {cloze-…}.', wide: true,
+        control: select([
+            {value: 'sentence', label: 'Só a frase (a mesma da tradução)'},
+            {value: 'paragraph', label: 'O contexto inteiro (o mesmo enviado à IA)'},
+        ], anki.contextMode === 'paragraph' ? 'paragraph' : 'sentence', (v) => { anki.contextMode = v; save(); })}));
     root.append(cardRow({icon: 'focus', title: 'Captura de tela no card ({screenshot})', wide: true,
         control: select([
             {value: 'sentence', label: 'Só a frase'},
