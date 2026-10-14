@@ -167,7 +167,11 @@ async function cancelFixture(cancelPendingRequests) {
         void view.calls.listeners.get('lookup')({payload: {word, sentence: `I ${word} daily.`, entries: []}});
         for (let i = 0; i < 20; i++) { await flush(); }
     };
-    return {requests, show};
+    const hide = async () => {
+        view.calls.listeners.get('popup-hidden')();
+        await flush();
+    };
+    return {requests, show, hide};
 }
 
 test('looking up another word aborts the previous AI request when cancelling is on', async () => {
@@ -180,11 +184,21 @@ test('looking up another word aborts the previous AI request when cancelling is 
 });
 
 test('with cancelling off the previous AI request keeps running', async () => {
-    const {requests, show} = await cancelFixture(false);
+    const {requests, show, hide} = await cancelFixture(false);
     await show('run');
     await show('walk');
     assert.equal(requests[0].signal.aborted, false);
+    await hide();
+    assert.equal(requests[1].signal.aborted, false, 'closing the pop-up keeps it running too');
 });
+
+test('closing the pop-up aborts its pending AI request when cancelling is on, like Yomitan', async () => {
+    const {requests, show, hide} = await cancelFixture(true);
+    await show('run');
+    await hide();
+    assert.equal(requests[0].signal.aborted, true);
+});
+
 
 test('late streaming chunks cannot overwrite a newer lookup', async () => {
     const finish = deferred();

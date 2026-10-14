@@ -552,6 +552,9 @@ document.addEventListener('keydown', (ev) => {
 });
 applyZoom();
 void listen('lookup', (event) => { void render(event.payload); });
+// Closed like Yomitan's pop-up (Esc, X, a click elsewhere, a lookup that ends without a pop-up):
+// drop the AI requests nobody will see.
+void listen('popup-hidden', () => { if (ai?.cancelPendingRequests !== false) { responses.cancelPending(); } });
 void listen('settings-changed', async () => {
     try {
         const all = await loadAllSettings();

@@ -464,9 +464,13 @@ fn run_scan(app: &AppHandle) -> Result<()> {
             };
             show_popup(app, &payload, Some((cx, cy, cx, cy)));
         }
-        None if deferred => {}
+        // No pop-up for this lookup: the previous word's pending AI requests are dropped.
+        None if deferred => popup_hidden(app),
         // Focus the overlay so Esc and clicks reach it.
-        None => show_overlay(app, id, None, true, true),
+        None => {
+            popup_hidden(app);
+            show_overlay(app, id, None, true, true);
+        }
         Some(pick) => {
             let (x0, y0) = capture.to_desktop(pick.x0, pick.y0);
             let (x1, y1) = capture.to_desktop(pick.x1, pick.y1);
@@ -689,6 +693,20 @@ fn close_overlay(app: &AppHandle) {
     }
     // Clear the overlay's content, so the next lookup does not flash the old one before it fades in.
     let _ = app.emit_to("overlay", "overlay-closed", ());
+}
+
+/// Tells the pop-up it was closed: like Yomitan, a closed pop-up cancels its pending AI requests
+/// (when "Cancelar pedidos pendentes" is on). A new word does it through its own render instead.
+fn popup_hidden(app: &AppHandle) {
+    let _ = app.emit_to("popup", "popup-hidden", ());
+}
+
+/// Hides the pop-up and cancels its pending AI requests.
+fn dismiss_popup(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("popup") {
+        let _ = w.hide();
+    }
+    popup_hidden(app);
 }
 
 /// Sends the result to the popup and shows it next to the word (desktop coordinates).
@@ -1006,8 +1024,8 @@ fn overlay_dismiss(app: AppHandle) {
     let spotlight = state.recognition.lock().as_ref().is_some_and(|r| r.spotlight);
     let popup = app.get_webview_window("popup").filter(|w| w.is_visible().unwrap_or(false));
     match popup {
-        Some(popup) if pinned && spotlight => {
-            let _ = popup.hide();
+        Some(_) if pinned && spotlight => {
+            dismiss_popup(&app);
             if let Some(w) = app.get_webview_window("overlay") {
                 let _ = w.set_focus();
             }
@@ -1022,9 +1040,7 @@ fn overlay_close(app: AppHandle) {
     // reading must not reappear when the reading ends.
     app.state::<AppState>().scan_seq.fetch_add(1, Ordering::SeqCst);
     close_overlay(&app);
-    if let Some(w) = app.get_webview_window("popup") {
-        let _ = w.hide();
-    }
+    dismiss_popup(&app);
 }
 
 #[tauri::command]
@@ -1040,9 +1056,7 @@ fn scan_now(app: AppHandle) {
 
 #[tauri::command]
 fn hide_popup(app: AppHandle) {
-    if let Some(w) = app.get_webview_window("popup") {
-        let _ = w.hide();
-    }
+    dismiss_popup(&app);
     // Closing the pop-up itself (Esc or its close button) closes the overlay too, even in a
     // whole-screen lookup; only an empty click on the overlay can keep it (`overlay_dismiss`).
     close_overlay(&app);
@@ -1213,6 +1227,7 @@ pub fn run() {
                     if let WindowEvent::Focused(false) = event {
                         if !h.state::<AppState>().pinned.load(Ordering::SeqCst) {
                             let _ = p.hide();
+                            popup_hidden(&h);
                         }
                     }
                 });

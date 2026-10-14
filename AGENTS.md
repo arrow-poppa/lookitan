@@ -101,6 +101,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): with "Cancelar pedidos pendentes" on, closing the pop-up now aborts its pending AI requests too, like Yomitan (where hiding the pop-up clears it). Before, only a new word did. This covers Esc/X, losing focus while unpinned, overlay dismissal, and a lookup that ends in the overlay without a pop-up. Rust emits `popup-hidden` (`dismiss_popup`/`popup_hidden`); the pop-up calls `responses.cancelPending()`. A new scan's own hide does not emit, so looking up the same word again keeps its request.
+
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): sentence detection like Lookupper. The context was the pointer line ±1; it is now the sentence cut from the word's paragraph (`sentence.rs`, `words::paragraph`/`sentence_of`). The "sentence" screenshot frames that sentence's lines. The rules come from a disassembly of Lookupper's `ParseSentences`; behavior only, no code copied.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): scrolling during a whole-screen lookup's OCR shifted the screen under the words. The overlay is now raised transparent right after the capture and holds the input until the words fade in; a click or Esc meanwhile cancels the lookup.
