@@ -202,11 +202,10 @@ function profilesCard() {
         const freeze = select([
             {value: 'default', label: 'Padrão'},
             {value: 'none', label: 'Sem congelar'},
-            {value: 'frame', label: 'Congelar o quadro'},
             {value: 'process', label: 'Congelar o processo'},
-        ], p.freeze, (v) => { p.freeze = v; save(); });
-        freeze.title = 'Padrão: segue a opção Congelar a tela na consulta. Sem congelar: a tela continua ao vivo. Congelar o quadro: a tela fica parada durante a consulta e, ' +
-            'na leitura da tela inteira, levemente desfocada com as palavras em destaque. Congelar o processo: pausa o programa.';
+        ], p.freeze === 'frame' ? 'default' : p.freeze, (v) => { p.freeze = v; save(); });
+        freeze.title = 'Padrão: segue a opção Congelar a tela na consulta. Sem congelar: a tela continua ao vivo mesmo com essa opção ligada. ' +
+            'Congelar o processo: pausa o programa durante a consulta.';
         const del = el('button', {class: 'ghost icon', title: 'Remover', html: icon('trash', 'sm')});
         del.addEventListener('click', () => {
             store.settings.profiles = profiles.filter((x) => x !== p);
@@ -309,7 +308,7 @@ function render(root) {
 
     root.append(heading('Jogos e programas'), el('div', {class: 'group'},
         cardRow({icon: 'pause', title: 'Congelar a tela na consulta',
-            desc: 'A tela fica parada enquanto você consulta e, na leitura da tela inteira, levemente desfocada com as palavras em destaque. Vale para os programas com o perfil em "Padrão".',
+            desc: 'Ligado: uma imagem parada da tela cobre a tela durante a consulta (na leitura da tela inteira, levemente desfocada com as palavras em destaque). Desligado: nada cobre a tela; só as palavras ficam destacadas e o que estiver rodando continua.',
             control: toggle(s.freezeOnLookup, (v) => { s.freezeOnLookup = v; save(); })}),
         profilesCard(),
     ));

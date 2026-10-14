@@ -54,7 +54,8 @@ pub enum FreezeMode {
     /// Follow the global "freeze on lookup" setting (`Settings::freeze_on_lookup`).
     Default,
     None,
-    /// Show the captured frame behind the overlay, so a video or game seems paused.
+    /// Show the captured frame behind the overlay, so a video or game seems paused. Only the
+    /// global option does this now; profiles saved with it are moved to `Default`.
     Frame,
     /// Suspend the foreground process while the overlay is open.
     Process,
@@ -204,6 +205,11 @@ fn migrate(mut s: Settings) -> Settings {
         }
         s.freeze_on_lookup = Some(false);
     }
+    // The captured frame over the screen is controlled only by the global option, so that turning
+    // it off always leaves the screen live.
+    for p in &mut s.profiles {
+        if p.freeze == FreezeMode::Frame { p.freeze = FreezeMode::Default; }
+    }
     for (pos, b) in builtin_dictionaries().into_iter().enumerate() {
         if !s.dictionaries.iter().any(|d| d.id == b.id) {
             s.dictionaries.insert(pos.min(s.dictionaries.len()), b);
@@ -251,7 +257,7 @@ mod tests {
         let s = migrate(old);
         assert_eq!(s.freeze_on_lookup, Some(false));
         assert_eq!(s.profiles[0].freeze, FreezeMode::Default);
-        assert_eq!(s.profiles[1].freeze, FreezeMode::Frame);
+        assert_eq!(s.profiles[1].freeze, FreezeMode::Default, "only the global option shows the frame");
 
         // Once the option exists, a profile set to "no freeze" stays that way.
         let mut again = s.clone();
