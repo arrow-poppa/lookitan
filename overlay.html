@@ -17,7 +17,7 @@
             transition: background 60ms;
         }
         .w:hover, .w.seen { background: rgba(255, 221, 0, 0.26); }
-        .w.sel, .w.sel:hover { background: rgba(255, 221, 0, 0.62); }
+        .w.sel, .w.sel:hover { background: rgba(255, 221, 0, 0.5); }
         #hint.spotlight { display: none; }
 
         /* Whole-screen lookup: the captured frame, slightly blurred, with each word drawn as a sharp
@@ -29,7 +29,7 @@
         }
         #words.spotlight .w::after { content: ""; position: absolute; inset: 0; border-radius: inherit; transition: background 60ms; }
         #words.spotlight .w:hover::after, #words.spotlight .w.seen::after { background: rgba(255, 221, 0, 0.26); }
-        #words.spotlight .w.sel::after { background: rgba(255, 221, 0, 0.62); }
+        #words.spotlight .w.sel::after { background: rgba(255, 221, 0, 0.5); }
         #hint {
             position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
             font: 12.5px system-ui, "Segoe UI", sans-serif; color: #fff;
