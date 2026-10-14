@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use image::imageops::FilterType;
@@ -42,55 +43,100 @@ mod tests {
         }
     }
 
+    fn fake(gpu: bool) -> FakeSession {
+        FakeSession { gpu, released: Arc::new(AtomicBool::new(false)) }
+    }
+
     fn fake_session(gpu: bool) -> InferenceSession<FakeSession> {
         InferenceSession {
-            session: Some(FakeSession {
-                gpu,
-                released: Arc::new(AtomicBool::new(false)),
-            }),
-            on_gpu: Arc::new(AtomicBool::new(gpu)),
+            gpu: gpu.then(|| fake(true)),
+            cpu: (!gpu).then(|| fake(false)),
+            gpu_path: gpu.then(|| PathBuf::from("det_small.onnx")),
             cpu_path: PathBuf::from("det_tiny.onnx"),
+            on_gpu: Arc::new(AtomicBool::new(gpu)),
             stage: "Detection",
+            gpu_failures: 0,
+            gpu_retry_at: None,
         }
     }
 
+    fn fails_on_gpu(s: &mut FakeSession) -> Result<u32> {
+        if s.gpu {
+            bail!("Add.176: 8007000E");
+        }
+        Ok(42)
+    }
+
     #[test]
-    fn gpu_failure_releases_session_then_retries_and_keeps_cpu() {
+    fn gpu_failure_runs_this_input_on_cpu_and_retries_gpu_next_time() {
         let mut session = fake_session(true);
-        let released = session.session.as_ref().unwrap().released.clone();
+        let released = session.gpu.as_ref().unwrap().released.clone();
         let output = session
             .run(
+                |_| panic!("the loaded GPU session is tried first"),
                 |path| {
                     assert_eq!(path, Path::new("det_tiny.onnx"));
-                    assert!(released.load(Ordering::Relaxed));
-                    Ok(FakeSession {
-                        gpu: false,
-                        released: released.clone(),
-                    })
+                    assert!(released.load(Ordering::Relaxed), "the failed GPU graph is released first");
+                    Ok(fake(false))
                 },
-                |s| {
-                    if s.gpu {
-                        bail!("Add.176: 8007000E");
-                    }
-                    Ok(42)
-                },
+                fails_on_gpu,
             )
             .unwrap();
         assert_eq!(output, 42);
         assert!(!session.on_gpu.load(Ordering::Relaxed));
-        assert_eq!(
-            session
-                .run(|_| panic!("CPU session must be reused"), |_| Ok(7))
-                .unwrap(),
-            7
-        );
+        assert!(session.gpu.is_none());
+
+        // The next input goes back to the GPU and keeps the CPU session for later failures.
+        let output = session
+            .run(
+                |path| {
+                    assert_eq!(path, Path::new("det_small.onnx"));
+                    Ok(fake(true))
+                },
+                |_| panic!("CPU session must be reused, not reloaded"),
+                |s| Ok(if s.gpu { 7 } else { 0 }),
+            )
+            .unwrap();
+        assert_eq!(output, 7);
+        assert!(session.on_gpu.load(Ordering::Relaxed));
+        assert_eq!(session.gpu_failures, 0);
+        assert!(session.cpu.is_some());
     }
 
     #[test]
     fn successful_gpu_inference_does_not_load_cpu() {
         let mut session = fake_session(true);
-        assert_eq!(session.run(|_| panic!("CPU must not load"), |_| Ok(42)).unwrap(), 42);
+        let out = session.run(|_| panic!("GPU is loaded"), |_| panic!("CPU must not load"), |_| Ok(42));
+        assert_eq!(out.unwrap(), 42);
         assert!(session.on_gpu.load(Ordering::Relaxed));
+        assert!(session.cpu.is_none());
+    }
+
+    #[test]
+    fn repeated_gpu_failures_back_off_before_retrying() {
+        let mut session = fake_session(true);
+        for _ in 0..GPU_FAILURES_BEFORE_BACKOFF {
+            session.run(|_| Ok(fake(true)), |_| Ok(fake(false)), fails_on_gpu).unwrap();
+        }
+        assert!(session.gpu_retry_at.is_some());
+        // Inside the back-off window the GPU is not even created.
+        let out = session.run(|_| panic!("GPU must wait"), |_| panic!("CPU is loaded"), fails_on_gpu);
+        assert_eq!(out.unwrap(), 42);
+        // Once the window has passed, the GPU is tried again.
+        session.gpu_retry_at = Some(Instant::now() - Duration::from_secs(1));
+        let out = session.run(|_| Ok(fake(true)), |_| panic!("CPU is loaded"), |s| Ok(s.gpu));
+        assert!(out.unwrap());
+        assert_eq!(session.gpu_failures, 0);
+        assert!(session.gpu_retry_at.is_none());
+    }
+
+    #[test]
+    fn gpu_that_cannot_load_falls_back_to_cpu_for_this_input() {
+        let mut session = fake_session(true);
+        session.gpu = None;
+        let out = session.run(|_| bail!("no adapter"), |_| Ok(fake(false)), |s| Ok(s.gpu));
+        assert!(!out.unwrap());
+        assert_eq!(session.gpu_failures, 1);
     }
 
     #[test]
@@ -98,6 +144,7 @@ mod tests {
         let mut session = fake_session(false);
         let error = session
             .run(
+                |_| panic!("GPU is off"),
                 |_| panic!("CPU must not reload"),
                 |_| -> Result<()> { bail!("CPU error") },
             )
@@ -109,22 +156,12 @@ mod tests {
     fn failed_cpu_load_can_be_retried_on_the_next_input() {
         let mut session = fake_session(true);
         let error = session
-            .run(|_| bail!("missing CPU model"), |_| -> Result<()> { bail!("GPU error") })
+            .run(|_| panic!("GPU is loaded"), |_| bail!("missing CPU model"), |_| -> Result<()> { bail!("GPU error") })
             .unwrap_err();
         assert!(format!("{error:#}").contains("missing CPU model"));
-        assert!(session.session.is_none());
-        assert!(!session.on_gpu.load(Ordering::Relaxed));
-        session
-            .run(
-                |_| {
-                    Ok(FakeSession {
-                        gpu: false,
-                        released: Arc::new(AtomicBool::new(false)),
-                    })
-                },
-                |_| Ok(()),
-            )
-            .unwrap();
+        assert!(session.cpu.is_none());
+        session.run(|_| bail!("still failing"), |_| Ok(fake(false)), |_| Ok(())).unwrap();
+        assert!(session.cpu.is_some());
     }
 
     #[test]
@@ -384,41 +421,69 @@ pub struct PaddleOcr {
     rec_on_gpu: Arc<AtomicBool>,
 }
 
-/// A successful GPU session load does not guarantee that a later, larger input will fit.
-/// Keep recovery inside the session lock so foreground and overlay OCR share the CPU replacement.
+/// Always prefers the GPU. A failed GPU load or inference (for example running out of video
+/// memory) releases the GPU session and runs only that input on the CPU; the next input loads the
+/// GPU session again. After repeated failures in a row the GPU is retried every
+/// `GPU_RETRY_BACKOFF` instead of on every input, so a broken driver does not slow each lookup.
+/// Recovery stays inside the session lock so foreground and overlay OCR share it.
 struct InferenceSession<S = Session> {
-    session: Option<S>,
-    on_gpu: Arc<AtomicBool>,
+    gpu: Option<S>,
+    cpu: Option<S>,
+    /// `None` when the GPU is turned off in Settings.
+    gpu_path: Option<PathBuf>,
     cpu_path: PathBuf,
+    /// Whether the last input ran on the GPU.
+    on_gpu: Arc<AtomicBool>,
     stage: &'static str,
+    gpu_failures: u32,
+    gpu_retry_at: Option<Instant>,
 }
 
+const GPU_FAILURES_BEFORE_BACKOFF: u32 = 3;
+const GPU_RETRY_BACKOFF: Duration = Duration::from_secs(30);
+
 impl<S> InferenceSession<S> {
+    fn gpu_failed(&mut self, what: &str, error: &anyhow::Error) {
+        log::warn!("Ocr.GpuFallback.{} {what}: {error:#}", self.stage);
+        // Release the failed GPU graph and its allocations before the CPU model loads.
+        drop(self.gpu.take());
+        self.gpu_failures += 1;
+        if self.gpu_failures >= GPU_FAILURES_BEFORE_BACKOFF {
+            self.gpu_retry_at = Some(Instant::now() + GPU_RETRY_BACKOFF);
+        }
+    }
+
     fn run<T>(
         &mut self,
+        create_gpu: impl FnOnce(&Path) -> Result<S>,
         create_cpu: impl FnOnce(&Path) -> Result<S>,
         mut infer: impl FnMut(&mut S) -> Result<T>,
     ) -> Result<T> {
-        let mut create_cpu = Some(create_cpu);
-        if self.session.is_none() {
-            self.session = Some(create_cpu.take().unwrap()(&self.cpu_path)?);
-        }
-        match infer(self.session.as_mut().unwrap()) {
-            Ok(output) => Ok(output),
-            Err(gpu_error) if self.on_gpu.load(Ordering::Relaxed) => {
-                log::warn!("Ocr.GpuFallback.{} during inference: {gpu_error:#}", self.stage);
-                // Release the failed GPU graph and its allocations before loading the CPU model.
-                drop(self.session.take());
-                self.on_gpu.store(false, Ordering::Relaxed);
-                self.session = Some(
-                    create_cpu.take().unwrap()(&self.cpu_path)
-                        .with_context(|| format!("{} CPU recovery after GPU failure ({gpu_error:#})", self.stage))?,
-                );
-                infer(self.session.as_mut().unwrap())
-                    .with_context(|| format!("{} CPU retry after GPU failure ({gpu_error:#})", self.stage))
+        let gpu_due = self.gpu_retry_at.map_or(true, |at| Instant::now() >= at);
+        if let (Some(path), true) = (self.gpu_path.clone(), gpu_due) {
+            if self.gpu.is_none() {
+                match create_gpu(&path) {
+                    Ok(s) => self.gpu = Some(s),
+                    Err(e) => self.gpu_failed("while loading", &e),
+                }
             }
-            Err(error) => Err(error),
+            if let Some(gpu) = self.gpu.as_mut() {
+                match infer(gpu) {
+                    Ok(output) => {
+                        self.gpu_failures = 0;
+                        self.gpu_retry_at = None;
+                        self.on_gpu.store(true, Ordering::Relaxed);
+                        return Ok(output);
+                    }
+                    Err(e) => self.gpu_failed("during inference", &e),
+                }
+            }
         }
+        if self.cpu.is_none() {
+            self.cpu = Some(create_cpu(&self.cpu_path).with_context(|| format!("{} CPU session", self.stage))?);
+        }
+        self.on_gpu.store(false, Ordering::Relaxed);
+        infer(self.cpu.as_mut().unwrap())
     }
 }
 
@@ -481,28 +546,21 @@ impl PaddleOcr {
             bail!("recognition model not found: {}", rec_path.display());
         }
 
-        let (det, det_model, det_on_gpu) = if want_gpu {
-            match gpu_session(&det_small) {
-                Ok(s) => (s, "det_small", true),
-                Err(e) => {
-                    log::warn!("Ocr.GpuFallback.Detection: {e:#}");
-                    (cpu_session(&det_tiny)?, "det_tiny", false)
-                }
+        // Load the GPU sessions now so the first lookup does not pay for it; a GPU that fails here
+        // is retried by InferenceSession on the next input.
+        let load_gpu = |path: &Path, stage: &str| match gpu_session(path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                log::warn!("Ocr.GpuFallback.{stage} while loading: {e:#}");
+                None
             }
-        } else {
-            (cpu_session(&det_tiny)?, "det_tiny", false)
         };
-        let (rec, rec_on_gpu) = if det_on_gpu {
-            match gpu_session(&rec_path) {
-                Ok(s) => (s, true),
-                Err(e) => {
-                    log::warn!("Ocr.GpuFallback.Recognition: {e:#}");
-                    (cpu_session(&rec_path)?, false)
-                }
-            }
-        } else {
-            (cpu_session(&rec_path)?, false)
-        };
+        let det_gpu = if want_gpu { load_gpu(&det_small, "Detection") } else { None };
+        let rec_gpu = if want_gpu { load_gpu(&rec_path, "Recognition") } else { None };
+        let det_cpu = if det_gpu.is_none() { Some(cpu_session(&det_tiny)?) } else { None };
+        let rec_cpu = if rec_gpu.is_none() { Some(cpu_session(&rec_path)?) } else { None };
+        let (det_on_gpu, rec_on_gpu) = (det_gpu.is_some(), rec_gpu.is_some());
+        let det_model = if det_on_gpu { "det_small" } else { "det_tiny" };
         let dict: Vec<String> = serde_json::from_slice(
             &std::fs::read(&dict_path).with_context(|| format!("read {}", dict_path.display()))?,
         )?;
@@ -516,16 +574,24 @@ impl PaddleOcr {
         let rec_on_gpu = Arc::new(AtomicBool::new(rec_on_gpu));
         Ok(Self {
             det: Mutex::new(InferenceSession {
-                session: Some(det),
-                on_gpu: det_on_gpu.clone(),
+                gpu: det_gpu,
+                cpu: det_cpu,
+                gpu_path: want_gpu.then(|| det_small),
                 cpu_path: det_tiny,
+                on_gpu: det_on_gpu.clone(),
                 stage: "Detection",
+                gpu_failures: 0,
+                gpu_retry_at: None,
             }),
             rec: Mutex::new(InferenceSession {
-                session: Some(rec),
-                on_gpu: rec_on_gpu.clone(),
+                gpu: rec_gpu,
+                cpu: rec_cpu,
+                gpu_path: want_gpu.then(|| rec_path.clone()),
                 cpu_path: rec_path,
+                on_gpu: rec_on_gpu.clone(),
                 stage: "Recognition",
+                gpu_failures: 0,
+                gpu_retry_at: None,
             }),
             dict,
             det_on_gpu,
@@ -655,7 +721,7 @@ impl PaddleOcr {
 
         let (mh, mw, prob) = {
             let mut det = self.det.lock();
-            det.run(cpu_session, |session| {
+            det.run(gpu_session, cpu_session, |session| {
                 let outputs = ortx!(session.run(ort::inputs![input.view()]));
                 let (shape, prob) = ortx!(outputs[0].try_extract_tensor::<f32>());
                 if shape.len() != 4 {
@@ -778,7 +844,7 @@ impl PaddleOcr {
     fn run_rec(&self, data: Vec<f32>, n: usize, padded_w: usize) -> Result<(usize, usize, Vec<f32>)> {
         let input = ortx!(Tensor::from_array(([n, 3, REC_HEIGHT as usize, padded_w], data)));
         let mut rec = self.rec.lock();
-        rec.run(cpu_session, |session| {
+        rec.run(gpu_session, cpu_session, |session| {
             let outputs = ortx!(session.run(ort::inputs![input.view()]));
             let (shape, probs) = ortx!(outputs[0].try_extract_tensor::<f32>());
             if shape.len() != 3 || shape[0] as usize != n {
