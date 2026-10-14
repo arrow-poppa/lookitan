@@ -5,7 +5,7 @@ import {api, escapeHtml} from '../lib/api.js';
 import {icon} from '../lib/icons.js';
 import {renderAnkiSection} from './anki-panel.js';
 import {store, save} from './store.js';
-import {cardRow, el, heading, segmented, select, textInput, toggle} from './ui.js';
+import {cardRow, collapser, el, heading, segmented, select, textInput, toggle} from './ui.js';
 
 let languages = [];
 let status = null;
@@ -191,7 +191,9 @@ function profilesCard() {
         save();
         rerender();
     });
-    header.querySelector('.ctl').append(addInput, add);
+    const collapse = collapser('profiles', () => [list],
+        (collapsed) => { header.style.borderRadius = collapsed ? '8px' : '8px 8px 0 0'; });
+    header.querySelector('.ctl').append(addInput, add, collapse.button);
 
     for (const p of profiles) {
         const focus = el('input', {type: 'checkbox'});
@@ -214,6 +216,7 @@ function profilesCard() {
             el('label', {class: 'check', title: 'Dá o foco do teclado ao overlay (para jogos que prendem o teclado)'}, focus, 'Foco'),
             freeze, del));
     }
+    collapse.apply();
     return el('div', {class: 'panel', style: 'overflow:hidden'}, header, list);
 }
 

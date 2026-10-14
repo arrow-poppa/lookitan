@@ -24,6 +24,32 @@ export function cardRow({icon: iconName, title, desc, control, wide = false}) {
         el('div', {class: wide ? 'ctl wide' : 'ctl'}, control));
 }
 
+/**
+ * A chevron button that collapses a section, like Lookupper's settings groups. `body()` returns
+ * the elements to hide; `onChange(collapsed)` can restyle the header. The state is remembered per
+ * `key` in this window only.
+ */
+export function collapser(key, body, onChange = () => {}) {
+    const storageKey = `lookitan.collapsed.${key}`;
+    let collapsed = false;
+    try { collapsed = localStorage.getItem(storageKey) === '1'; } catch (_e) { /* storage unavailable */ }
+    const button = el('button', {class: 'ghost icon collapse', type: 'button'});
+    const apply = () => {
+        for (const node of body()) { if (node) { node.hidden = collapsed; } }
+        button.innerHTML = icon(collapsed ? 'chevronDown' : 'chevronUp', 'sm');
+        button.title = collapsed ? 'Expandir' : 'Recolher';
+        button.setAttribute('aria-label', button.title);
+        button.setAttribute('aria-expanded', String(!collapsed));
+        onChange(collapsed);
+    };
+    button.addEventListener('click', () => {
+        collapsed = !collapsed;
+        try { localStorage.setItem(storageKey, collapsed ? '1' : '0'); } catch (_e) { /* storage unavailable */ }
+        apply();
+    });
+    return {button, apply};
+}
+
 export function toggle(checked, onChange, {on = 'Ligado', off = 'Desligado'} = {}) {
     const input = el('input', {type: 'checkbox'});
     input.checked = Boolean(checked);
