@@ -96,6 +96,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): a whole-screen lookup (`spotlight`) fades the overlay in (body opacity 0→1, 220 ms ease-out, Web Animations) so the screen darkens smoothly. `close_overlay` emits `overlay-closed`, which sets the body's opacity to 0, so a reopened overlay never flashes the previous lookup.
+
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): removed the global "Congelar a tela na consulta" option (and the "Padrão" profile mode) at the user's request. Freezing is chosen per profile again, like Lookupper's per-app freeze menu, with "Sem congelar" as the default. `FreezeMode::Default` stays only so settings saved with it still load; `migrate()` maps it to `None`.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): the user saw the screenshot cover the screen with "Congelar a tela na consulta" off, most likely from a profile left on "Congelar o quadro". The frame is now controlled only by the global option; profiles lose the "frame" choice, and saved `frame` profiles become `default`.

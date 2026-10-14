@@ -23,17 +23,19 @@ class Element {
 }
 
 async function fixture() {
-    const root = new Element(), frame = new Element(), others = {}, handlers = {}, requests = [];
-    let emit;
+    const root = new Element(), frame = new Element(), body = new Element(), others = {}, handlers = {}, requests = [], listeners = {};
+    body.animations = [];
+    body.animate = (keyframes, options) => { body.animations.push({keyframes, options}); };
     const window = {innerWidth: 1920, innerHeight: 1080, addEventListener: (name, callback) => { handlers[`window:${name}`] = callback; }};
     const context = createContext({window, HTMLElement: Element, document: {
+        body,
         getElementById: (id) => id === 'words' ? root : id === 'frame' ? frame : (others[id] ||= new Element()),
         createElement: () => new Element(), createDocumentFragment: () => new Element(),
         addEventListener: (name, callback) => { handlers[name] = callback; },
     }});
     const stubs = {
         '@tauri-apps/api/core': {invoke: async (command, args) => { requests.push({command, args}); }},
-        '@tauri-apps/api/event': {listen: async (_name, callback) => { emit = (payload) => callback({payload}); }},
+        '@tauri-apps/api/event': {listen: async (name, callback) => { listeners[name] = callback; }},
         '../lib/api.js': {schemeBase: () => 'lkt://localhost'},
     };
     const module = new SourceTextModule(await readFile(resolve(import.meta.dirname, '../src/overlay/main.js'), 'utf8'), {context});
@@ -41,7 +43,8 @@ async function fixture() {
         for (const [key, value] of Object.entries(stubs[name])) { this.setExport(key, value); }
     }, {context}));
     await module.evaluate();
-    return {root, frame, hint: others.hint, dim: others.dim, window, handlers, requests, emit: (payload) => emit(payload)};
+    return {root, frame, body, hint: others.hint, dim: others.dim, window, handlers, requests,
+        emit: (payload) => listeners.overlay({payload}), close: () => listeners['overlay-closed']({payload: null})};
 }
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {
@@ -174,4 +177,19 @@ test('a live whole-screen lookup dims the screen slightly except under the words
     assert.equal(view.dim.style.display, 'none');
     view.emit({id: 3, words: [word], spotlight: false, viewportWidth: 1920, viewportHeight: 1080});
     assert.equal(view.dim.style.display, 'none');
+});
+
+test('a whole-screen lookup fades in, and a closed overlay never shows the previous lookup', async () => {
+    const view = await fixture();
+    const word = {text: 'target', x: 10, y: 20, w: 50, h: 18};
+    view.emit({id: 1, words: [word], selected: word});
+    assert.equal(view.body.animations.length, 0, 'a lookup with a pop-up does not fade the screen');
+    view.close();
+    assert.equal(view.body.style.opacity, '0');
+    view.emit({id: 2, words: [word], spotlight: true});
+    assert.equal(view.body.style.opacity, '');
+    assert.equal(view.body.animations.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(view.body.animations[0].keyframes)), [{opacity: 0}, {opacity: 1}]);
+    view.emit({id: 2, words: [word], selected: word, spotlight: true});
+    assert.equal(view.body.animations.length, 1, 'clicking a word does not fade again');
 });

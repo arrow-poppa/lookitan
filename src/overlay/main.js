@@ -11,6 +11,8 @@ const hint = document.getElementById('hint');
 const dim = document.getElementById('dim');
 /** Same darkness as the frozen frame's brightness(0.85). */
 const DIM_ALPHA = 0.15;
+/** A whole-screen lookup fades in, so the screen darkens smoothly. */
+const FADE_IN = {duration: 220, easing: 'ease-out'};
 let current = null;
 let selected = null;
 /** Words already looked up in this overlay; they keep a faint highlight, as in Lookupper. */
@@ -99,9 +101,18 @@ function render() {
     root.replaceChildren(frag);
 }
 
+/** Hidden until the next lookup arrives, so the window never shows the previous one. */
+function setVisible(visible) {
+    if (document.body) { document.body.style.opacity = visible ? '' : '0'; }
+}
+
+void listen('overlay-closed', () => setVisible(false));
+
 void listen('overlay', (event) => {
     const p = event.payload;
     if (!current || current.id !== p.id) {
+        setVisible(true);
+        if (p.spotlight) { document.body?.animate?.([{opacity: 0}, {opacity: 1}], FADE_IN); }
         selected = null;
         seen = [];
         if (p.frameUrl) {

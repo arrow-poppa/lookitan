@@ -667,6 +667,8 @@ fn close_overlay(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("overlay") {
         let _ = w.hide();
     }
+    // Clear the overlay's content, so the next lookup does not flash the old one before it fades in.
+    let _ = app.emit_to("overlay", "overlay-closed", ());
 }
 
 /// Sends the result to the popup and shows it next to the word (desktop coordinates).
