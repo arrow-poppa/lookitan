@@ -44,8 +44,7 @@ async function fixture() {
     }, {context}));
     await module.evaluate();
     return {root, frame, body, hint: others.hint, dim: others.dim, window, handlers, requests,
-        emit: (payload) => listeners.overlay({payload}), close: () => listeners['overlay-closed']({payload: null}),
-        popupHidden: () => listeners['popup-hidden']({payload: null})};
+        emit: (payload) => listeners.overlay({payload}), close: () => listeners['overlay-closed']({payload: null})};
 }
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {
@@ -204,12 +203,6 @@ test('in a whole-screen lookup an empty click first closes the pop-up, then the 
     view.handlers.mousedown(empty);
     view.handlers.mousedown(empty);
     assert.deepEqual(view.requests.map((r) => r.command), ['overlay_pick', 'overlay_hide_popup', 'overlay_close']);
-
-    // The pop-up closed by itself (Esc or its close button): the next empty click closes the overlay.
-    view.handlers.mousedown({preventDefault() {}, target: view.root.children[0], clientX: 20, clientY: 25});
-    view.popupHidden();
-    view.handlers.mousedown(empty);
-    assert.equal(view.requests.at(-1).command, 'overlay_close');
 
     // A lookup with a pop-up from the shortcut (not whole-screen) still closes at once.
     view.emit({id: 2, words: [word], selected: word});

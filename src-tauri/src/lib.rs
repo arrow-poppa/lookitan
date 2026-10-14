@@ -1017,15 +1017,9 @@ fn hide_popup(app: AppHandle) {
     if let Some(w) = app.get_webview_window("popup") {
         let _ = w.hide();
     }
-    // A whole-screen lookup keeps its words clickable after the pop-up closes, like Lookupper.
-    let spotlight = app.state::<AppState>().recognition.lock().as_ref().is_some_and(|r| r.spotlight);
-    match app.get_webview_window("overlay").filter(|w| w.is_visible().unwrap_or(false)) {
-        Some(overlay) if spotlight => {
-            let _ = app.emit_to("overlay", "popup-hidden", ());
-            let _ = overlay.set_focus();
-        }
-        _ => close_overlay(&app),
-    }
+    // Closing the pop-up itself (Esc or its close button) closes the overlay too, even in a
+    // whole-screen lookup; only an empty click on the overlay keeps it (`overlay_hide_popup`).
+    close_overlay(&app);
 }
 
 #[tauri::command]

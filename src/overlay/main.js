@@ -110,7 +110,6 @@ function setVisible(visible) {
 }
 
 void listen('overlay-closed', () => setVisible(false));
-void listen('popup-hidden', () => { popupOpen = false; });
 
 void listen('overlay', (event) => {
     const p = event.payload;
