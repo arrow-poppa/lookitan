@@ -10,6 +10,7 @@ mod mdict;
 mod ocr;
 mod platform;
 mod protocol;
+mod sentence;
 mod settings;
 mod words;
 
@@ -428,7 +429,10 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         id,
         capture: capture.clone(),
         lines: lines.clone(),
-        focus_lines: lines.clone(),
+        focus_lines: match &pick {
+            Some(p) => p.sentence_lines.iter().map(|&i| lines[i].clone()).collect(),
+            None => lines.clone(),
+        },
         monitor,
         scan,
         complete: rest.is_empty(),
@@ -972,12 +976,8 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
     let (px, py) = capture.to_image(dx, dy);
     let Some(pick) = words::pick(&lines, px, py) else { return };
     if let Some(r) = state.recognition.lock().as_mut() {
-        let h = (pick.y1 - pick.y0).max(4.0);
-        r.focus_lines = lines
-            .iter()
-            .filter(|l| l.y1 >= pick.y0 - 1.6 * h && l.y0 <= pick.y1 + 1.6 * h)
-            .cloned()
-            .collect();
+        // The "sentence" screenshot frames the lines of the picked sentence.
+        r.focus_lines = pick.sentence_lines.iter().map(|&i| lines[i].clone()).collect();
     }
     let (x0, y0) = capture.to_desktop(pick.x0, pick.y0);
     let (x1, y1) = capture.to_desktop(pick.x1, pick.y1);
