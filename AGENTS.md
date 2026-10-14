@@ -60,9 +60,9 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Key behavior
 
 - **OCR:**
-  - **GPU always first, on both platforms** (DirectML on Windows, WebGPU/Vulkan on Linux); the user runs Lookitan on Windows and on Fedora KDE.
-  - If the GPU fails to load or to run an input (for example out of video memory), `InferenceSession` releases the GPU session and runs only that input on the CPU (det_tiny for detection). The next input loads the GPU again. After 3 failures in a row, it retries the GPU every 30 s.
-  - The models are the same PP-OCRv6/PP-OCRv5 weights as Lookupper, from the official PaddlePaddle exports. Lookupper's own copies are a different ONNX conversion (det at opset 11 instead of 14).
+  - The detector tries det_small on the GPU first. If GPU inference fails, it releases the GPU session and retries on the CPU with det_tiny. Foreground and overlay OCR share that CPU session.
+  - GPU first on both platforms (DirectML on Windows, WebGPU/Vulkan on Linux); the user runs Lookitan on Windows and on Fedora KDE. After a GPU failure the stage stays on the CPU until restart. A "retry the GPU on the next input" variant was tried in 5ab8870 and reverted at the user's request as less safe; do not reintroduce it without asking.
+  - The models are the same PP-OCRv6/PP-OCRv5 weights as Lookupper, from the official PaddlePaddle exports. Lookupper's copies are a different ONNX conversion (det at opset 11 instead of 14).
   - `DET_MAX_SIDE` is 1280, and whole-screen OCR runs in overlapping bands.
   - Recognition has two phases: the lines near the pointer first, one run per line, then the rest in the background for the overlay.
   - The background whole-screen pass is batched: `plan_batches` groups lines of similar width (at most 16 lines and 12,000 padded columns per run), pads them with zeros like PaddleOCR, and decodes each line only over its own CTC steps. A failed batch retries line by line.
@@ -90,7 +90,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
-- 2026-10-14 (Claude): a GPU failure no longer pins OCR to the CPU until restart; only the failed input runs on the CPU (`InferenceSession::run`).
+- 2026-10-14 (Claude): reverted 5ab8870 (GPU retry after a failure); the original fallback is back, as the user prefers.
 
 - 2026-10-14 (Claude): removed the "Área lida" (scope) setting at the user's request; the scope is always Region.
 
