@@ -179,7 +179,7 @@ function profilesCard() {
     const list = el('div', {class: 'profiles'});
     const header = el('div', {class: 'card-row', style: 'border-radius: 8px 8px 0 0'},
         el('span', {class: 'ico', html: icon('list')}),
-        el('div', {class: 'txt'}, el('div', {class: 't'}, `Perfis de jogos e programas (${profiles.length})`), el('div', {class: 'd'}, 'Configure cada jogo ou programa separadamente. Eles aparecem aqui quando você usa o Lookitan neles. Por padrão, a tela não congela.')),
+        el('div', {class: 'txt'}, el('div', {class: 't'}, `Perfis de jogos e programas (${profiles.length})`), el('div', {class: 'd'}, 'Configure cada jogo ou programa separadamente. Eles aparecem aqui quando você usa o Lookitan neles. "Padrão" segue a opção Congelar a tela na consulta.')),
         el('div', {class: 'ctl'}));
     const addInput = textInput('', () => {}, {placeholder: 'programa.exe ou classe da janela'});
     addInput.style.minWidth = '220px';
@@ -187,7 +187,7 @@ function profilesCard() {
     add.addEventListener('click', () => {
         const exe = addInput.value.trim();
         if (!exe || profiles.some((p) => p.executable.toLowerCase() === exe.toLowerCase())) { return; }
-        profiles.push({executable: exe, displayName: exe, focusOverlay: false, freeze: 'none'});
+        profiles.push({executable: exe, displayName: exe, focusOverlay: false, freeze: 'default'});
         save();
         rerender();
     });
@@ -200,11 +200,12 @@ function profilesCard() {
         focus.checked = p.focusOverlay;
         focus.addEventListener('change', () => { p.focusOverlay = focus.checked; save(); });
         const freeze = select([
+            {value: 'default', label: 'Padrão'},
             {value: 'none', label: 'Sem congelar'},
             {value: 'frame', label: 'Congelar o quadro'},
             {value: 'process', label: 'Congelar o processo'},
         ], p.freeze, (v) => { p.freeze = v; save(); });
-        freeze.title = 'Sem congelar: a tela continua ao vivo. Congelar o quadro: a tela fica parada durante a consulta e, ' +
+        freeze.title = 'Padrão: segue a opção Congelar a tela na consulta. Sem congelar: a tela continua ao vivo. Congelar o quadro: a tela fica parada durante a consulta e, ' +
             'na leitura da tela inteira, levemente desfocada com as palavras em destaque. Congelar o processo: pausa o programa.';
         const del = el('button', {class: 'ghost icon', title: 'Remover', html: icon('trash', 'sm')});
         del.addEventListener('click', () => {
@@ -306,7 +307,12 @@ function render(root) {
             el('div', {class: 'txt'}, el('div', {class: 't'}, 'Estado do motor'), el('div', {class: 'd', id: 'engine-status'}, engineStatusText()))),
     ));
 
-    root.append(heading('Jogos e programas'), profilesCard());
+    root.append(heading('Jogos e programas'), el('div', {class: 'group'},
+        cardRow({icon: 'pause', title: 'Congelar a tela na consulta',
+            desc: 'A tela fica parada enquanto você consulta e, na leitura da tela inteira, levemente desfocada com as palavras em destaque. Vale para os programas com o perfil em "Padrão".',
+            control: toggle(s.freezeOnLookup, (v) => { s.freezeOnLookup = v; save(); })}),
+        profilesCard(),
+    ));
 
     root.append(heading('Anki'));
     const ankiRoot = el('div', {class: 'group', id: 'anki-settings'});

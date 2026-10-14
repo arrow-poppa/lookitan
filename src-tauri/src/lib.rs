@@ -377,7 +377,12 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     };
     // Resolve the output before OCR: the pointer may move to another monitor while it runs.
     let mut monitor = platform::display_geometry(app, cx, cy, &capture)?;
-    let frozen_pid = match (profile.freeze, fg.as_ref()) {
+    let freeze = match profile.freeze {
+        FreezeMode::Default if settings.freeze_on_lookup == Some(true) => FreezeMode::Frame,
+        FreezeMode::Default => FreezeMode::None,
+        mode => mode,
+    };
+    let frozen_pid = match (freeze, fg.as_ref()) {
         (FreezeMode::Process, Some(f)) if f.pid != 0 => {
             platform::suspend_process(f.pid);
             Some(f.pid)
@@ -415,7 +420,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         complete: rest.is_empty(),
         app: fg.clone(),
         frozen_pid,
-        freeze_frame: profile.freeze == FreezeMode::Frame,
+        freeze_frame: freeze == FreezeMode::Frame,
         spotlight: pick.is_none() && !(lines.is_empty() && rest.is_empty()),
         screen,
         engine: engine.clone(),
