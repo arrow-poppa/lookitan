@@ -25,7 +25,8 @@ class Element {
 async function fixture() {
     const root = new Element(), frame = new Element(), handlers = {}, requests = [];
     let emit;
-    const context = createContext({HTMLElement: Element, document: {
+    const window = {innerWidth: 1920, innerHeight: 1080, addEventListener: (name, callback) => { handlers[`window:${name}`] = callback; }};
+    const context = createContext({window, HTMLElement: Element, document: {
         getElementById: (id) => id === 'words' ? root : frame,
         createElement: () => new Element(), createDocumentFragment: () => new Element(),
         addEventListener: (name, callback) => { handlers[name] = callback; },
@@ -40,7 +41,7 @@ async function fixture() {
         for (const [key, value] of Object.entries(stubs[name])) { this.setExport(key, value); }
     }, {context}));
     await module.evaluate();
-    return {root, frame, handlers, requests, emit: (payload) => emit(payload)};
+    return {root, frame, window, handlers, requests, emit: (payload) => emit(payload)};
 }
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {
@@ -77,4 +78,39 @@ test('word clicks send the exact viewport coordinates used by the backend invers
     assert.equal(view.requests[0].command, 'overlay_pick');
     assert.equal(view.requests[0].args.x, 172.5);
     assert.equal(view.requests[0].args.y, 98.5);
+});
+
+test('WebKit fractional DPI corrects both borders and clicks when GTK reports scale one', async () => {
+    const view = await fixture();
+    const word = {text: 'target', x: 115, y: 115, w: 115, h: 23};
+    view.emit({id: 1, viewportWidth: 2208, viewportHeight: 1242, words: [word], selected: word,
+        frameUrl: '/c/1/frame.png', frameRect: {x: 115, y: 115, w: 1035, h: 299}});
+    const rect = view.root.children[0];
+    const close = (actual, expected) => assert(Math.abs(Number.parseFloat(actual) - expected) < 0.001);
+    close(rect.style.left, 100);
+    close(rect.style.top, 100);
+    close(rect.style.width, 100);
+    close(rect.style.height, 20);
+    close(view.frame.style.width, 900);
+    close(view.frame.style.height, 260);
+    view.handlers.mousedown({preventDefault() {}, target: rect, clientX: 150, clientY: 110});
+    close(view.requests[0].args.x, 172.5);
+    close(view.requests[0].args.y, 126.5);
+    assert(rect.classList.contains('sel'));
+});
+
+test('a browser viewport resize updates borders before another OCR or backend event', async () => {
+    const view = await fixture();
+    view.emit({id: 1, viewportWidth: 1920, viewportHeight: 1080,
+        words: [{text: 'target', x: 100, y: 100, w: 100, h: 20}]});
+    assert.equal(view.root.children[0].style.left, '100px');
+    view.window.innerWidth = 960;
+    view.window.innerHeight = 540;
+    view.handlers['window:resize']();
+    assert.equal(view.root.children[0].style.left, '50px');
+    assert.equal(view.root.children[0].style.width, '50px');
+    assert.equal(view.root.children[0].style.height, '10px');
+    view.handlers.mousedown({preventDefault() {}, target: view.root.children[0], clientX: 75, clientY: 55});
+    assert.equal(view.requests[0].args.x, 150);
+    assert.equal(view.requests[0].args.y, 110);
 });

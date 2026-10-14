@@ -107,10 +107,12 @@ struct OverlayWord {
 struct OverlayPayload {
     id: u64,
     words: Vec<OverlayWord>,
-    /// Desktop rectangle (CSS px of the overlay) of the selected word.
+    /// Rectangle in the window toolkit's logical units, before WebView DPI/zoom conversion.
     selected: Option<OverlayWord>,
     frame_url: Option<String>,
     frame_rect: Option<OverlayWord>,
+    viewport_width: f64,
+    viewport_height: f64,
     complete: bool,
 }
 
@@ -505,19 +507,22 @@ fn cached_lens(state: &AppState, image: &image::RgbaImage, key: FrameKey, settin
     Ok(lines)
 }
 
-fn overlay_viewport(app: &AppHandle, monitor: DisplayGeometry) -> ((f64, f64), f64) {
+fn overlay_viewport(app: &AppHandle, monitor: DisplayGeometry) -> ((f64, f64), f64, (f64, f64)) {
     let win = app.get_webview_window("overlay");
     let origin = win.as_ref().and_then(|w| w.inner_position().ok())
         .map(|p| (p.x as f64, p.y as f64)).unwrap_or((monitor.native.x, monitor.native.y));
-    let scale = win.and_then(|w| w.scale_factor().ok()).unwrap_or(monitor.scale).max(0.5);
-    (origin, scale)
+    let scale = win.as_ref().and_then(|w| w.scale_factor().ok()).unwrap_or(monitor.scale).max(0.5);
+    let size = win.and_then(|w| w.inner_size().ok())
+        .map(|s| (s.width as f64 / scale, s.height as f64 / scale))
+        .unwrap_or((monitor.native.width / scale, monitor.native.height / scale));
+    (origin, scale, size)
 }
 
 fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>, complete: bool) {
     let state = app.state::<AppState>();
     let Some(monitor) = state.recognition.lock().as_ref().filter(|r| r.id == id).map(|r| r.monitor) else { return };
     // Query the window outside the recognition lock: its dispatcher may need the event thread.
-    let (origin, scale) = overlay_viewport(app, monitor);
+    let (origin, scale, (viewport_width, viewport_height)) = overlay_viewport(app, monitor);
     let payload = {
         let mut guard = state.recognition.lock();
         let Some(r) = guard.as_mut().filter(|r| r.id == id) else { return };
@@ -548,6 +553,8 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             selected,
             frame_url: r.freeze_frame.then(|| format!("/c/{id}/frame.png")),
             frame_rect,
+            viewport_width,
+            viewport_height,
             complete,
         }
     };
@@ -840,7 +847,7 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
         let Some(r) = guard.as_ref() else { return };
         (r.lines.clone(), r.capture.clone(), r.monitor, r.app.clone(), r.id, r.engine.clone(), r.ocr_ms)
     };
-    let (origin, scale) = overlay_viewport(&app, monitor);
+    let (origin, scale, _) = overlay_viewport(&app, monitor);
     let (dx, dy) = monitor.css_to_desktop(x, y, origin, scale);
     let (px, py) = capture.to_image(dx, dy);
     let Some(pick) = words::pick(&lines, px, py) else { return };

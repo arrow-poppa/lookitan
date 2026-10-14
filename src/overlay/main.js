@@ -10,6 +10,22 @@ const frame = document.getElementById('frame');
 let current = null;
 let selected = null;
 
+// GTK's integer scale factor can differ from WebKit's fractional CSS pixel scale. Compare
+// the actual viewport sizes rather than assuming a toolkit pixel is one browser pixel.
+function viewportScale() {
+    return {
+        x: current?.viewportWidth > 0 ? window.innerWidth / current.viewportWidth : 1,
+        y: current?.viewportHeight > 0 ? window.innerHeight / current.viewportHeight : 1,
+    };
+}
+
+function position(el, r, scale) {
+    el.style.left = `${r.x * scale.x}px`;
+    el.style.top = `${r.y * scale.y}px`;
+    el.style.width = `${Math.max(r.w * scale.x, 4)}px`;
+    el.style.height = `${Math.max(r.h * scale.y, 4)}px`;
+}
+
 function containsCenter(w, s) {
     const cx = s.x + s.w / 2;
     const cy = s.y + s.h / 2;
@@ -18,12 +34,9 @@ function containsCenter(w, s) {
 
 function render() {
     if (!current) { return; }
+    const scale = viewportScale();
     if (current.frameRect) {
-        const r = current.frameRect;
-        frame.style.left = `${r.x}px`;
-        frame.style.top = `${r.y}px`;
-        frame.style.width = `${r.w}px`;
-        frame.style.height = `${r.h}px`;
+        position(frame, current.frameRect, scale);
     }
     const frag = document.createDocumentFragment();
     for (const w of current.words) {
@@ -32,10 +45,7 @@ function render() {
         if (selected && containsCenter(w, selected)) {
             el.classList.add('sel');
         }
-        el.style.left = `${w.x}px`;
-        el.style.top = `${w.y}px`;
-        el.style.width = `${Math.max(w.w, 4)}px`;
-        el.style.height = `${Math.max(w.h, 4)}px`;
+        position(el, w, scale);
         el.title = w.text;
         frag.appendChild(el);
     }
@@ -70,11 +80,14 @@ document.addEventListener('mousedown', (ev) => {
     if (target instanceof HTMLElement && target.classList.contains('w')) {
         for (const el of root.querySelectorAll('.w.sel')) { el.classList.remove('sel'); }
         target.classList.add('sel');
-        void invoke('overlay_pick', {x: ev.clientX, y: ev.clientY});
+        const scale = viewportScale();
+        void invoke('overlay_pick', {x: ev.clientX / scale.x, y: ev.clientY / scale.y});
     } else {
         void invoke('overlay_close');
     }
 });
+
+window.addEventListener('resize', render);
 
 document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { void invoke('overlay_close'); }
