@@ -67,7 +67,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - `DET_MAX_SIDE` is 1280, and whole-screen OCR runs in overlapping bands.
   - Recognition has two phases: the lines near the pointer first, one run per line, then the rest in the background for the overlay.
   - The background whole-screen pass is batched: `plan_batches` groups lines of similar width (at most 16 lines and 12,000 padded columns per run), pads them with zeros like PaddleOCR, and decodes each line only over its own CTC steps. A failed batch retries line by line.
-- **Scan result:** the pop-up opens only when the pointer is on a word (`Pick::is_under`, with a pad of a quarter of the line height). Otherwise the scan re-captures the whole monitor and shows the focused overlay of clickable words with no pop-up, as Lookupper does. Also like Lookupper, that whole-screen overlay appears only after the background pass has read the whole screen (`deferred` in `run_scan`), not progressively; `scan_seq` stops a superseded pass from showing it. The "Área lida" setting is gone: `migrate()` forces `ocrScope` to Region, and the capture-region size is always editable.
+- **Scan result:** the pop-up opens only when the pointer is on a word (`Pick::is_under`, with a pad of a quarter of the line height). Otherwise the scan re-captures the whole monitor and shows the focused overlay of clickable words with no pop-up, as Lookupper does. That whole-screen overlay appears at once and dims the screen, but `emit_overlay` sends no words for a `spotlight` recognition until it is `complete`, so all the words appear together when the background pass ends instead of batch by batch. `scan_seq` stops a superseded pass. The "Área lida" setting is gone: `migrate()` forces `ocrScope` to Region, and the capture-region size is always editable.
 - **Freeze:** Configurações › Jogos e programas › "Congelar a tela na consulta" (`freezeOnLookup`, default off) freezes the frame on every lookup. Each app profile's `freeze` is `default` (follows that option; new profiles start here), `none`, `frame` or `process`. `migrate()` turns old `none` profiles into `default` once, when `freezeOnLookup` is missing.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
@@ -95,6 +95,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): replaced the deferred overlay below at the user's request. The whole-screen overlay shows (dimmed) right away again, but with no words until the whole OCR is done; then they all appear at once.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): global "Congelar a tela na consulta" on/off (`freezeOnLookup`), with a "Padrão" profile freeze mode (`FreezeMode::Default`) that follows it. Profiles saved as "Sem congelar" before this were the auto-created default, so `migrate()` moves them to "Padrão" once.
 
