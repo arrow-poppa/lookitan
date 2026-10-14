@@ -366,7 +366,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     let (mut px, mut py) = capture.to_image(cx, cy);
 
     let started = Instant::now();
-    let mut pass = ocr_pass(&state, &settings, &capture.image, px, py, whole_screen)?;
+    let mut pass = ocr_pass(&state, &settings, settings.engine_for(whole_screen), &capture.image, px, py, whole_screen)?;
     let mut pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
     // Like Lookupper: a shortcut pressed away from text reads the whole screen and shows the
     // clickable words without a pop-up; clicking one of them looks it up.
@@ -374,10 +374,10 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         capture = platform::capture_screen(cx, cy)?;
         monitor = platform::display_geometry(app, cx, cy, &capture)?;
         (px, py) = capture.to_image(cx, cy);
-        pass = ocr_pass(&state, &settings, &capture.image, px, py, true)?;
+        pass = ocr_pass(&state, &settings, settings.engine_for(true), &capture.image, px, py, true)?;
         pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
     }
-    let OcrPass { lines, engine, rest, paddle: paddle_engine, notice, key: ocr_key } = pass;
+    let OcrPass { lines, engine, kind: ocr_kind, rest, paddle: paddle_engine, notice, key: ocr_key } = pass;
     let ocr_ms = started.elapsed().as_millis() as u64;
 
     let id = state.recognition_seq.fetch_add(1, Ordering::SeqCst) + 1;
@@ -442,7 +442,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 if !matches!(app.state::<AppState>().recognition.lock().as_ref(), Some(r) if r.id == id) {
                     return;
                 }
-                let more = if settings.ocr_engine == OcrEngineKind::Paddle {
+                let more = if ocr_kind == OcrEngineKind::Paddle {
                     cached_recognize(&app.state::<AppState>(), &p, &image, ocr_key, chunk)
                 } else {
                     p.recognize_boxes(&image, chunk)
@@ -467,6 +467,8 @@ fn run_scan(app: &AppHandle) -> Result<()> {
 struct OcrPass {
     lines: Vec<OcrLine>,
     engine: String,
+    /// The engine that was asked for (Lens falls back to PP-OCRv6 and keeps its cache key).
+    kind: OcrEngineKind,
     /// Boxes still to recognize in the background for the overlay (whole-screen passes only).
     rest: Vec<TextBox>,
     paddle: Option<Arc<PaddleOcr>>,
@@ -476,13 +478,13 @@ struct OcrPass {
 
 /// Recognizes the lines around the pointer first. In a whole-screen pass the other boxes are
 /// returned in `rest` so the overlay can fill in while the user reads.
-fn ocr_pass(state: &AppState, settings: &Settings, image: &image::RgbaImage, px: f32, py: f32, whole_screen: bool) -> Result<OcrPass> {
-    let key = frame_key(image, &format!("{:?}|{}|{}|{}", settings.ocr_engine, settings.ocr_language, settings.use_gpu,
-        if settings.ocr_engine == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
+fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, whole_screen: bool) -> Result<OcrPass> {
+    let key = frame_key(image, &format!("{:?}|{}|{}|{}", kind, settings.ocr_language, settings.use_gpu,
+        if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
     let mut notice = None;
-    if settings.ocr_engine == OcrEngineKind::Lens {
+    if kind == OcrEngineKind::Lens {
         match cached_lens(state, image, key, settings) {
-            Ok(lines) => return Ok(OcrPass { lines, engine: "Google Lens".into(), rest: Vec::new(), paddle: None, notice, key }),
+            Ok(lines) => return Ok(OcrPass { lines, engine: "Google Lens".into(), kind, rest: Vec::new(), paddle: None, notice, key }),
             Err(e) => notice = Some(format!("Google Lens failed, used PP-OCRv6 instead: {e:#}")),
         }
     }
@@ -501,7 +503,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, image: &image::RgbaImage, px:
     let lines = cached_recognize(state, &p, image, key, &focus);
     let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
     let engine = format!("PP-OCRv6 {} · {gpu}", p.det_model());
-    Ok(OcrPass { lines, engine, rest, paddle: Some(p), notice, key })
+    Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key })
 }
 
 fn cached_recognize(state: &AppState, engine: &PaddleOcr, image: &image::RgbaImage, key: FrameKey, boxes: &[TextBox]) -> Vec<OcrLine> {

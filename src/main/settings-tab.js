@@ -280,13 +280,23 @@ function render(root) {
     ));
 
     const lensKey = textInput(s.lensApiKey, (v) => { s.lensApiKey = v.trim(); save(); }, {type: 'password', placeholder: 'x-goog-api-key'});
+    const screenEngine = s.screenOcrEngine ?? s.ocrEngine;
+    const usesLens = screenEngine === 'lens' || (s.ocrEngine === 'lens' && s.ocrScope !== 'screen');
+    const engineDesc = (engine) => engine === 'lens'
+        ? 'Envia a captura ao Google (API não oficial). Se falhar, o PP-OCRv6 assume.'
+        : 'Roda no seu computador; nada sai dele.';
+    const engineSelect = (value, set) => select([
+        {value: 'paddle', label: 'PP-OCRv6 (local)'},
+        {value: 'lens', label: 'Google Lens (nuvem)'},
+    ], value, (v) => { set(v); save(); rerender(); });
     root.append(heading('OCR'), el('div', {class: 'group'},
-        cardRow({icon: 'scan', title: 'Motor de OCR', desc: s.ocrEngine === 'lens' ? 'Envia a captura ao Google (API não oficial). Se falhar, o PP-OCRv6 assume.' : 'Roda no seu computador; nada sai dele.', wide: true,
-            control: select([
-                {value: 'paddle', label: 'PP-OCRv6 (local)'},
-                {value: 'lens', label: 'Google Lens (nuvem)'},
-            ], s.ocrEngine, (v) => { s.ocrEngine = v; save(); rerender(); })}),
-        s.ocrEngine === 'lens' ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'O Lookitan não vem com chave embutida.', wide: true, control: lensKey}) : null,
+        cardRow({icon: 'scan', title: 'OCR em volta do cursor', desc: s.ocrScope === 'screen'
+                ? 'Não é usado quando a leitura é sempre da tela inteira.'
+                : `Lê a palavra sob o cursor. ${engineDesc(s.ocrEngine)}`, wide: true,
+            control: engineSelect(s.ocrEngine, (v) => { s.ocrEngine = v; })}),
+        cardRow({icon: 'scan', title: 'OCR da tela inteira', desc: `Usado quando o atalho é apertado fora de uma palavra, ou quando a leitura é sempre da tela inteira. ${engineDesc(screenEngine)}`, wide: true,
+            control: engineSelect(screenEngine, (v) => { s.screenOcrEngine = v; })}),
+        usesLens ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'O Lookitan não vem com chave embutida.', wide: true, control: lensKey}) : null,
         cardRow({icon: 'focus', title: 'Área lida', desc: 'Tela inteira deixa você clicar em qualquer outra palavra depois do OCR.', wide: true,
             control: select([
                 {value: 'screen', label: 'Tela inteira'},

@@ -112,6 +112,9 @@ pub struct Settings {
     pub mouse_hotkey: MouseHotkey,
     pub ocr_engine: OcrEngineKind,
     pub ocr_scope: OcrScope,
+    /// Engine for whole-screen passes (the Screen scope, or a shortcut pressed away from text).
+    /// `None` uses `ocr_engine`.
+    pub screen_ocr_engine: Option<OcrEngineKind>,
     /// BCP 47 tag selecting the recognition model (see `ocr::languages`).
     pub ocr_language: String,
     pub use_gpu: bool,
@@ -135,6 +138,13 @@ pub struct Settings {
     pub theme: String,
 }
 
+impl Settings {
+    /// The engine for a pass around the pointer or over the whole screen.
+    pub fn engine_for(&self, whole_screen: bool) -> OcrEngineKind {
+        if whole_screen { self.screen_ocr_engine.unwrap_or(self.ocr_engine) } else { self.ocr_engine }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -144,6 +154,7 @@ impl Default for Settings {
             ocr_engine: OcrEngineKind::Paddle,
             // Keep the original lookup's small capture; full-screen overlay remains opt-in.
             ocr_scope: OcrScope::Region,
+            screen_ocr_engine: None,
             ocr_language: "en-US".into(),
             use_gpu: true,
             lens_api_key: String::new(),

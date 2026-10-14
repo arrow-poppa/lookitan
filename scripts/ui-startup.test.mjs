@@ -306,6 +306,22 @@ test('manual dimensions recognize a preset and choosing custom preserves the cur
     await fixture.finish();
 });
 
+test('whole-screen OCR engine is chosen separately and defaults to the pointer engine', async () => {
+    const fixture = await settingsFixture({ocrEngine: 'paddle', screenOcrEngine: null});
+    const {root, settings} = fixture;
+    const engineControl = (title) => {
+        const row = descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
+        return descendants(row).find((node) => node.tagName === 'select');
+    };
+    assert.equal(engineControl('OCR da tela inteira').value, 'paddle');
+    engineControl('OCR da tela inteira').value = 'lens';
+    engineControl('OCR da tela inteira').dispatch('change');
+    assert.equal(settings.screenOcrEngine, 'lens');
+    assert.equal(settings.ocrEngine, 'paddle');
+    assert(descendants(root).some((node) => node.className === 'card-row' && node.textContent.includes('Chave da API do Google Lens')));
+    await fixture.finish();
+});
+
 test('region geometry appears when selected and screen mode preserves the custom dimensions', async () => {
     const fixture = await settingsFixture({captureWidth: 1000, captureHeight: 300});
     const {view, root, settings} = fixture;
