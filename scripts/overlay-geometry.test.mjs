@@ -44,7 +44,8 @@ async function fixture() {
     }, {context}));
     await module.evaluate();
     return {root, frame, body, hint: others.hint, dim: others.dim, window, handlers, requests,
-        emit: (payload) => listeners.overlay({payload}), close: () => listeners['overlay-closed']({payload: null})};
+        emit: (payload) => listeners.overlay({payload}), close: () => listeners['overlay-closed']({payload: null}),
+        popupHidden: () => listeners['popup-hidden']({payload: null})};
 }
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {
@@ -192,4 +193,26 @@ test('a whole-screen lookup fades in, and a closed overlay never shows the previ
     assert.deepEqual(JSON.parse(JSON.stringify(view.body.animations[0].keyframes)), [{opacity: 0}, {opacity: 1}]);
     view.emit({id: 2, words: [word], selected: word, spotlight: true});
     assert.equal(view.body.animations.length, 1, 'clicking a word does not fade again');
+});
+
+test('in a whole-screen lookup an empty click first closes the pop-up, then the overlay, like Lookupper', async () => {
+    const view = await fixture();
+    const word = {text: 'target', x: 10, y: 20, w: 50, h: 18};
+    const empty = {preventDefault() {}, target: null, clientX: 500, clientY: 500};
+    view.emit({id: 1, words: [word], spotlight: true});
+    view.handlers.mousedown({preventDefault() {}, target: view.root.children[0], clientX: 20, clientY: 25});
+    view.handlers.mousedown(empty);
+    view.handlers.mousedown(empty);
+    assert.deepEqual(view.requests.map((r) => r.command), ['overlay_pick', 'overlay_hide_popup', 'overlay_close']);
+
+    // The pop-up closed by itself (Esc or its close button): the next empty click closes the overlay.
+    view.handlers.mousedown({preventDefault() {}, target: view.root.children[0], clientX: 20, clientY: 25});
+    view.popupHidden();
+    view.handlers.mousedown(empty);
+    assert.equal(view.requests.at(-1).command, 'overlay_close');
+
+    // A lookup with a pop-up from the shortcut (not whole-screen) still closes at once.
+    view.emit({id: 2, words: [word], selected: word});
+    view.handlers.mousedown(empty);
+    assert.equal(view.requests.at(-1).command, 'overlay_close');
 });

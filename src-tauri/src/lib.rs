@@ -980,6 +980,19 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
     show_popup(&app, &payload, Some((x0, y0, x1, y1)));
 }
 
+/// Whole-screen lookups, like Lookupper: a click on empty space while a word's pop-up is open
+/// closes only the pop-up and keeps the words clickable; the next empty click closes the overlay.
+#[tauri::command]
+fn overlay_hide_popup(app: AppHandle) {
+    let pinned = app.state::<AppState>().pinned.load(Ordering::SeqCst);
+    if let Some(w) = app.get_webview_window("popup").filter(|_| !pinned) {
+        let _ = w.hide();
+    }
+    if let Some(w) = app.get_webview_window("overlay") {
+        let _ = w.set_focus();
+    }
+}
+
 #[tauri::command]
 fn overlay_close(app: AppHandle) {
     close_overlay(&app);
@@ -1004,7 +1017,15 @@ fn hide_popup(app: AppHandle) {
     if let Some(w) = app.get_webview_window("popup") {
         let _ = w.hide();
     }
-    close_overlay(&app);
+    // A whole-screen lookup keeps its words clickable after the pop-up closes, like Lookupper.
+    let spotlight = app.state::<AppState>().recognition.lock().as_ref().is_some_and(|r| r.spotlight);
+    match app.get_webview_window("overlay").filter(|w| w.is_visible().unwrap_or(false)) {
+        Some(overlay) if spotlight => {
+            let _ = app.emit_to("overlay", "popup-hidden", ());
+            let _ = overlay.set_focus();
+        }
+        _ => close_overlay(&app),
+    }
 }
 
 #[tauri::command]
@@ -1215,6 +1236,7 @@ pub fn run() {
             lookup_text,
             overlay_pick,
             overlay_close,
+            overlay_hide_popup,
             capture_image,
             scan_now,
             hide_popup,
