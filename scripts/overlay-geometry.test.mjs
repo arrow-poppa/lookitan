@@ -17,7 +17,7 @@ class Element {
     }
     append(child) { this.children.push(child); }
     appendChild(child) { this.append(child); }
-    replaceChildren(fragment) { this.children = fragment.children; }
+    replaceChildren(fragment) { this.children = fragment ? fragment.children : []; }
     removeAttribute(name) { delete this[name]; }
     querySelectorAll() { return this.children.filter((child) => child.classList.contains('sel')); }
 }
@@ -185,9 +185,12 @@ test('a whole-screen lookup fades in, and a closed overlay never shows the previ
     view.emit({id: 1, words: [word], selected: word});
     assert.equal(view.body.animations.length, 0, 'a lookup with a pop-up does not fade the screen');
     view.close();
-    assert.equal(view.body.style.opacity, '0');
+    assert(view.body.classList.contains('idle'));
+    assert.equal(view.root.children.length, 0, 'the old words are gone and cannot be clicked');
+    view.handlers.mousedown({preventDefault() {}, target: null, clientX: 20, clientY: 25});
+    assert.equal(view.requests.at(-1).command, 'overlay_dismiss', 'a click while the next lookup is read cancels it');
     view.emit({id: 2, words: [word], spotlight: true});
-    assert.equal(view.body.style.opacity, '');
+    assert(!view.body.classList.contains('idle'));
     assert.equal(view.body.animations.length, 1);
     assert.deepEqual(JSON.parse(JSON.stringify(view.body.animations[0].keyframes)), [{opacity: 0}, {opacity: 1}]);
     view.emit({id: 2, words: [word], selected: word, spotlight: true});

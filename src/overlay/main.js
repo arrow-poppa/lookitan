@@ -103,12 +103,21 @@ function render() {
     root.replaceChildren(frag);
 }
 
-/** Hidden until the next lookup arrives, so the window never shows the previous one. */
+/**
+ * Hidden until the next lookup arrives, so the window never shows the previous one. While a
+ * whole-screen lookup is still being read the window is up but empty: it only holds the input.
+ */
 function setVisible(visible) {
-    if (document.body) { document.body.style.opacity = visible ? '' : '0'; }
+    if (!document.body) { return; }
+    if (visible) { document.body.classList.remove('idle'); } else { document.body.classList.add('idle'); }
 }
 
-void listen('overlay-closed', () => setVisible(false));
+void listen('overlay-closed', () => {
+    setVisible(false);
+    // Drop the old words, so a click before the next lookup arrives cannot pick one of them.
+    current = null;
+    root.replaceChildren();
+});
 
 void listen('overlay', (event) => {
     const p = event.payload;

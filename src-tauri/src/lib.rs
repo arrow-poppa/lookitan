@@ -50,6 +50,8 @@ struct Recognition {
     focus_lines: Vec<OcrLine>,
     /// Capture-space and window-space rectangles of the same output.
     monitor: DisplayGeometry,
+    /// The `scan_seq` of the scan that made this recognition.
+    scan: u64,
     complete: bool,
     app: Option<ForegroundApp>,
     frozen_pid: Option<u32>,
@@ -315,6 +317,8 @@ pub fn scan(app: &AppHandle) {
         let _ = app.emit("engine-status", ());
         if let Err(e) = result {
             log::warn!("lookup failed: {e:#}");
+            // A whole-screen lookup raises the (transparent) overlay before its OCR; take it down.
+            if let Some(w) = app.get_webview_window("overlay") { let _ = w.hide(); }
             let payload = LookupPayload { error: Some(format!("{e:#}")), ..Default::default() };
             show_popup(&app, &payload, None);
         }
@@ -404,9 +408,17 @@ fn run_scan(app: &AppHandle) -> Result<()> {
             None => platform::capture_screen(cx, cy)?,
         };
         monitor = platform::display_geometry(app, cx, cy, &capture)?;
+        // From the moment of the capture, hold the clicks and the scroll wheel with the still
+        // transparent overlay, so the screen cannot move away from the frame the OCR reads.
+        show_overlay_window(app, monitor, true);
         (px, py) = capture.to_image(cx, cy);
         pass = ocr_pass(&state, &settings, settings.engine_for(true), &capture.image, px, py, true)?;
         pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
+        // A click or Esc on the transparent overlay cancelled this lookup while it was read.
+        if state.scan_seq.load(Ordering::SeqCst) != scan {
+            if let Some(pid) = frozen_pid { platform::resume_process(pid); }
+            return Ok(());
+        }
     }
     let OcrPass { lines, engine, kind: ocr_kind, rest, paddle: paddle_engine, notice, key: ocr_key } = pass;
     let ocr_ms = started.elapsed().as_millis() as u64;
@@ -418,6 +430,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         lines: lines.clone(),
         focus_lines: lines.clone(),
         monitor,
+        scan,
         complete: rest.is_empty(),
         app: fg.clone(),
         frozen_pid,
@@ -429,10 +442,13 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     });
 
     // Like Lookupper, the whole-screen overlay appears only once the whole screen is read: the
-    // background pass below shows it when it finishes.
+    // background pass below sends its words when it finishes. Until then the window is up but
+    // transparent (raised right after the capture), holding the clicks and the scroll wheel so the
+    // screen cannot move away from the captured frame; a click or Esc meanwhile cancels the lookup.
     let deferred = pick.is_none() && !rest.is_empty() && paddle_engine.is_some();
     match pick {
         None if lines.is_empty() && rest.is_empty() => {
+            if let Some(w) = app.get_webview_window("overlay") { let _ = w.hide(); }
             let payload = LookupPayload {
                 engine,
                 ocr_ms,
@@ -500,16 +516,8 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 }
                 if !deferred { emit_overlay(&app, id, None, false); }
             }
-            if deferred {
-                if !current(&app) { return; }
-                show_overlay(&app, id, None, true, true);
-                // A scan that started meanwhile has already hidden the overlay; keep it hidden.
-                if !current(&app) {
-                    if let Some(w) = app.get_webview_window("overlay") { let _ = w.hide(); }
-                }
-            } else {
-                emit_overlay(&app, id, None, true);
-            }
+            // Closing the overlay or a new scan bumps `scan_seq`, so a cancelled pass sends nothing.
+            if current(&app) { emit_overlay(&app, id, None, true); }
             let _ = app.emit("engine-status", ());
         });
     }
@@ -640,9 +648,18 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
 }
 
 fn show_overlay(app: &AppHandle, id: u64, anchor: Option<(f64, f64, f64, f64)>, complete: bool, focus: bool) {
+    let Some(monitor) = app.state::<AppState>().recognition.lock().as_ref().map(|r| r.monitor) else { return };
+    show_overlay_window(app, monitor, false);
+    emit_overlay(app, id, anchor, complete);
+    if focus {
+        if let Some(win) = app.get_webview_window("overlay") { let _ = win.set_focus(); }
+    }
+}
+
+/// Shows the overlay window over a monitor. Its content stays transparent until an `overlay` event
+/// for a new recognition arrives (see `close_overlay`).
+fn show_overlay_window(app: &AppHandle, monitor: DisplayGeometry, focus: bool) {
     let Some(win) = app.get_webview_window("overlay") else { return };
-    let state = app.state::<AppState>();
-    let Some(monitor) = state.recognition.lock().as_ref().map(|r| r.monitor) else { return };
     let kde = platform::session_kind() == SessionKind::KdeWayland;
     if kde { let _ = win.set_fullscreen(false); }
     let m = monitor.native;
@@ -652,7 +669,6 @@ fn show_overlay(app: &AppHandle, id: u64, anchor: Option<(f64, f64, f64, f64)>, 
     // A normal KDE window is constrained by the panel work area (e.g. y=28). Fullscreen
     // covers the actual output; resize/move events update the borders after configuration.
     if kde { let _ = win.set_fullscreen(true); }
-    emit_overlay(app, id, anchor, complete);
     if focus {
         let _ = win.set_focus();
     }
@@ -1002,6 +1018,9 @@ fn overlay_dismiss(app: AppHandle) {
 
 #[tauri::command]
 fn overlay_close(app: AppHandle) {
+    // Stop the background OCR of this lookup; a whole-screen lookup closed while it was still
+    // reading must not reappear when the reading ends.
+    app.state::<AppState>().scan_seq.fetch_add(1, Ordering::SeqCst);
     close_overlay(&app);
     if let Some(w) = app.get_webview_window("popup") {
         let _ = w.hide();
@@ -1202,8 +1221,16 @@ pub fn run() {
                 let h = handle.clone();
                 overlay.on_window_event(move |event| {
                     if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }) {
-                        let current = h.state::<AppState>().recognition.lock().as_ref().map(|r| (r.id, r.complete));
-                        if let Some((id, complete)) = current { emit_overlay(&h, id, None, complete); }
+                        let state = h.state::<AppState>();
+                        // A newer scan may have raised the (transparent) overlay while the
+                        // recognition is still the previous lookup's; do not redraw that one.
+                        let scan = state.scan_seq.load(Ordering::SeqCst);
+                        let current = state.recognition.lock().as_ref().filter(|r| r.scan == scan)
+                            .map(|r| (r.id, r.complete, r.spotlight));
+                        // A whole-screen lookup still being read keeps its words until it is done.
+                        if let Some((id, complete, spotlight)) = current {
+                            if complete || !spotlight { emit_overlay(&h, id, None, complete); }
+                        }
                     }
                 });
             }
