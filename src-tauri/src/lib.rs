@@ -54,7 +54,7 @@ struct Recognition {
     app: Option<ForegroundApp>,
     frozen_pid: Option<u32>,
     freeze_frame: bool,
-    /// Whole-screen lookup without a pop-up. With "Congelar a tela na consulta" on, the overlay
+    /// Whole-screen lookup without a pop-up. With the app profile set to freeze, the overlay
     /// shows the captured frame slightly blurred and dimmed (Lookupper uses OpenCV's GaussianBlur)
     /// with the words as sharp cut-outs; without it the screen stays live, as in Lookupper.
     spotlight: bool,
@@ -377,11 +377,10 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     };
     // Resolve the output before OCR: the pointer may move to another monitor while it runs.
     let mut monitor = platform::display_geometry(app, cx, cy, &capture)?;
+    // Each app chooses in its profile; "no freeze" (the default) leaves the screen live and only
+    // highlights the words.
     let freeze = match profile.freeze {
-        // Only the global option lays the captured frame over the screen; with it off the screen
-        // stays live and only the words are highlighted.
-        FreezeMode::Default | FreezeMode::Frame if settings.freeze_on_lookup == Some(true) => FreezeMode::Frame,
-        FreezeMode::Default | FreezeMode::Frame => FreezeMode::None,
+        FreezeMode::Default => FreezeMode::None,
         mode => mode,
     };
     let frozen_pid = match (freeze, fg.as_ref()) {
@@ -616,8 +615,8 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             let (x, y, w, h) = css_rect(x0, y0, x1, y1);
             OverlayWord { text: String::new(), x, y, w, h }
         });
-        // Only "Congelar a tela na consulta" shows the captured frame; otherwise the screen stays
-        // live under the word highlights.
+        // Only a profile set to freeze shows the captured frame; otherwise the screen stays live
+        // under the word highlights.
         let with_frame = r.freeze_frame;
         let frame_rect = with_frame.then(|| {
             let c = &r.capture;

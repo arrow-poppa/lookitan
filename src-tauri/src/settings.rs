@@ -51,11 +51,10 @@ impl Default for DictionaryConfig {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FreezeMode {
-    /// Follow the global "freeze on lookup" setting (`Settings::freeze_on_lookup`).
+    /// Only in settings saved while a global freeze option existed; `migrate()` makes it `None`.
     Default,
     None,
-    /// Show the captured frame behind the overlay, so a video or game seems paused. Only the
-    /// global option does this now; profiles saved with it are moved to `Default`.
+    /// Show the captured frame behind the overlay, so a video or game seems paused.
     Frame,
     /// Suspend the foreground process while the overlay is open.
     Process,
@@ -73,7 +72,7 @@ pub struct AppProfile {
 
 impl Default for AppProfile {
     fn default() -> Self {
-        Self { executable: String::new(), display_name: String::new(), focus_overlay: false, freeze: FreezeMode::Default }
+        Self { executable: String::new(), display_name: String::new(), focus_overlay: false, freeze: FreezeMode::None }
     }
 }
 
@@ -128,10 +127,6 @@ pub struct Settings {
     pub capture_height: u32,
     pub dictionaries: Vec<DictionaryConfig>,
     pub profiles: Vec<AppProfile>,
-    /// Freeze the frame on every lookup, for apps whose profile follows the default. `None` only
-    /// in settings saved before this option existed; `migrate()` sets it.
-    #[serde(default)]
-    pub freeze_on_lookup: Option<bool>,
     pub autostart: bool,
     pub save_words_automatically: bool,
     /// Language of definitions and of AI explanations and translations.
@@ -171,7 +166,6 @@ impl Default for Settings {
             capture_height: 260,
             dictionaries: builtin_dictionaries(),
             profiles: Vec::new(),
-            freeze_on_lookup: None,
             autostart: false,
             save_words_automatically: false,
             definition_language: "en-US".into(),
@@ -197,18 +191,10 @@ fn migrate(mut s: Settings) -> Settings {
     // The scope is no longer a setting: lookups read around the pointer, and a shortcut pressed
     // away from text reads the whole screen.
     s.ocr_scope = OcrScope::Region;
-    // Profiles used to be created as "no freeze"; before the global option existed that was the
-    // default, so let them follow the new option instead.
-    if s.freeze_on_lookup.is_none() {
-        for p in &mut s.profiles {
-            if p.freeze == FreezeMode::None { p.freeze = FreezeMode::Default; }
-        }
-        s.freeze_on_lookup = Some(false);
-    }
-    // The captured frame over the screen is controlled only by the global option, so that turning
-    // it off always leaves the screen live.
+    // Freezing is chosen per app again, and "no freeze" is the default: profiles that followed
+    // the short-lived global option do not freeze.
     for p in &mut s.profiles {
-        if p.freeze == FreezeMode::Frame { p.freeze = FreezeMode::Default; }
+        if p.freeze == FreezeMode::Default { p.freeze = FreezeMode::None; }
     }
     for (pos, b) in builtin_dictionaries().into_iter().enumerate() {
         if !s.dictionaries.iter().any(|d| d.id == b.id) {
@@ -248,20 +234,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_no_freeze_profiles_follow_the_global_option() {
-        let old: Settings = serde_json::from_str(r#"{"profiles": [
-            {"executable": "game.exe", "freeze": "none"},
-            {"executable": "video.exe", "freeze": "frame"}
+    fn profiles_choose_freeze_and_default_to_no_freeze() {
+        let saved: Settings = serde_json::from_str(r#"{"freezeOnLookup": true, "profiles": [
+            {"executable": "game.exe", "freeze": "default"},
+            {"executable": "video.exe", "freeze": "frame"},
+            {"executable": "new.exe"}
         ]}"#).unwrap();
-        assert_eq!(old.freeze_on_lookup, None);
-        let s = migrate(old);
-        assert_eq!(s.freeze_on_lookup, Some(false));
-        assert_eq!(s.profiles[0].freeze, FreezeMode::Default);
-        assert_eq!(s.profiles[1].freeze, FreezeMode::Default, "only the global option shows the frame");
-
-        // Once the option exists, a profile set to "no freeze" stays that way.
-        let mut again = s.clone();
-        again.profiles[0].freeze = FreezeMode::None;
-        assert_eq!(migrate(again).profiles[0].freeze, FreezeMode::None);
+        let s = migrate(saved);
+        assert_eq!(s.profiles[0].freeze, FreezeMode::None, "the old global option is gone");
+        assert_eq!(s.profiles[1].freeze, FreezeMode::Frame);
+        assert_eq!(s.profiles[2].freeze, FreezeMode::None);
     }
 }

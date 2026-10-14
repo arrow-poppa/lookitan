@@ -68,7 +68,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Recognition has two phases: the lines near the pointer first, one run per line, then the rest in the background for the overlay.
   - The background whole-screen pass is batched: `plan_batches` groups lines of similar width (at most 16 lines and 12,000 padded columns per run), pads them with zeros like PaddleOCR, and decodes each line only over its own CTC steps. A failed batch retries line by line.
 - **Scan result:** the pop-up opens only when the pointer is on a word (`Pick::is_under`, with a pad of a quarter of the line height). Otherwise the scan re-captures the whole monitor and shows the focused overlay of clickable words with no pop-up, as Lookupper does. Also like Lookupper, that whole-screen overlay appears only after the background pass has read the whole screen (`deferred` in `run_scan`), not progressively; `scan_seq` stops a superseded pass from showing it. The "Área lida" setting is gone: `migrate()` forces `ocrScope` to Region, and the capture-region size is always editable.
-- **Freeze:** Configurações › Jogos e programas › "Congelar a tela na consulta" (`freezeOnLookup`, default off) freezes the frame on every lookup. Only that option lays the captured frame over the screen; off, the screen stays live and only the words are highlighted. Each app profile's `freeze` is `default` (follows that option; new profiles start here), `none` (never freeze) or `process` (pause the program). Profile `frame` is no longer offered: `run_scan` treats it as `default` and `migrate()` rewrites it. `migrate()` also turns old `none` profiles into `default` once, when `freezeOnLookup` is missing.
+- **Freeze:** per app, as in Lookupper: each profile in Configurações › Jogos e programas has `freeze` = `none` ("Sem congelar", the default: the screen stays live and only the words are highlighted), `frame` ("Congelar": the captured frame covers the screen; on whole-screen lookups it is blurred with sharp word cut-outs) or `process` ("Pausar o programa"). There is no global freeze option; the short-lived `freezeOnLookup` key is ignored, and `migrate()` turns saved `default` profiles into `none`.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
@@ -95,6 +95,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): removed the global "Congelar a tela na consulta" option (and the "Padrão" profile mode) at the user's request. Freezing is chosen per profile again, like Lookupper's per-app freeze menu, with "Sem congelar" as the default. `FreezeMode::Default` stays only so settings saved with it still load; `migrate()` maps it to `None`.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): the user saw the screenshot cover the screen with "Congelar a tela na consulta" off, most likely from a profile left on "Congelar o quadro". The frame is now controlled only by the global option; profiles lose the "frame" choice, and saved `frame` profiles become `default`.
 
