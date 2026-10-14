@@ -78,7 +78,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 - **AI cache:** same semantics as the fork. It has a 60 s TTL, joins in-flight requests and never caches partial or failed answers. `cancelPendingExcept` drops requests the pop-up no longer shows.
 - **Anki:** uses Yomitan's `anki` options shape and field markers, through AnkiConnect.
   - tauri-plugin-http always sends `Origin: http://tauri.localhost` (Windows) or `tauri://localhost` (Linux). AnkiConnect allows only `http://localhost`, 127.0.0.1 and browser-extension origins by default (that is why Yomitan works) and answers 403 to anything else.
-  - Field markers follow Yomitan: `{glossary}`, `-brief` (no parenthesis), `-no-dictionary` (tags only), `-plain`, `-plain-no-dictionary`, `{glossary-first…}`, `{single-glossary-<kebab name>}` with the same five variants (Yomitan's `getKebabCase`), and `{popup-selection-text}`. The AI card is the dictionary `IA` (tags = part of speech + labels). Definitions follow the user's dictionary order (`dictionaryOrder`). `{ai-explanation}` is rendered Markdown and `{ai-explanation-plain}` is plain text. If a field uses `{ai-explanation…}` and Explain was not run, the "+" button generates it first.
+  - Field markers follow Yomitan: `{glossary}`, `-brief` (no parenthesis), `-no-dictionary` (tags only), `-plain`, `-plain-no-dictionary`, `{glossary-first…}`, `{single-glossary-<kebab name>}` with the same five variants (Yomitan's `getKebabCase`), and `{popup-selection-text}`. The AI card is the dictionary `IA` (tags = part of speech + labels). Definitions follow the user's dictionary order (`dictionaryOrder`). `{ai-explanation}` is rendered Markdown and `{ai-explanation-plain}` is plain text. `{ai-card}` (HTML) and `{ai-card-plain}` export the whole AI card (headword, IPA, CEFR, part of speech, labels, translation, definition, and the explanation if it was generated) without the context, which goes in `{sentence}`. If a field uses `{ai-explanation…}` and Explain was not run, the "+" button generates it first.
   - MDict entries are cross-origin iframes, so `ENTRY_SCRIPT` posts `{type: 'selection'}` messages and the pop-up keeps the latest non-empty selection.
   - On a 403, `AnkiConnect._invoke` calls `requestPermission` once, with a 120 s timeout because Anki shows a Yes/No prompt, then retries. On "Yes", AnkiConnect adds the origin to `webCorsOriginList` for good.
 
@@ -94,6 +94,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-14 (Claude, branch `claude/overlay-spotlight`): `{ai-card}` and `{ai-card-plain}` Anki markers export the whole AI card without its context (the context is the note's `{sentence}`). They do not generate the explanation; it is included only if Explain already ran.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): whole-screen lookups on a live screen ("Sem congelar") are dimmed slightly too, like Lookupper. A `#dim` canvas fills black at 0.15 alpha, the same darkness as the frozen frame's brightness(0.85), with holes cleared over the words. A live screen cannot be blurred from the webview, so blur stays frozen-frame only.
 

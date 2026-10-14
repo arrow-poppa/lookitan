@@ -131,7 +131,7 @@ function render(root) {
 
     const fieldsCard = el('div', {class: 'card-row stack'},
         el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('list')}),
-            el('div', {class: 'txt'}, el('div', {class: 't'}, 'Campos'), el('div', {class: 'd', html: `Marcadores como no Yomitan: ${escapeHtml('{expression} {glossary} {sentence} {cloze-body} {screenshot} {ai-explanation}')}…`}))),
+            el('div', {class: 'txt'}, el('div', {class: 't'}, 'Campos'), el('div', {class: 'd', html: `Marcadores como no Yomitan: ${escapeHtml('{expression} {glossary} {sentence} {cloze-body} {screenshot} {ai-card} {ai-explanation}')}…`}))),
         fieldsEditor(root));
     root.append(fieldsCard);
 

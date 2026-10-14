@@ -166,11 +166,15 @@ test('Yomitan glossary markers: per dictionary, first, no-dictionary, popup sele
         G: {value: '{glossary-no-dictionary}'},
         H: {value: '{ai-explanation-plain}'},
         I: {value: '{single-glossary-ia-plain}'},
+        J: {value: '{ai-card}'},
+        K: {value: '{ai-card-plain}'},
+        L: {value: '{sentence}'},
     };
     const note = await notes.buildNote({
         word: 'run',
         glossaries: [{name: 'WordReference', html: 'correr'}, {name: oxford, html: '<b>to move</b>'}],
-        aiCard: {definition: 'move fast', partOfSpeech: ['verb'], labels: ['informal']},
+        sentence: 'I run every day.',
+        aiCard: {definition: 'move fast', partOfSpeech: ['verb'], labels: ['informal'], ipa: 'rʌn', cefr: 'A1', translation: 'correr'},
         aiExplanation: '**Run** means to move fast.\n- one example',
         popupSelection: 'move fast',
         dictionaryOrder: ['IA', oxford, 'WordReference'],
@@ -186,6 +190,11 @@ test('Yomitan glossary markers: per dictionary, first, no-dictionary, popup sele
     assert.equal(f.G, '<div style="text-align: left;"><ol><li><i>(verb, informal)</i> move fast</li><li><b>to move</b></li><li>correr</li></ol></div>');
     assert.equal(f.H, 'Run means to move fast.<br>• one example');
     assert.equal(f.I, '(IA) move fast');
+    assert(f.J.startsWith('<div style="text-align: left;"><div><b>run</b> /rʌn/</div><div><i>A1, verb, informal</i></div><div>correr</div><div>move fast</div>'), 'the whole AI card');
+    assert(f.J.includes('<strong>Run</strong>'), 'the AI card carries the explanation when it exists');
+    assert(!f.J.includes('every day') && !f.K.includes('every day'), 'the context stays out of the AI card; it goes in {sentence}');
+    assert.equal(f.K, 'run /rʌn/<br>(A1, verb, informal)<br>correr<br>move fast<br>Run means to move fast.<br>• one example');
+    assert.equal(f.L, 'I run every day.');
     assert(notes.formatUsesMarker(options, 'ai-explanation'));
     assert.deepEqual([...notes.dictionaryMarkers(['WordReference']).slice(0, 2)], ['single-glossary-wordreference', 'single-glossary-wordreference-brief']);
     assert.deepEqual([...notes.glossaryDictionaryNames([
