@@ -3,7 +3,7 @@
 
 import {escapeHtml} from '../lib/api.js';
 import {icon} from '../lib/icons.js';
-import {createConnection, fieldValue, MARKERS, suggestMarker} from '../lib/anki/notes.js';
+import {createConnection, dictionaryMarkers, fieldValue, glossaryDictionaryNames, MARKERS, suggestMarker} from '../lib/anki/notes.js';
 import {store, save} from './store.js';
 import {cardRow, el, select, textInput, toggle} from './ui.js';
 
@@ -47,7 +47,8 @@ function fieldsEditor(root) {
             format.fields[name] = {value: v, overwriteMode: 'coalesce'};
             save();
         });
-        const menu = select([{value: '', label: 'Marcador…'}, ...MARKERS.map((m) => ({value: m, label: `{${m}}`}))], '', (v) => {
+        const markers = [...MARKERS, ...dictionaryMarkers(glossaryDictionaryNames(store.settings?.dictionaries))];
+        const menu = select([{value: '', label: 'Marcador…'}, ...markers.map((m) => ({value: m, label: `{${m}}`}))], '', (v) => {
             if (!v) { return; }
             input.value = `${input.value}{${v}}`;
             format.fields[name] = {value: input.value, overwriteMode: 'coalesce'};

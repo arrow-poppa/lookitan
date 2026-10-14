@@ -140,3 +140,56 @@ test('Anki note construction fills markers and respects duplicate scope without 
     assert.equal(built.options.duplicateScopeOptions.deckName, 'Languages');
     assert.equal(built.options.duplicateScopeOptions.checkChildren, true);
 });
+
+// Enough of DOMParser for cleanGlossaryHtml and htmlToText on simple, script-free entries.
+class FakeDOMParser {
+    parseFromString(html) {
+        return {
+            querySelectorAll: () => [],
+            body: {firstElementChild: {innerHTML: html.replace(/^<div>|<\/div>$/g, '')}, textContent: html.replace(/<[^>]+>/g, '')},
+        };
+    }
+}
+
+test('Yomitan glossary markers: per dictionary, first, no-dictionary, popup selection and AI explanation', async () => {
+    const {notes, options} = await clientFixture(async () => response(null), {DOMParser: FakeDOMParser});
+    const oxford = "Oxford Advanced Learner's Dictionary";
+    options.cardFormats[0].deck = 'Study';
+    options.cardFormats[0].model = 'Basic';
+    options.cardFormats[0].fields = {
+        A: {value: `{single-glossary-${notes.getKebabCase(oxford)}}`},
+        B: {value: '{single-glossary-wordreference-brief}'},
+        C: {value: '{glossary-first}'},
+        D: {value: '{popup-selection-text}'},
+        E: {value: '{ai-explanation}'},
+        F: {value: '{single-glossary-not-installed}'},
+        G: {value: '{glossary-no-dictionary}'},
+        H: {value: '{ai-explanation-plain}'},
+        I: {value: '{single-glossary-ia-plain}'},
+    };
+    const note = await notes.buildNote({
+        word: 'run',
+        glossaries: [{name: 'WordReference', html: 'correr'}, {name: oxford, html: '<b>to move</b>'}],
+        aiCard: {definition: 'move fast', partOfSpeech: ['verb'], labels: ['informal']},
+        aiExplanation: '**Run** means to move fast.\n- one example',
+        popupSelection: 'move fast',
+        dictionaryOrder: ['IA', oxford, 'WordReference'],
+    }, options, null);
+    const f = note.fields;
+    assert.equal(notes.getKebabCase(oxford), 'oxford-advanced-learners-dictionary');
+    assert.equal(f.A, `<div style="text-align: left;"><i>(${oxford})</i> <b>to move</b></div>`);
+    assert.equal(f.B, '<div style="text-align: left;">correr</div>');
+    assert.equal(f.C, '<div style="text-align: left;"><i>(verb, informal, IA)</i> move fast</div>', 'first follows the dictionary order');
+    assert.equal(f.D, 'move fast');
+    assert(f.E.includes('<strong>Run</strong>') && f.E.includes('<li>one example</li>'), 'the explanation is rendered, not raw Markdown');
+    assert.equal(f.F, '', 'a dictionary without an entry leaves its marker empty');
+    assert.equal(f.G, '<div style="text-align: left;"><ol><li><i>(verb, informal)</i> move fast</li><li><b>to move</b></li><li>correr</li></ol></div>');
+    assert.equal(f.H, 'Run means to move fast.<br>• one example');
+    assert.equal(f.I, '(IA) move fast');
+    assert(notes.formatUsesMarker(options, 'ai-explanation'));
+    assert.deepEqual([...notes.dictionaryMarkers(['WordReference']).slice(0, 2)], ['single-glossary-wordreference', 'single-glossary-wordreference-brief']);
+    assert.deepEqual([...notes.glossaryDictionaryNames([
+        {kind: 'ai-word', enabled: true, name: 'AI word in context'}, {kind: 'ai-context', enabled: true, name: 'x'},
+        {kind: 'mdict', enabled: false, name: 'Off'}, {kind: 'mdict', enabled: true, name: oxford},
+    ])], ['IA', oxford]);
+});

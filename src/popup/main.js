@@ -6,7 +6,7 @@ import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
-import {buildNote, createConnection, isFormatReady} from '../lib/anki/notes.js';
+import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 
@@ -228,7 +228,8 @@ async function glossaries(lookup = state) {
     const out = [];
     const seen = new Set();
     for (const e of lookup.payload.entries || []) {
-        if (seen.has(e.dictId) || out.length >= 3) { continue; }
+        // One entry per dictionary, so every {single-glossary-…} marker can be filled.
+        if (seen.has(e.dictId)) { continue; }
         seen.add(e.dictId);
         try { out.push({name: e.dictName, html: await api.entryHtml(e.dictId, e.entry)}); } catch (_e) { /* skip */ }
     }
@@ -270,6 +271,8 @@ function noteContext(lookup = state, options = anki) {
         contextTranslation: lookup.contextTranslation,
         title: lookup.payload.app?.title,
         query: lookup.payload.word,
+        popupSelection: popupSelection(),
+        dictionaryOrder: glossaryDictionaryNames(dicts),
         screenshot: async () => (lookup.payload.recognition ? api.captureImage(lookup.payload.recognition, options.screenshotArea || 'sentence') : null),
     };
 }
@@ -350,11 +353,19 @@ async function onAnkiClick() {
         } catch (e) { if (state === lookup) { ankiStatus(`Anki: ${e?.message || e}`, true); } }
         return;
     }
+    // Read the selection now: generating an explanation below can take a while.
+    const selection = popupSelection();
+    // A field asks for the AI explanation but "Explicar" was not used yet: generate it first.
+    if (!lookup.explanation && formatUsesMarker(options, 'ai-explanation')) {
+        const target = document.querySelector('.explanation');
+        if (target) { await runExplain(target); }
+        if (state !== lookup) { return; }
+    }
     setAnki('busy', 'Adicionando…');
     ankiStatus();
     try {
         await glossaries(lookup);
-        const note = await buildNote(noteContext(lookup, options), options, conn);
+        const note = await buildNote({...noteContext(lookup, options), popupSelection: selection}, options, conn);
         const id = await conn.addNote(note);
         if (id === null) { throw new Error('o Anki recusou a nota'); }
         if (options.suspendNewCards) {
@@ -453,10 +464,29 @@ async function lookup(text) {
     await render(payload);
 }
 
+// ------------------------------------------------------------------ popup selection ({popup-selection-text})
+
+// Dictionary entries live in iframes on the lkt: origin, so they report their selection by message.
+// The most recent non-empty selection wins; clearing it in the same place clears it here too.
+let selectionText = '';
+let selectionSource = null;
+
+function noteSelection(source, text) {
+    const value = String(text || '').trim();
+    if (value) { selectionText = value; selectionSource = source; }
+    else if (selectionSource === source) { selectionText = ''; selectionSource = null; }
+}
+
+function popupSelection() { return selectionText; }
+
+document.addEventListener('selectionchange', () => noteSelection('popup', window.getSelection()?.toString()));
+
 window.addEventListener('message', (ev) => {
     const d = ev.data;
     if (!d || d.lookitan !== true) { return; }
-    if (d.type === 'height') {
+    if (d.type === 'selection') {
+        noteSelection(ev.source, d.text);
+    } else if (d.type === 'height') {
         for (const f of document.querySelectorAll('.entry iframe')) {
             if (new URL(f.src).pathname === d.path) { f.style.height = `${Math.min(Math.max(d.height + 4, 40), 4000)}px`; }
         }

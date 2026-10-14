@@ -35,6 +35,12 @@ const ENTRY_SCRIPT: &str = r#"(function () {
     }
     if (/^https?:/i.test(href)) { ev.preventDefault(); post({type: 'open', url: href}); }
   }, true);
+  // The pop-up cannot read a cross-origin iframe's selection; send it for {popup-selection-text}.
+  document.addEventListener('selectionchange', function () {
+    var s = '';
+    try { s = String(window.getSelection() || ''); } catch (e) {}
+    post({type: 'selection', text: s});
+  });
   function report() {
     post({type: 'height', path: location.pathname, height: Math.ceil(document.documentElement.scrollHeight)});
   }

@@ -50,6 +50,8 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         [file('src/lib/ai/explain.js')]: {explain, isConfigured: () => true},
         [file('src/lib/anki/notes.js')]: {
             createConnection: () => connection,
+            formatUsesMarker: () => false,
+            glossaryDictionaryNames: () => [],
             isFormatReady: () => typeof ready === 'function' ? ready() : ready,
             buildNote: async (ctx) => { calls.notes.push(ctx); return {fields: {Word: ctx.word}, options: {}}; },
         },

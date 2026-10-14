@@ -391,6 +391,7 @@ async function ankiPanelFixture(createConnection, overrides = {}) {
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/main/store.js')]: {store: {anki}, save: () => { saves++; }},
         [file('src/lib/anki/notes.js')]: {createConnection, fieldValue: (field) => field.value, MARKERS: ['expression', 'glossary'],
+            dictionaryMarkers: () => [], glossaryDictionaryNames: () => [],
             suggestMarker: (_name, index) => index === 0 ? '{expression}' : '{glossary}'},
     });
     const initialization = panel.renderAnkiSection(root);
@@ -466,7 +467,7 @@ test('saved word Anki errors stay visible and the add button can be retried', as
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/cards.js')]: {noteContextFromCard: (card) => ({word: card.word}), toCsv: () => '', toQuizlet: () => ''},
         [file('src/main/store.js')]: {store: {anki: {enable: true}}},
-        [file('src/lib/anki/notes.js')]: {isFormatReady: () => true, buildNote: async () => ({fields: {Front: 'hello'}}),
+        [file('src/lib/anki/notes.js')]: {isFormatReady: () => true, buildNote: async () => ({fields: {Front: 'hello'}}), glossaryDictionaryNames: () => [],
             createConnection: () => ({addNote: async () => { throw new Error('Anki unavailable'); }})},
     });
     await words.initWordsTab();

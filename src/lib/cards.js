@@ -27,9 +27,14 @@ export function cardFromLookup(lookup, settings) {
     };
 }
 
-/** Anki note context for a saved card. */
-export function noteContextFromCard(card) {
+/**
+ * Anki note context for a saved card.
+ * @param {object} card
+ * @param {string[]} [dictionaryOrder] see glossaryDictionaryNames
+ */
+export function noteContextFromCard(card, dictionaryOrder = []) {
     return {
+        dictionaryOrder,
         word: card.word,
         headword: card.dictionaryForm,
         sentence: card.sentence,
