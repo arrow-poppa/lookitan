@@ -38,6 +38,7 @@ use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
 use crate::ocr::paddle::{split_focus, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
+use crate::platform::geometry::DisplayGeometry;
 use crate::settings::{AppProfile, DictionaryConfig, DictionaryKind, FreezeMode, OcrEngineKind, OcrScope, Settings};
 
 /// The last OCR pass: what the overlay shows and what clicks on it look up.
@@ -47,8 +48,9 @@ struct Recognition {
     lines: Vec<OcrLine>,
     /// Lines around the first word, used for the "sentence" screenshot.
     focus_lines: Vec<OcrLine>,
-    /// Monitor of the overlay: desktop x, y (physical), and its scale factor.
-    monitor: (f64, f64, f64),
+    /// Capture-space and window-space rectangles of the same output.
+    monitor: DisplayGeometry,
+    complete: bool,
     app: Option<ForegroundApp>,
     frozen_pid: Option<u32>,
     freeze_frame: bool,
@@ -105,9 +107,12 @@ struct OverlayWord {
 struct OverlayPayload {
     id: u64,
     words: Vec<OverlayWord>,
-    /// Desktop rectangle (CSS px of the overlay) of the selected word.
+    /// Rectangle in the window toolkit's logical units, before WebView DPI/zoom conversion.
     selected: Option<OverlayWord>,
     frame_url: Option<String>,
+    frame_rect: Option<OverlayWord>,
+    viewport_width: f64,
+    viewport_height: f64,
     complete: bool,
 }
 
@@ -347,6 +352,8 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         OcrScope::Screen => platform::capture_screen(cx, cy)?,
         OcrScope::Region => platform::capture_around(cx, cy, settings.capture_width, settings.capture_height)?,
     };
+    // Resolve the output before OCR: the pointer may move to another monitor while it runs.
+    let monitor = platform::display_geometry(app, cx, cy, &capture)?;
     let frozen_pid = match (profile.freeze, fg.as_ref()) {
         (FreezeMode::Process, Some(f)) if f.pid != 0 => {
             platform::suspend_process(f.pid);
@@ -397,12 +404,6 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     };
     let ocr_ms = started.elapsed().as_millis() as u64;
 
-    let monitor = app
-        .monitor_from_point(cx, cy)
-        .ok()
-        .flatten()
-        .map(|m| (m.position().x as f64, m.position().y as f64, m.scale_factor()))
-        .unwrap_or((capture.origin_x, capture.origin_y, 1.0));
     let id = state.recognition_seq.fetch_add(1, Ordering::SeqCst) + 1;
     *state.recognition.lock() = Some(Recognition {
         id,
@@ -410,6 +411,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         lines: lines.clone(),
         focus_lines: lines.clone(),
         monitor,
+        complete: rest.is_empty(),
         app: fg.clone(),
         frozen_pid,
         freeze_frame: profile.freeze == FreezeMode::Frame,
@@ -505,27 +507,44 @@ fn cached_lens(state: &AppState, image: &image::RgbaImage, key: FrameKey, settin
     Ok(lines)
 }
 
-fn css_rect(r: &Recognition, x0: f64, y0: f64, x1: f64, y1: f64) -> (f64, f64, f64, f64) {
-    let (mx, my, s) = r.monitor;
-    ((x0 - mx) / s, (y0 - my) / s, (x1 - x0) / s, (y1 - y0) / s)
+fn overlay_viewport(app: &AppHandle, monitor: DisplayGeometry) -> ((f64, f64), f64, (f64, f64)) {
+    let win = app.get_webview_window("overlay");
+    let origin = win.as_ref().and_then(|w| w.inner_position().ok())
+        .map(|p| (p.x as f64, p.y as f64)).unwrap_or((monitor.native.x, monitor.native.y));
+    let scale = win.as_ref().and_then(|w| w.scale_factor().ok()).unwrap_or(monitor.scale).max(0.5);
+    let size = win.and_then(|w| w.inner_size().ok())
+        .map(|s| (s.width as f64 / scale, s.height as f64 / scale))
+        .unwrap_or((monitor.native.width / scale, monitor.native.height / scale));
+    (origin, scale, size)
 }
 
 fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>, complete: bool) {
     let state = app.state::<AppState>();
+    let Some(monitor) = state.recognition.lock().as_ref().filter(|r| r.id == id).map(|r| r.monitor) else { return };
+    // Query the window outside the recognition lock: its dispatcher may need the event thread.
+    let (origin, scale, (viewport_width, viewport_height)) = overlay_viewport(app, monitor);
     let payload = {
-        let guard = state.recognition.lock();
-        let Some(r) = guard.as_ref().filter(|r| r.id == id) else { return };
+        let mut guard = state.recognition.lock();
+        let Some(r) = guard.as_mut().filter(|r| r.id == id) else { return };
+        r.complete = complete;
+        let css_rect = |x0, y0, x1, y1| r.monitor.css_rect((x0, y0, x1, y1), origin, scale);
         let words = words::word_boxes(&r.lines)
             .into_iter()
             .map(|w| {
                 let (x0, y0) = r.capture.to_desktop(w.x0, w.y0);
                 let (x1, y1) = r.capture.to_desktop(w.x1, w.y1);
-                let (x, y, w2, h) = css_rect(r, x0, y0, x1, y1);
+                let (x, y, w2, h) = css_rect(x0, y0, x1, y1);
                 OverlayWord { text: w.text, x, y, w: w2, h }
             })
             .collect();
         let selected = selected.map(|(x0, y0, x1, y1)| {
-            let (x, y, w, h) = css_rect(r, x0, y0, x1, y1);
+            let (x, y, w, h) = css_rect(x0, y0, x1, y1);
+            OverlayWord { text: String::new(), x, y, w, h }
+        });
+        let frame_rect = r.freeze_frame.then(|| {
+            let c = &r.capture;
+            let (x, y, w, h) = css_rect(c.origin_x, c.origin_y,
+                c.origin_x + c.image.width() as f64 / c.scale, c.origin_y + c.image.height() as f64 / c.scale);
             OverlayWord { text: String::new(), x, y, w, h }
         });
         OverlayPayload {
@@ -533,6 +552,9 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             words,
             selected,
             frame_url: r.freeze_frame.then(|| format!("/c/{id}/frame.png")),
+            frame_rect,
+            viewport_width,
+            viewport_height,
             complete,
         }
     };
@@ -542,13 +564,17 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
 fn show_overlay(app: &AppHandle, id: u64, anchor: Option<(f64, f64, f64, f64)>, complete: bool, focus: bool) {
     let Some(win) = app.get_webview_window("overlay") else { return };
     let state = app.state::<AppState>();
-    let (mx, my) = state.recognition.lock().as_ref().map(|r| (r.monitor.0, r.monitor.1)).unwrap_or((0.0, 0.0));
-    if let Ok(Some(m)) = app.monitor_from_point(mx + 1.0, my + 1.0) {
-        let _ = win.set_position(*m.position());
-        let _ = win.set_size(*m.size());
-    }
-    emit_overlay(app, id, anchor, complete);
+    let Some(monitor) = state.recognition.lock().as_ref().map(|r| r.monitor) else { return };
+    let kde = platform::session_kind() == SessionKind::KdeWayland;
+    if kde { let _ = win.set_fullscreen(false); }
+    let m = monitor.native;
+    let _ = win.set_position(PhysicalPosition::new(m.x.round() as i32, m.y.round() as i32));
+    let _ = win.set_size(PhysicalSize::new(m.width.round() as u32, m.height.round() as u32));
     let _ = win.show();
+    // A normal KDE window is constrained by the panel work area (e.g. y=28). Fullscreen
+    // covers the actual output; resize/move events update the borders after configuration.
+    if kde { let _ = win.set_fullscreen(true); }
+    emit_overlay(app, id, anchor, complete);
     if focus {
         let _ = win.set_focus();
     }
@@ -570,13 +596,20 @@ fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64
     let Some(win) = app.get_webview_window("popup") else { return };
     let _ = app.emit_to("popup", "lookup", payload);
     if let Some((x0, y0, _x1, y1)) = anchor {
+        let state = app.state::<AppState>();
+        let display = state.recognition.lock().as_ref()
+            .filter(|r| payload.recognition == Some(r.id)).map(|r| r.monitor);
+        let ((x0, y0), (_, y1)) = display.map(|d| (d.to_native(x0, y0), d.to_native(x0, y1)))
+            .unwrap_or(((x0, y0), (x0, y1)));
         let size = win.outer_size().unwrap_or(PhysicalSize::new(560, 520));
         let (w, h) = (size.width as f64, size.height as f64);
         let mut x = x0 - 24.0;
         let mut y = y1 + 10.0;
-        if let Ok(Some(m)) = app.monitor_from_point(x0, y0) {
-            let (mx, my) = (m.position().x as f64, m.position().y as f64);
-            let (mw, mh) = (m.size().width as f64, m.size().height as f64);
+        let bounds = display.map(|d| d.native).or_else(|| app.monitor_from_point(x0, y0).ok().flatten()
+            .map(|m| platform::geometry::Rect { x: m.position().x as f64, y: m.position().y as f64,
+                width: m.size().width as f64, height: m.size().height as f64 }));
+        if let Some(m) = bounds {
+            let (mx, my, mw, mh) = (m.x, m.y, m.width, m.height);
             if y + h > my + mh {
                 y = (y0 - h - 10.0).max(my);
             }
@@ -814,8 +847,8 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
         let Some(r) = guard.as_ref() else { return };
         (r.lines.clone(), r.capture.clone(), r.monitor, r.app.clone(), r.id, r.engine.clone(), r.ocr_ms)
     };
-    let (mx, my, s) = monitor;
-    let (dx, dy) = (mx + x * s, my + y * s);
+    let (origin, scale, _) = overlay_viewport(&app, monitor);
+    let (dx, dy) = monitor.css_to_desktop(x, y, origin, scale);
     let (px, py) = capture.to_image(dx, dy);
     let Some(pick) = words::pick(&lines, px, py) else { return };
     if let Some(r) = state.recognition.lock().as_mut() {
@@ -1035,6 +1068,15 @@ pub fn run() {
                         if !h.state::<AppState>().pinned.load(Ordering::SeqCst) {
                             let _ = p.hide();
                         }
+                    }
+                });
+            }
+            if let Some(overlay) = app.get_webview_window("overlay") {
+                let h = handle.clone();
+                overlay.on_window_event(move |event| {
+                    if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }) {
+                        let current = h.state::<AppState>().recognition.lock().as_ref().map(|r| (r.id, r.complete));
+                        if let Some((id, complete)) = current { emit_overlay(&h, id, None, complete); }
                     }
                 });
             }

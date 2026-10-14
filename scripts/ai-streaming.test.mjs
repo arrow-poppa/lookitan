@@ -157,6 +157,46 @@ test('custom request JSON cannot override the selected streaming mode', async ()
     assert.deepEqual(requests, [false, true]);
 });
 
+test('custom effort presets and manual values reach OpenRouter with routing and extra JSON intact', async () => {
+    const requests = [];
+    const endpoint = 'https://openrouter.ai/api/v1/chat/completions';
+    const {provider} = await fixture(async (url, init) => {
+        requests.push({url, body: JSON.parse(init.body)});
+        return new Response(JSON.stringify({choices: [{message: {content: 'answer'}}]}));
+    });
+    for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
+        const instance = new provider.CustomProvider({...config, endpoint, thinkingMode: 'enabled', thinkingIntensity: effort,
+            providerRoutingMode: 'only', providerSlugs: 'deepinfra/turbo, fireworks', providerAllowFallbacks: false,
+            requestBodyJson: '{"top_p":0.9}'});
+        assert.equal(await instance.generateExplanation('word', 'sentence', '{{target}}'), 'answer');
+        const request = requests.at(-1);
+        assert.equal(request.url, endpoint);
+        assert.deepEqual(request.body.reasoning, {effort: effort === 'max' ? 'xhigh' : effort, exclude: true});
+        assert.deepEqual(request.body.provider, {only: ['deepinfra/turbo', 'fireworks'], allow_fallbacks: false});
+        assert.equal(request.body.top_p, 0.9);
+    }
+    for (const manual of ['2048', '{"max_tokens":2048}']) {
+        await new provider.CustomProvider({...config, endpoint, thinkingIntensity: 'custom', customThinkingIntensity: manual})
+            .generateExplanation('word', 'sentence', '{{target}}');
+        assert.deepEqual(requests.at(-1).body.reasoning, {max_tokens: 2048, exclude: true});
+    }
+});
+
+test('custom local endpoints retain their exact URL and selected reasoning effort', async () => {
+    let request;
+    const endpoint = 'http://127.0.0.1:1234/my/custom/completions';
+    const {provider} = await fixture(async (url, init) => {
+        request = {url, body: JSON.parse(init.body)};
+        return new Response(JSON.stringify({choices: [{message: {content: 'local answer'}}]}));
+    });
+    await new provider.CustomProvider({...config, endpoint, thinkingMode: 'enabled', thinkingIntensity: 'low',
+        requestBodyJson: '{"temperature":0.3}'}).generateExplanation('word', 'sentence', '{{target}}');
+    assert.equal(request.url, endpoint);
+    assert.equal(request.body.reasoning_effort, 'low');
+    assert.deepEqual(request.body.thinking, {type: 'enabled'});
+    assert.equal(request.body.temperature, 0.3);
+});
+
 test('cancelled cache requests discard late chunks, reject late completion and never cache', async () => {
     const cache = new AiResponseCache();
     let finish, emit;

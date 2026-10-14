@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import test from 'node:test';
 import {createContext, SourceTextModule, SyntheticModule} from 'node:vm';
+import {normalizeAiOptions} from '../src/lib/ai/defaults.js';
 
 const project = resolve(import.meta.dirname, '..');
 const file = (path) => resolve(project, path);
@@ -106,6 +107,93 @@ async function settingsFixture(overrides = {}) {
         await initialization;
     }};
 }
+
+async function dictionaryFixture(overrides = {}) {
+    const view = dom();
+    view.add('add-dict');
+    const root = view.add('dict-detail');
+    const list = view.add('dict-list');
+    const ai = normalizeAiOptions(overrides);
+    const settings = {definitionLanguage: 'en-US', translationLanguage: 'pt-BR', hideWordTranslation: false};
+    let saves = 0;
+    const ui = await load('src/main/dicts-tab.js', {document: view.document}, {
+        '@tauri-apps/plugin-dialog': {open: async () => null},
+        [file('src/lib/api.js')]: {api: {listDictionaries: async () => [
+            {id: 'ai-word', kind: 'ai-word', enabled: true}, {id: 'ai-context', kind: 'ai-context', enabled: true},
+        ]}, escapeHtml: String},
+        [file('src/lib/icons.js')]: {icon: () => ''},
+        [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => 'test answer'},
+        [file('src/main/store.js')]: {store: {settings, ai}, save: () => { saves++; }},
+    });
+    await ui.initDictsTab();
+    const control = (path) => descendants(root).find((node) => node.attributes['data-setting'] === `ai.${path}`);
+    const change = (path, value, event = 'change') => {
+        const node = control(path);
+        assert(node, `${path} must have a settings control`);
+        node.value = value;
+        node.dispatch(event);
+    };
+    return {view, root, list, ai, settings, control, change, saves: () => saves};
+}
+
+test('every BYOK provider option remains reachable when switching AI providers', async () => {
+    const fixture = await dictionaryFixture();
+    // All provider fields in yomitan-byok-ai/ext/data/schemas/options-schema.json.
+    const fields = {
+        openai: ['apiKey', 'model'],
+        gemini: ['apiKey', 'model', 'thinkingLevel'],
+        deepseek: ['apiKey', 'model', 'thinkingMode', 'thinkingIntensity'],
+        custom: ['apiKey', 'model', 'endpoint', 'providerRoutingMode', 'providerSlugs',
+            'providerAllowFallbacks', 'thinkingMode', 'thinkingIntensity', 'customThinkingIntensity', 'requestBodyJson'],
+    };
+    for (const [provider, keys] of Object.entries(fields)) {
+        fixture.change('provider', provider);
+        for (const key of keys) { assert(fixture.control(`${provider}.${key}`), `${provider}.${key} must be visible`); }
+        for (const key of ['provider', 'temperature', 'customPrompt', 'systemPrompt', 'autoGenerateOnLookup',
+            'streamResponse', 'cancelPendingRequests', 'unknownWordFallback', 'autoExplain', 'cardPrompt']) {
+            assert(fixture.control(key), `${key} must be visible`);
+        }
+        assert(!descendants(fixture.root).some((node) => node.tagName === '#text' && node.textContent === 'null'));
+    }
+});
+
+test('custom thinking effort, manual values, routing and JSON survive provider switches', async () => {
+    const fixture = await dictionaryFixture({provider: 'custom', custom: {model: 'saved-model', apiKey: 'test-only-key',
+        endpoint: 'http://localhost:1234/v1/chat/completions', thinkingMode: 'enabled', thinkingIntensity: 'custom',
+        customThinkingIntensity: '{"max_tokens":2000}', requestBodyJson: '{"top_p":0.9}'}});
+    const {control, change, ai} = fixture;
+    assert.equal(control('custom.customThinkingIntensity').value, '{"max_tokens":2000}');
+    const efforts = control('custom.thinkingIntensity').children.map((option) => option.value);
+    for (const value of ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'custom']) { assert(efforts.includes(value)); }
+    // Each selector has its own row; it cannot be clipped by a second 220px selector.
+    for (const row of descendants(fixture.root).filter((node) => node.className === 'card-row')) {
+        assert(descendants(row).filter((node) => node.tagName === 'select').length <= 1);
+    }
+    change('custom.thinkingIntensity', 'medium');
+    change('custom.providerRoutingMode', 'only');
+    change('custom.providerSlugs', 'deepinfra/turbo, fireworks', 'input');
+    change('custom.customThinkingIntensity', '4096', 'input');
+    change('provider', 'gemini');
+    change('provider', 'custom');
+    assert.equal(control('custom.thinkingIntensity').value, 'medium');
+    assert.equal(control('custom.customThinkingIntensity').value, '4096');
+    assert.equal(control('custom.providerRoutingMode').value, 'only');
+    assert.equal(control('custom.providerSlugs').value, 'deepinfra/turbo, fireworks');
+    assert.equal(ai.custom.model, 'saved-model');
+    assert.equal(ai.custom.apiKey, 'test-only-key');
+    assert.equal(ai.custom.endpoint, 'http://localhost:1234/v1/chat/completions');
+    assert.equal(ai.custom.requestBodyJson, '{"top_p":0.9}');
+    assert(fixture.saves() >= 6);
+});
+
+test('context translator exposes the shared provider settings without resetting them', async () => {
+    const fixture = await dictionaryFixture({provider: 'custom', custom: {thinkingIntensity: 'low', customThinkingIntensity: '2048'}});
+    fixture.list.children[1].dispatch('click');
+    assert.equal(fixture.control('custom.thinkingIntensity').value, 'low');
+    assert.equal(fixture.control('custom.customThinkingIntensity').value, '2048');
+    assert(fixture.control('contextPrompt'));
+    assert.equal(fixture.saves(), 0);
+});
 
 test('settings render and GPU toggle work while OCR status is pending', async () => {
     const fixture = await settingsFixture();
