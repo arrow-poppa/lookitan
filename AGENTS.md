@@ -63,6 +63,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - The detector tries det_small on the GPU first. If GPU inference fails, it releases the GPU session and retries on the CPU with det_tiny. Foreground and overlay OCR share that CPU session.
   - `DET_MAX_SIDE` is 1280, and whole-screen OCR runs in overlapping bands.
   - Recognition has two phases: the lines near the pointer first, then the rest in the background for the overlay.
+- **Scan result:** the pop-up opens only when the pointer is on a word (`Pick::is_under`, with a pad of a quarter of the line height). Otherwise the scan reads the whole monitor (and re-captures it if the scope is Region), then shows the focused overlay of clickable words with no pop-up, as Lookupper does.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
   - The cursor comes from the KWin script over D-Bus (`io.github.arrowpoppa.Lookitan` `/Cursor`).
@@ -84,6 +85,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-13 (Claude): a shortcut pressed away from text now opens the whole-screen word overlay without a pop-up (`ocr_pass` and `Pick::is_under` in lib.rs/words.rs).
 
 - 2026-10-13 (Claude): fast-forwarded `main` to the codex tip `9ce4339`. That tip contains:
   - Codex's work: restored the stable region lookup, fixed the WebView startup race, added GPU→CPU retry on inference failure, fixed KDE capture and DPI, added bounded AI/OCR caches and automatic Explain, and added the test suite.

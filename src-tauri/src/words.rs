@@ -19,6 +19,15 @@ pub struct Pick {
     pub y1: f32,
 }
 
+impl Pick {
+    /// True when the pointer is on the picked word itself, not merely near its line. A shortcut
+    /// pressed away from text opens the whole-screen overlay instead of a pop-up.
+    pub fn is_under(&self, px: f32, py: f32) -> bool {
+        let pad = ((self.y1 - self.y0) * 0.25).max(4.0);
+        px >= self.x0 - pad && px <= self.x1 + pad && py >= self.y0 - pad && py <= self.y1 + pad
+    }
+}
+
 /// A clickable word rectangle for the overlay, in image coordinates.
 #[derive(Clone, Debug, Serialize)]
 pub struct WordBox {
@@ -201,4 +210,36 @@ fn context(lines: &[OcrLine], idx: usize) -> String {
         out.push_str(t);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick;
+    use crate::ocr::{OcrChar, OcrLine};
+
+    fn line(text: &str, x0: f32, y0: f32) -> OcrLine {
+        let chars: Vec<OcrChar> = text.chars().enumerate()
+            .map(|(i, ch)| OcrChar { ch, x0: x0 + i as f32 * 10.0, x1: x0 + i as f32 * 10.0 + 10.0 })
+            .collect();
+        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars }
+    }
+
+    #[test]
+    fn pointer_on_a_word_is_under_it() {
+        let lines = [line("hello world", 100.0, 100.0)];
+        let p = pick(&lines, 165.0, 110.0).unwrap();
+        assert_eq!(p.word, "world");
+        assert!(p.is_under(165.0, 110.0));
+    }
+
+    #[test]
+    fn pointer_near_but_off_the_text_is_not_under_it() {
+        let lines = [line("hello world", 100.0, 100.0)];
+        // Below the line, within pick's 1.5-line tolerance but clearly off the word.
+        let p = pick(&lines, 130.0, 128.0).unwrap();
+        assert!(!p.is_under(130.0, 128.0));
+        // Past the end of the line.
+        let p = pick(&lines, 240.0, 110.0).unwrap();
+        assert!(!p.is_under(240.0, 110.0));
+    }
 }

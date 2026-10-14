@@ -348,12 +348,14 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     let fg = platform::foreground_app();
     let profile = fg.as_ref().map(|f| profile_for(app, f)).unwrap_or_default();
     let (cx, cy) = platform::cursor_position(app)?;
-    let capture = match settings.ocr_scope {
-        OcrScope::Screen => platform::capture_screen(cx, cy)?,
-        OcrScope::Region => platform::capture_around(cx, cy, settings.capture_width, settings.capture_height)?,
+    let whole_screen = settings.ocr_scope == OcrScope::Screen;
+    let mut capture = if whole_screen {
+        platform::capture_screen(cx, cy)?
+    } else {
+        platform::capture_around(cx, cy, settings.capture_width, settings.capture_height)?
     };
     // Resolve the output before OCR: the pointer may move to another monitor while it runs.
-    let monitor = platform::display_geometry(app, cx, cy, &capture)?;
+    let mut monitor = platform::display_geometry(app, cx, cy, &capture)?;
     let frozen_pid = match (profile.freeze, fg.as_ref()) {
         (FreezeMode::Process, Some(f)) if f.pid != 0 => {
             platform::suspend_process(f.pid);
@@ -361,47 +363,21 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         }
         _ => None,
     };
-    let (px, py) = capture.to_image(cx, cy);
+    let (mut px, mut py) = capture.to_image(cx, cy);
 
     let started = Instant::now();
-    let ocr_key = frame_key(&capture.image, &format!("{:?}|{}|{}|{}", settings.ocr_engine, settings.ocr_language, settings.use_gpu,
-        if settings.ocr_engine == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
-    let mut notice = None;
-    let mut rest: Vec<TextBox> = Vec::new();
-    let mut paddle_engine: Option<Arc<PaddleOcr>> = None;
-    let (lines, engine) = match settings.ocr_engine {
-        OcrEngineKind::Lens => match cached_lens(&state, &capture.image, ocr_key, &settings) {
-            Ok(lines) => (lines, "Google Lens".to_string()),
-            Err(e) => {
-                notice = Some(format!("Google Lens failed, used PP-OCRv6 instead: {e:#}"));
-                let p = ensure_paddle(&state)?;
-                let boxes = p.detect_boxes(&capture.image)?;
-                let (focus, others) = split_focus(&boxes, px, py);
-                if settings.ocr_scope == OcrScope::Screen { rest = others; }
-                let lines = p.recognize_boxes(&capture.image, &focus);
-                paddle_engine = Some(p.clone());
-                (lines, format!("PP-OCRv6 {}", p.det_model()))
-            }
-        },
-        OcrEngineKind::Paddle => {
-            let p = ensure_paddle(&state)?;
-            let cached_boxes = state.ocr_cache.lock().boxes(ocr_key);
-            let boxes = match cached_boxes {
-                Some(boxes) => boxes,
-                None => {
-                    let boxes = p.detect_boxes(&capture.image)?;
-                    state.ocr_cache.lock().save_boxes(ocr_key, &boxes);
-                    boxes
-                }
-            };
-            let (focus, others) = split_focus(&boxes, px, py);
-            if settings.ocr_scope == OcrScope::Screen { rest = others; }
-            let lines = cached_recognize(&state, &p, &capture.image, ocr_key, &focus);
-            let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
-            paddle_engine = Some(p.clone());
-            (lines, format!("PP-OCRv6 {} · {gpu}", p.det_model()))
-        }
-    };
+    let mut pass = ocr_pass(&state, &settings, &capture.image, px, py, whole_screen)?;
+    let mut pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
+    // Like Lookupper: a shortcut pressed away from text reads the whole screen and shows the
+    // clickable words without a pop-up; clicking one of them looks it up.
+    if pick.is_none() && !whole_screen {
+        capture = platform::capture_screen(cx, cy)?;
+        monitor = platform::display_geometry(app, cx, cy, &capture)?;
+        (px, py) = capture.to_image(cx, cy);
+        pass = ocr_pass(&state, &settings, &capture.image, px, py, true)?;
+        pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
+    }
+    let OcrPass { lines, engine, rest, paddle: paddle_engine, notice, key: ocr_key } = pass;
     let ocr_ms = started.elapsed().as_millis() as u64;
 
     let id = state.recognition_seq.fetch_add(1, Ordering::SeqCst) + 1;
@@ -419,39 +395,42 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         ocr_ms,
     });
 
-    let pick = words::pick(&lines, px, py);
-    let anchor = pick.as_ref().map(|p| {
-        let (x0, y0) = capture.to_desktop(p.x0, p.y0);
-        let (x1, y1) = capture.to_desktop(p.x1, p.y1);
-        (x0, y0, x1, y1)
-    });
-    show_overlay(app, id, anchor, rest.is_empty(), profile.focus_overlay);
-
-    let payload = match pick {
-        None => LookupPayload {
-            engine,
-            ocr_ms,
-            notice,
-            error: Some("No text found under the pointer.".into()),
-            app: fg,
-            recognition: Some(id),
-            ..Default::default()
-        },
-        Some(pick) => LookupPayload {
-            entries: lookup_words(&state, &pick.candidates),
-            word: pick.word,
-            sentence: pick.sentence,
-            candidates: pick.candidates,
-            engine,
-            ocr_ms,
-            notice,
-            error: None,
-            manual: false,
-            app: fg,
-            recognition: Some(id),
-        },
-    };
-    show_popup(app, &payload, anchor.or(Some((cx, cy, cx, cy))));
+    match pick {
+        None if lines.is_empty() && rest.is_empty() => {
+            let payload = LookupPayload {
+                engine,
+                ocr_ms,
+                notice,
+                error: Some("Nenhum texto encontrado na tela.".into()),
+                app: fg,
+                recognition: Some(id),
+                ..Default::default()
+            };
+            show_popup(app, &payload, Some((cx, cy, cx, cy)));
+        }
+        // Focus the overlay so Esc and clicks reach it.
+        None => show_overlay(app, id, None, rest.is_empty(), true),
+        Some(pick) => {
+            let (x0, y0) = capture.to_desktop(pick.x0, pick.y0);
+            let (x1, y1) = capture.to_desktop(pick.x1, pick.y1);
+            let anchor = (x0, y0, x1, y1);
+            show_overlay(app, id, Some(anchor), rest.is_empty(), profile.focus_overlay);
+            let payload = LookupPayload {
+                entries: lookup_words(&state, &pick.candidates),
+                word: pick.word,
+                sentence: pick.sentence,
+                candidates: pick.candidates,
+                engine,
+                ocr_ms,
+                notice,
+                error: None,
+                manual: false,
+                app: fg,
+                recognition: Some(id),
+            };
+            show_popup(app, &payload, Some(anchor));
+        }
+    }
 
     // Recognize the rest of the screen in the background so every word becomes clickable.
     if let (Some(p), false) = (paddle_engine, rest.is_empty()) {
@@ -483,6 +462,46 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         });
     }
     Ok(())
+}
+
+struct OcrPass {
+    lines: Vec<OcrLine>,
+    engine: String,
+    /// Boxes still to recognize in the background for the overlay (whole-screen passes only).
+    rest: Vec<TextBox>,
+    paddle: Option<Arc<PaddleOcr>>,
+    notice: Option<String>,
+    key: FrameKey,
+}
+
+/// Recognizes the lines around the pointer first. In a whole-screen pass the other boxes are
+/// returned in `rest` so the overlay can fill in while the user reads.
+fn ocr_pass(state: &AppState, settings: &Settings, image: &image::RgbaImage, px: f32, py: f32, whole_screen: bool) -> Result<OcrPass> {
+    let key = frame_key(image, &format!("{:?}|{}|{}|{}", settings.ocr_engine, settings.ocr_language, settings.use_gpu,
+        if settings.ocr_engine == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
+    let mut notice = None;
+    if settings.ocr_engine == OcrEngineKind::Lens {
+        match cached_lens(state, image, key, settings) {
+            Ok(lines) => return Ok(OcrPass { lines, engine: "Google Lens".into(), rest: Vec::new(), paddle: None, notice, key }),
+            Err(e) => notice = Some(format!("Google Lens failed, used PP-OCRv6 instead: {e:#}")),
+        }
+    }
+    let p = ensure_paddle(state)?;
+    let cached_boxes = state.ocr_cache.lock().boxes(key);
+    let boxes = match cached_boxes {
+        Some(boxes) => boxes,
+        None => {
+            let boxes = p.detect_boxes(image)?;
+            state.ocr_cache.lock().save_boxes(key, &boxes);
+            boxes
+        }
+    };
+    let (focus, others) = split_focus(&boxes, px, py);
+    let rest = if whole_screen { others } else { Vec::new() };
+    let lines = cached_recognize(state, &p, image, key, &focus);
+    let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
+    let engine = format!("PP-OCRv6 {} · {gpu}", p.det_model());
+    Ok(OcrPass { lines, engine, rest, paddle: Some(p), notice, key })
 }
 
 fn cached_recognize(state: &AppState, engine: &PaddleOcr, image: &image::RgbaImage, key: FrameKey, boxes: &[TextBox]) -> Vec<OcrLine> {
