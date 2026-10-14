@@ -128,6 +128,41 @@ mod tests {
     }
 
     #[test]
+    fn batches_group_similar_widths_within_limits() {
+        let line = |w: f32| TextBox { x0: 0.0, y0: 0.0, x1: w, y1: 48.0 };
+        let mut boxes: Vec<TextBox> = (0..40).map(|i| line(100.0 + (i % 5) as f32 * 200.0)).collect();
+        boxes.push(line(3000.0));
+        let batches = plan_batches(&boxes);
+        assert_eq!(batches.iter().map(Vec::len).sum::<usize>(), boxes.len());
+        let mut last_widest = 0;
+        for batch in &batches {
+            let widths: Vec<u32> = batch.iter().map(box_rec_width).collect();
+            let widest = *widths.iter().max().unwrap();
+            assert!(batch.len() <= REC_BATCH_MAX);
+            assert!(batch.len() == 1 || batch.len() as u32 * widest <= REC_BATCH_COLUMNS);
+            // Narrowest first, so padding inside a batch stays small.
+            assert!(widths.iter().min().unwrap() >= &last_widest);
+            last_widest = widest;
+        }
+        assert_eq!(batches.last().unwrap().len(), 1, "the 3000 px line runs alone");
+    }
+
+    #[test]
+    fn padded_input_keeps_the_crop_left_aligned_and_pads_with_zero() {
+        let crop = RgbaImage::from_pixel(2, REC_HEIGHT, Rgba([255, 255, 255, 255]));
+        let pw = 5;
+        let mut slot = vec![0f32; 3 * REC_HEIGHT as usize * pw];
+        fill_rec_input(&mut slot, &crop, pw);
+        let plane = REC_HEIGHT as usize * pw;
+        for c in 0..3 {
+            for y in 0..REC_HEIGHT as usize {
+                let row = &slot[c * plane + y * pw..c * plane + (y + 1) * pw];
+                assert_eq!(row, &[1.0, 1.0, 0.0, 0.0, 0.0]);
+            }
+        }
+    }
+
+    #[test]
     fn overlapping_bands_merge_seam_text_but_preserve_separate_lines() {
         let mut boxes = vec![TextBox {
             x0: 20.0,
@@ -175,6 +210,80 @@ const DET_MAX_SIDE: f32 = 1280.0;
 const DET_BAND_HEIGHT: u32 = 512;
 const DET_BAND_OVERLAP: u32 = 64;
 const REC_HEIGHT: u32 = 48;
+/// Most lines per batched recognizer run (whole-screen OCR only). PaddleOCR's `rec_batch_num`
+/// is 6; one GPU run costs about the same for a few more lines.
+const REC_BATCH_MAX: usize = 16;
+/// Upper bound on lines times padded width in one batch, which bounds GPU memory per run.
+const REC_BATCH_COLUMNS: u32 = 12_000;
+
+/// Width of a crop once resized to the recognizer's input height.
+fn rec_width(cw: u32, ch: u32) -> u32 {
+    ((cw as f32 * REC_HEIGHT as f32 / ch as f32).round() as u32).clamp(16, 3200)
+}
+
+fn box_rec_width(b: &TextBox) -> u32 {
+    rec_width((b.x1 - b.x0).max(1.0) as u32, (b.y1 - b.y0).max(1.0) as u32)
+}
+
+/// Groups boxes of similar width for batched recognition, narrowest first, so little of each
+/// batch is padding.
+pub fn plan_batches(boxes: &[TextBox]) -> Vec<Vec<TextBox>> {
+    let mut sorted = boxes.to_vec();
+    sorted.sort_by_key(box_rec_width);
+    let mut out = Vec::new();
+    let mut batch: Vec<TextBox> = Vec::new();
+    for b in sorted {
+        // Sorted ascending, so this box sets the batch's padded width.
+        let widest = box_rec_width(&b);
+        if !batch.is_empty() && (batch.len() >= REC_BATCH_MAX || (batch.len() as u32 + 1) * widest > REC_BATCH_COLUMNS) {
+            out.push(std::mem::take(&mut batch));
+        }
+        batch.push(b);
+    }
+    if !batch.is_empty() {
+        out.push(batch);
+    }
+    out
+}
+
+/// A text box cut out of the capture and resized to the recognizer's height.
+struct RecCrop {
+    b: TextBox,
+    /// Left edge and width of the crop in capture pixels.
+    x: u32,
+    cw: u32,
+    /// Width after resizing.
+    tw: u32,
+    image: RgbaImage,
+}
+
+fn rec_crop(img: &RgbaImage, b: TextBox) -> Option<RecCrop> {
+    let (iw, ih) = img.dimensions();
+    let x = (b.x0.floor().max(0.0) as u32).min(iw.saturating_sub(1));
+    let y = (b.y0.floor().max(0.0) as u32).min(ih.saturating_sub(1));
+    let cw = ((b.x1.ceil() as u32).min(iw)).saturating_sub(x);
+    let ch = ((b.y1.ceil() as u32).min(ih)).saturating_sub(y);
+    if cw < 2 || ch < 2 {
+        return None;
+    }
+    let crop = image::imageops::crop_imm(img, x, y, cw, ch).to_image();
+    let tw = rec_width(cw, ch);
+    let image = image::imageops::resize(&crop, tw, REC_HEIGHT, FilterType::Triangle);
+    Some(RecCrop { b, x, cw, tw, image })
+}
+
+/// Writes one crop into its slot of a recognizer input (3 planes of REC_HEIGHT x `padded_w`,
+/// BGR). Columns past the crop stay 0, the padding PaddleOCR uses after normalization.
+fn fill_rec_input(slot: &mut [f32], crop: &RgbaImage, padded_w: usize) {
+    let plane = REC_HEIGHT as usize * padded_w;
+    for (x, y, p) in crop.enumerate_pixels() {
+        let i = y as usize * padded_w + x as usize;
+        let [r, g, bl, _] = p.0;
+        slot[i] = (bl as f32 / 255.0 - 0.5) / 0.5;
+        slot[plane + i] = (g as f32 / 255.0 - 0.5) / 0.5;
+        slot[2 * plane + i] = (r as f32 / 255.0 - 0.5) / 0.5;
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct TextBox {
@@ -617,50 +726,83 @@ impl PaddleOcr {
     }
 
     fn recognize_box(&self, img: &RgbaImage, b: TextBox) -> Result<Option<OcrLine>> {
-        let (iw, ih) = img.dimensions();
-        let x = (b.x0.floor().max(0.0) as u32).min(iw.saturating_sub(1));
-        let y = (b.y0.floor().max(0.0) as u32).min(ih.saturating_sub(1));
-        let cw = ((b.x1.ceil() as u32).min(iw)).saturating_sub(x);
-        let ch = ((b.y1.ceil() as u32).min(ih)).saturating_sub(y);
-        if cw < 2 || ch < 2 {
-            return Ok(None);
-        }
-        let crop = image::imageops::crop_imm(img, x, y, cw, ch).to_image();
-        let tw = ((cw as f32 * REC_HEIGHT as f32 / ch as f32).round() as u32).clamp(16, 3200);
-        let resized = image::imageops::resize(&crop, tw, REC_HEIGHT, FilterType::Triangle);
-        let plane = (tw * REC_HEIGHT) as usize;
-        let mut data = vec![0f32; plane * 3];
-        for (i, p) in resized.pixels().enumerate() {
-            let [r, g, bl, _] = p.0;
-            data[i] = (bl as f32 / 255.0 - 0.5) / 0.5;
-            data[plane + i] = (g as f32 / 255.0 - 0.5) / 0.5;
-            data[2 * plane + i] = (r as f32 / 255.0 - 0.5) / 0.5;
-        }
-        let input = ortx!(Tensor::from_array((
-            [1usize, 3, REC_HEIGHT as usize, tw as usize],
-            data
-        )));
+        let Some(crop) = rec_crop(img, b) else { return Ok(None) };
+        let pw = crop.tw as usize;
+        let mut data = vec![0f32; 3 * REC_HEIGHT as usize * pw];
+        fill_rec_input(&mut data, &crop.image, pw);
+        let (steps, classes, probs) = self.run_rec(data, 1, pw)?;
+        Ok(self.decode_line(&crop, &probs, steps, classes, pw))
+    }
 
-        let (steps, classes, probs) = {
-            let mut rec = self.rec.lock();
-            rec.run(cpu_session, |session| {
-                let outputs = ortx!(session.run(ort::inputs![input.view()]));
-                let (shape, probs) = ortx!(outputs[0].try_extract_tensor::<f32>());
-                if shape.len() != 3 {
-                    bail!("unexpected recognizer output shape {:?}", &shape[..]);
+    /// Recognizes the boxes in as few recognizer runs as `plan_batches` allows. A batch that
+    /// fails is retried one line at a time. Used for the whole-screen overlay.
+    pub fn recognize_boxes_batched(&self, img: &RgbaImage, boxes: &[TextBox]) -> Vec<OcrLine> {
+        let mut lines = Vec::with_capacity(boxes.len());
+        for batch in plan_batches(boxes) {
+            match self.recognize_batch(img, &batch) {
+                Ok(found) => lines.extend(found),
+                Err(e) => {
+                    log::warn!("batched recognition failed, retrying line by line: {e:#}");
+                    lines.extend(self.recognize_boxes(img, &batch));
                 }
-                Ok((shape[1] as usize, shape[2] as usize, probs.to_vec()))
-            })?
-        };
-        if steps == 0 || classes == 0 {
-            return Ok(None);
+            }
         }
+        lines.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));
+        lines
+    }
+
+    fn recognize_batch(&self, img: &RgbaImage, boxes: &[TextBox]) -> Result<Vec<OcrLine>> {
+        let crops: Vec<RecCrop> = boxes.iter().filter_map(|b| rec_crop(img, *b)).collect();
+        if crops.is_empty() {
+            return Ok(Vec::new());
+        }
+        let pw = crops.iter().map(|c| c.tw).max().unwrap_or(16) as usize;
+        let slot = 3 * REC_HEIGHT as usize * pw;
+        let mut data = vec![0f32; crops.len() * slot];
+        for (i, c) in crops.iter().enumerate() {
+            fill_rec_input(&mut data[i * slot..(i + 1) * slot], &c.image, pw);
+        }
+        let (steps, classes, probs) = self.run_rec(data, crops.len(), pw)?;
+        let per_item = steps * classes;
+        if probs.len() < per_item * crops.len() {
+            bail!("recognizer returned {} values for {} lines", probs.len(), crops.len());
+        }
+        Ok(crops
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| self.decode_line(c, &probs[i * per_item..(i + 1) * per_item], steps, classes, pw))
+            .collect())
+    }
+
+    /// Runs the recognizer on `n` crops padded to `padded_w`; returns (steps, classes, probs).
+    fn run_rec(&self, data: Vec<f32>, n: usize, padded_w: usize) -> Result<(usize, usize, Vec<f32>)> {
+        let input = ortx!(Tensor::from_array(([n, 3, REC_HEIGHT as usize, padded_w], data)));
+        let mut rec = self.rec.lock();
+        rec.run(cpu_session, |session| {
+            let outputs = ortx!(session.run(ort::inputs![input.view()]));
+            let (shape, probs) = ortx!(outputs[0].try_extract_tensor::<f32>());
+            if shape.len() != 3 || shape[0] as usize != n {
+                bail!("unexpected recognizer output shape {:?}", &shape[..]);
+            }
+            Ok((shape[1] as usize, shape[2] as usize, probs.to_vec()))
+        })
+    }
+
+    /// CTC-decodes one crop's output rows into a line with per-character spans.
+    fn decode_line(&self, crop: &RecCrop, probs: &[f32], steps: usize, classes: usize, padded_w: usize) -> Option<OcrLine> {
+        if steps == 0 || classes == 0 {
+            return None;
+        }
+        let (b, x, cw) = (crop.b, crop.x, crop.cw);
+        // In a batch, the steps past this crop's own width only see padding.
+        let content_steps = steps as f32 * crop.tw as f32 / padded_w as f32;
+        let valid = (content_steps.ceil() as usize).clamp(1, steps);
         // Index 0 is the CTC blank; a trailing extra class is the space character.
         let has_space = classes == self.dict.len() + 2;
 
         let mut decoded: Vec<(char, usize)> = Vec::new();
         let mut prev = 0usize;
-        for t in 0..steps {
+        for t in 0..valid {
             let row = &probs[t * classes..(t + 1) * classes];
             let mut best = 0usize;
             let mut best_p = f32::MIN;
@@ -685,11 +827,11 @@ impl PaddleOcr {
             prev = best;
         }
         if decoded.iter().all(|(c, _)| c.is_whitespace()) {
-            return Ok(None);
+            return None;
         }
 
-        // Each CTC step covers an equal slice of the crop width.
-        let step_w = cw as f32 / steps as f32;
+        // Each CTC step covers an equal slice of the padded input, so of the crop width.
+        let step_w = cw as f32 / content_steps;
         let centers: Vec<f32> = decoded
             .iter()
             .map(|(_, t)| x as f32 + (*t as f32 + 0.5) * step_w)
@@ -713,13 +855,13 @@ impl PaddleOcr {
             });
         }
         let text: String = decoded.iter().map(|(c, _)| *c).collect();
-        Ok(Some(OcrLine {
+        Some(OcrLine {
             text,
             x0: b.x0,
             y0: b.y0,
             x1: b.x1,
             y1: b.y1,
             chars,
-        }))
+        })
     }
 }

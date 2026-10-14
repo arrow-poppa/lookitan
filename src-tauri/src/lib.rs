@@ -35,7 +35,7 @@ use crate::cards::CardStore;
 use crate::dict::{DictList, Dictionary, EntryRef};
 use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
-use crate::ocr::paddle::{split_focus, PaddleOcr, TextBox};
+use crate::ocr::paddle::{plan_batches, split_focus, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
 use crate::platform::geometry::DisplayGeometry;
@@ -437,15 +437,16 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         let app = app.clone();
         let image = capture.image.clone();
         std::thread::spawn(move || {
-            for chunk in rest.chunks(8) {
+            // Lines of similar width share one recognizer run.
+            for chunk in plan_batches(&rest) {
                 // A new lookup supersedes this overlay; do not run another stale OCR batch.
                 if !matches!(app.state::<AppState>().recognition.lock().as_ref(), Some(r) if r.id == id) {
                     return;
                 }
                 let more = if ocr_kind == OcrEngineKind::Paddle {
-                    cached_recognize(&app.state::<AppState>(), &p, &image, ocr_key, chunk)
+                    cached_recognize(&app.state::<AppState>(), &p, &image, ocr_key, &chunk, true)
                 } else {
-                    p.recognize_boxes(&image, chunk)
+                    p.recognize_boxes_batched(&image, &chunk)
                 };
                 let state = app.state::<AppState>();
                 {
@@ -500,16 +501,17 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     };
     let (focus, others) = split_focus(&boxes, px, py);
     let rest = if whole_screen { others } else { Vec::new() };
-    let lines = cached_recognize(state, &p, image, key, &focus);
+    // The lines around the pointer stay one run per line: the pop-up waits only for these.
+    let lines = cached_recognize(state, &p, image, key, &focus, false);
     let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
     let engine = format!("PP-OCRv6 {} · {gpu}", p.det_model());
     Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key })
 }
 
-fn cached_recognize(state: &AppState, engine: &PaddleOcr, image: &image::RgbaImage, key: FrameKey, boxes: &[TextBox]) -> Vec<OcrLine> {
+fn cached_recognize(state: &AppState, engine: &PaddleOcr, image: &image::RgbaImage, key: FrameKey, boxes: &[TextBox], batched: bool) -> Vec<OcrLine> {
     let cached = state.ocr_cache.lock().lines(key, boxes);
     if let Some(lines) = cached { return lines; }
-    let lines = engine.recognize_boxes(image, boxes);
+    let lines = if batched { engine.recognize_boxes_batched(image, boxes) } else { engine.recognize_boxes(image, boxes) };
     state.ocr_cache.lock().save_lines(key, boxes, &lines);
     lines
 }
