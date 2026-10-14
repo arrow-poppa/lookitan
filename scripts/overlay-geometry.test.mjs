@@ -23,11 +23,11 @@ class Element {
 }
 
 async function fixture() {
-    const root = new Element(), frame = new Element(), handlers = {}, requests = [];
+    const root = new Element(), frame = new Element(), others = {}, handlers = {}, requests = [];
     let emit;
     const window = {innerWidth: 1920, innerHeight: 1080, addEventListener: (name, callback) => { handlers[`window:${name}`] = callback; }};
     const context = createContext({window, HTMLElement: Element, document: {
-        getElementById: (id) => id === 'words' ? root : frame,
+        getElementById: (id) => id === 'words' ? root : id === 'frame' ? frame : (others[id] ||= new Element()),
         createElement: () => new Element(), createDocumentFragment: () => new Element(),
         addEventListener: (name, callback) => { handlers[name] = callback; },
     }});
@@ -41,7 +41,7 @@ async function fixture() {
         for (const [key, value] of Object.entries(stubs[name])) { this.setExport(key, value); }
     }, {context}));
     await module.evaluate();
-    return {root, frame, window, handlers, requests, emit: (payload) => emit(payload)};
+    return {root, frame, hint: others.hint, window, handlers, requests, emit: (payload) => emit(payload)};
 }
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {
@@ -120,7 +120,8 @@ test('a whole-screen lookup keeps the screen as it is and only highlights words,
     const first = {text: 'but', x: 10, y: 20, w: 30, h: 18};
     const second = {text: 'being', x: 60, y: 20, w: 50, h: 18};
     view.emit({id: 1, words: [first, second], spotlight: true, viewportWidth: 1920, viewportHeight: 1080});
-    assert(view.frame.classList.contains('spotlight'), 'the hint pill is hidden');
+    assert(view.hint.classList.contains('spotlight'), 'the hint pill is hidden');
+    assert(!view.frame.classList.contains('spotlight'), 'no frame yet, so nothing is blurred');
     assert.equal(view.root.children[0].style.backgroundImage, undefined, 'no blurred frame or cut-outs');
     assert(!view.root.children[0].classList.contains('sel'));
 
@@ -134,4 +135,21 @@ test('a whole-screen lookup keeps the screen as it is and only highlights words,
     // A new lookup starts clean.
     view.emit({id: 2, words: [first, second], spotlight: true, viewportWidth: 1920, viewportHeight: 1080});
     assert(!view.root.children[0].classList.contains('seen'));
+});
+
+test('with the frame loaded, a whole-screen lookup blurs it lightly and keeps words as sharp cut-outs', async () => {
+    const view = await fixture();
+    const frameRect = {text: '', x: 0, y: 0, w: 1920, h: 1080};
+    view.emit({id: 1, words: [{text: 'word', x: 10, y: 20, w: 50, h: 18}], frameUrl: '/c/1/frame.png', frameRect,
+        spotlight: true, viewportWidth: 1920, viewportHeight: 1080});
+    assert(view.root.classList.contains('spotlight'));
+    const word = view.root.children[0];
+    assert.equal(word.style.backgroundImage, 'url("lkt://localhost/c/1/frame.png")');
+    assert.equal(word.style.backgroundSize, '1920px 1080px');
+    assert.equal(word.style.backgroundPosition, '-10px -20px');
+    // A lookup on a word (popup shown) with a frozen frame keeps the frame sharp and plain boxes.
+    view.emit({id: 2, words: [{text: 'word', x: 10, y: 20, w: 50, h: 18}], frameUrl: '/c/2/frame.png', frameRect,
+        spotlight: false, viewportWidth: 1920, viewportHeight: 1080});
+    assert(!view.root.classList.contains('spotlight'));
+    assert.equal(view.root.children[0].style.backgroundImage, undefined);
 });

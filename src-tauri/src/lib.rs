@@ -54,8 +54,8 @@ struct Recognition {
     app: Option<ForegroundApp>,
     frozen_pid: Option<u32>,
     freeze_frame: bool,
-    /// Whole-screen lookup without a pop-up: the overlay shows only the word highlights, like
-    /// Lookupper (no hint pill).
+    /// Whole-screen lookup without a pop-up: like Lookupper, the overlay shows the captured frame
+    /// slightly blurred (Lookupper uses OpenCV's GaussianBlur) with the words as sharp cut-outs.
     spotlight: bool,
     /// The whole monitor, captured with a region lookup when Anki's {screenshot} asks for the
     /// whole screen. `None` when `capture` already is the whole monitor.
@@ -586,7 +586,8 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             let (x, y, w, h) = css_rect(x0, y0, x1, y1);
             OverlayWord { text: String::new(), x, y, w, h }
         });
-        let frame_rect = r.freeze_frame.then(|| {
+        let with_frame = r.freeze_frame || r.spotlight;
+        let frame_rect = with_frame.then(|| {
             let c = &r.capture;
             let (x, y, w, h) = css_rect(c.origin_x, c.origin_y,
                 c.origin_x + c.image.width() as f64 / c.scale, c.origin_y + c.image.height() as f64 / c.scale);
@@ -596,7 +597,7 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             id,
             words,
             selected,
-            frame_url: r.freeze_frame.then(|| format!("/c/{id}/frame.png")),
+            frame_url: with_frame.then(|| format!("/c/{id}/frame.png")),
             frame_rect,
             spotlight: r.spotlight,
             viewport_width,

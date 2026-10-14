@@ -35,9 +35,18 @@ function containsCenter(w, s) {
     return cx >= w.x && cx <= w.x + w.w && cy >= w.y && cy <= w.y + w.h;
 }
 
-function setSpotlight(on) {
-    if (!hint) { return; }
-    if (on) { hint.classList.add('spotlight'); } else { hint.classList.remove('spotlight'); }
+function setSpotlight(on, blurred) {
+    for (const [el, active] of [[hint, on], [frame, blurred], [root, blurred]]) {
+        if (!el) { continue; }
+        if (active) { el.classList.add('spotlight'); } else { el.classList.remove('spotlight'); }
+    }
+}
+
+/** Shows the part of the captured frame under the word, so it stays sharp over the blur. */
+function cutOut(el, w, f, scale) {
+    el.style.backgroundImage = `url("${frame.src}")`;
+    el.style.backgroundSize = `${f.w * scale.x}px ${f.h * scale.y}px`;
+    el.style.backgroundPosition = `${(f.x - w.x) * scale.x}px ${(f.y - w.y) * scale.y}px`;
 }
 
 function render() {
@@ -46,7 +55,8 @@ function render() {
     if (current.frameRect) {
         position(frame, current.frameRect, scale);
     }
-    setSpotlight(Boolean(current.spotlight));
+    const blurred = Boolean(current.spotlight && current.frameRect && frame.src);
+    setSpotlight(Boolean(current.spotlight), blurred);
     const frag = document.createDocumentFragment();
     for (const w of current.words) {
         const el = document.createElement('div');
@@ -57,6 +67,7 @@ function render() {
             el.classList.add('seen');
         }
         position(el, w, scale);
+        if (blurred) { cutOut(el, w, current.frameRect, scale); }
         el.title = w.text;
         frag.appendChild(el);
     }
