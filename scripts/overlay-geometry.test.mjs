@@ -194,18 +194,12 @@ test('a whole-screen lookup fades in, and a closed overlay never shows the previ
     assert.equal(view.body.animations.length, 1, 'clicking a word does not fade again');
 });
 
-test('in a whole-screen lookup an empty click first closes the pop-up, then the overlay, like Lookupper', async () => {
+test('an empty click asks the backend to dismiss (pop-up first when pinned) and Esc closes the overlay', async () => {
     const view = await fixture();
     const word = {text: 'target', x: 10, y: 20, w: 50, h: 18};
-    const empty = {preventDefault() {}, target: null, clientX: 500, clientY: 500};
     view.emit({id: 1, words: [word], spotlight: true});
     view.handlers.mousedown({preventDefault() {}, target: view.root.children[0], clientX: 20, clientY: 25});
-    view.handlers.mousedown(empty);
-    view.handlers.mousedown(empty);
-    assert.deepEqual(view.requests.map((r) => r.command), ['overlay_pick', 'overlay_hide_popup', 'overlay_close']);
-
-    // A lookup with a pop-up from the shortcut (not whole-screen) still closes at once.
-    view.emit({id: 2, words: [word], selected: word});
-    view.handlers.mousedown(empty);
-    assert.equal(view.requests.at(-1).command, 'overlay_close');
+    view.handlers.mousedown({preventDefault() {}, target: null, clientX: 500, clientY: 500});
+    view.handlers.keydown({key: 'Escape'});
+    assert.deepEqual(view.requests.map((r) => r.command), ['overlay_pick', 'overlay_dismiss', 'overlay_close']);
 });

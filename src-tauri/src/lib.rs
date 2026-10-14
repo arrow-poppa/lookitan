@@ -980,16 +980,23 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
     show_popup(&app, &payload, Some((x0, y0, x1, y1)));
 }
 
-/// Whole-screen lookups, like Lookupper: a click on empty space while a word's pop-up is open
-/// closes only the pop-up and keeps the words clickable; the next empty click closes the overlay.
+/// A click on empty space in the overlay. In a whole-screen lookup with the pop-up pinned, it
+/// closes only the pop-up and keeps the words clickable, like Lookupper; the next empty click
+/// closes the overlay. Otherwise it closes both at once.
 #[tauri::command]
-fn overlay_hide_popup(app: AppHandle) {
-    let pinned = app.state::<AppState>().pinned.load(Ordering::SeqCst);
-    if let Some(w) = app.get_webview_window("popup").filter(|_| !pinned) {
-        let _ = w.hide();
-    }
-    if let Some(w) = app.get_webview_window("overlay") {
-        let _ = w.set_focus();
+fn overlay_dismiss(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let pinned = state.pinned.load(Ordering::SeqCst);
+    let spotlight = state.recognition.lock().as_ref().is_some_and(|r| r.spotlight);
+    let popup = app.get_webview_window("popup").filter(|w| w.is_visible().unwrap_or(false));
+    match popup {
+        Some(popup) if pinned && spotlight => {
+            let _ = popup.hide();
+            if let Some(w) = app.get_webview_window("overlay") {
+                let _ = w.set_focus();
+            }
+        }
+        _ => overlay_close(app),
     }
 }
 
@@ -1018,7 +1025,7 @@ fn hide_popup(app: AppHandle) {
         let _ = w.hide();
     }
     // Closing the pop-up itself (Esc or its close button) closes the overlay too, even in a
-    // whole-screen lookup; only an empty click on the overlay keeps it (`overlay_hide_popup`).
+    // whole-screen lookup; only an empty click on the overlay can keep it (`overlay_dismiss`).
     close_overlay(&app);
 }
 
@@ -1230,7 +1237,7 @@ pub fn run() {
             lookup_text,
             overlay_pick,
             overlay_close,
-            overlay_hide_popup,
+            overlay_dismiss,
             capture_image,
             scan_now,
             hide_popup,

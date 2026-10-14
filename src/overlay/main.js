@@ -1,6 +1,7 @@
 // Transparent overlay over the monitor: one rectangle per recognized word. Clicking a rectangle
 // looks that word up without a new OCR pass; clicking elsewhere or Esc closes the overlay. In a
-// whole-screen lookup, as in Lookupper, a click elsewhere first closes only the word's pop-up.
+// whole-screen lookup with the pop-up pinned, a click elsewhere first closes only the pop-up
+// (the backend decides, see `overlay_dismiss`).
 
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
@@ -18,8 +19,6 @@ let current = null;
 let selected = null;
 /** Words already looked up in this overlay; they keep a faint highlight, as in Lookupper. */
 let seen = [];
-/** Whole-screen lookups: whether a word's pop-up is open, so an empty click closes it first. */
-let popupOpen = false;
 
 // GTK's integer scale factor can differ from WebKit's fractional CSS pixel scale. Compare
 // the actual viewport sizes rather than assuming a toolkit pixel is one browser pixel.
@@ -118,7 +117,6 @@ void listen('overlay', (event) => {
         if (p.spotlight) { document.body?.animate?.([{opacity: 0}, {opacity: 1}], FADE_IN); }
         selected = null;
         seen = [];
-        popupOpen = Boolean(p.selected);
         if (p.frameUrl) {
             frame.src = `${schemeBase()}${p.frameUrl}`;
             frame.style.display = 'block';
@@ -146,13 +144,9 @@ document.addEventListener('mousedown', (ev) => {
         target.classList.remove('seen');
         target.classList.add('sel');
         const scale = viewportScale();
-        popupOpen = true;
         void invoke('overlay_pick', {x: ev.clientX / scale.x, y: ev.clientY / scale.y});
-    } else if (current?.spotlight && popupOpen) {
-        popupOpen = false;
-        void invoke('overlay_hide_popup');
     } else {
-        void invoke('overlay_close');
+        void invoke('overlay_dismiss');
     }
 });
 
