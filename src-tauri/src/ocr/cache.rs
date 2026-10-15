@@ -116,6 +116,7 @@ mod tests {
             x1: 8.0,
             y1: 4.0,
             chars: vec![],
+            ink_y: None,
         }
     }
 

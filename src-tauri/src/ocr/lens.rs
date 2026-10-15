@@ -200,7 +200,7 @@ fn to_lines(resp: &pb::ServerResponse, w: f32, h: f32) -> Vec<OcrLine> {
             }
             let Some((x0, y0, x1, y1)) = rect(&line.geometry, w, h) else { continue };
             if !text.trim().is_empty() {
-                out.push(OcrLine { text, x0, y0, x1, y1, chars });
+                out.push(OcrLine { text, x0, y0, x1, y1, chars, ink_y: None });
             }
         }
     }

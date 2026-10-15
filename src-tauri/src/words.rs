@@ -20,19 +20,27 @@ pub struct Pick {
     /// Indices of the lines the sentence spans, for the "sentence" screenshot.
     #[serde(skip)]
     pub sentence_lines: Vec<usize>,
-    /// Word box in image coordinates.
+    /// Word box in image coordinates, snapped to the ink of the line (see ocr::ink).
     pub x0: f32,
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
+    /// The rows of the word's detected line box, which the pointer test uses.
+    #[serde(skip)]
+    pub line_y: (f32, f32),
 }
 
 impl Pick {
     /// True when the pointer is on the picked word itself, not merely near its line. A shortcut
     /// pressed away from text opens the whole-screen overlay instead of a pop-up.
     pub fn is_under(&self, px: f32, py: f32) -> bool {
-        let pad = ((self.y1 - self.y0) * 0.25).max(4.0);
-        px >= self.x0 - pad && px <= self.x1 + pad && py >= self.y0 - pad && py <= self.y1 + pad
+        // The test covers the line's detected rows, not only its ink, and reaches about half a
+        // space past the ink on each side, as it did before word edges were snapped.
+        let (y0, y1) = self.line_y;
+        let h = y1 - y0;
+        let pad = (h * 0.25).max(4.0);
+        let side = (h * 0.4).max(4.0);
+        px >= self.x0 - side && px <= self.x1 + side && py >= y0 - pad && py <= y1 + pad
     }
 }
 
@@ -76,7 +84,8 @@ pub fn word_boxes(lines: &[OcrLine]) -> Vec<WordBox> {
             }
             let text: String = chars[start..end].iter().map(|c| c.ch).collect();
             if !text.trim().is_empty() {
-                out.push(WordBox { text, x0: chars[start].x0, y0: line.y0, x1: chars[end - 1].x1, y1: line.y1 });
+                let (y0, y1) = line.text_rows();
+                out.push(WordBox { text, x0: chars[start].x0, y0, x1: chars[end - 1].x1, y1 });
             }
         }
     }
@@ -177,6 +186,7 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32) -> Option<Pick> {
     // is enough to find the sentence.
     let span = if unspaced { ci..ci + 1 } else { start..end };
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, line_idx, span);
+    let (y0, y1) = line.text_rows();
     Some(Pick {
         word,
         candidates,
@@ -185,9 +195,10 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32) -> Option<Pick> {
         context,
         context_at,
         x0: chars[start].x0,
-        y0: line.y0,
+        y0,
         x1: chars[end.saturating_sub(1).max(start)].x1,
-        y1: line.y1,
+        y1,
+        line_y: (line.y0, line.y1),
     })
 }
 
@@ -400,7 +411,18 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x0 + i as f32 * 10.0, x1: x0 + i as f32 * 10.0 + 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars }
+        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None }
+    }
+
+    #[test]
+    fn word_boxes_take_the_rows_of_the_ink_and_the_pointer_test_the_line() {
+        let mut l = line("hello world", 100.0, 100.0);
+        l.ink_y = Some((104.0, 116.0));
+        let boxes = super::word_boxes(std::slice::from_ref(&l));
+        assert_eq!((boxes[1].y0, boxes[1].y1), (104.0, 116.0));
+        let p = pick(std::slice::from_ref(&l), 165.0, 101.0).unwrap();
+        assert_eq!((p.y0, p.y1), (104.0, 116.0));
+        assert!(p.is_under(165.0, 101.0), "the line's padding still counts as on the word");
     }
 
     #[test]

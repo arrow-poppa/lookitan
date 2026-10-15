@@ -93,6 +93,12 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 - **Settings files (Configurações › Aplicativo › Exportar e importar):** `src/lib/settings-file.js` writes every setting, including the `ai` and `anki` options, without any key named `apiKey` or `lensApiKey`.
   - On import, `keepSecrets` puts this computer's keys back wherever the file has none, so a plain copy of `settings.json` also imports.
   - `import_settings` (lib.rs) migrates the settings and drops MDict dictionaries whose file is not on this computer, returning their names. It keeps the dictionaries installed here that the file lacks, then applies the settings like `save_settings`. The main window then reloads.
+- **Word edges (`ocr/ink.rs`), as in Lookupper's "word edges are snapped to the ink of the line":**
+  - CTC gives each character only a step centre. `ink::measure` finds the crop's ink: pixels far from the median background, in the run of rows holding the most ink.
+  - `ink::spans` moves each boundary between two characters to the widest blank gap between their centres, and the line's ends to its first and last ink. Spaces fill the gap between words.
+  - `OcrLine.ink_y` holds the ink rows; word boxes and the pick use them (`text_rows`).
+  - `Pick::is_under` still tests the detected line rows, and reaches 0.4 × line height past the ink on each side, so what counts as "on a word" did not shrink.
+  - With little contrast, under 40 levels, the old halfway estimates stay. Google Lens lines have no ink.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
@@ -120,6 +126,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): word edges and heights snap to the ink of the line (`ocr/ink.rs`).
 - 2026-10-15 (Claude): `claude/overlay-spotlight` was renamed `tests`, and every other branch except `main` was deleted (all were already contained in it). From now on every agent works on `tests`, and only the user merges it into `main`.
 - 2026-10-15 (Claude): the repository was recreated so that no commit shows a personal e-mail. The old one is now the private `arrow-poppa/lookitan-old`, with PRs #1–#3.
   - Every branch was rewritten with the GitHub noreply address, so hashes before this entry differ from the ones quoted below. The file contents are unchanged.

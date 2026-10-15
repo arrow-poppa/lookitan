@@ -17,7 +17,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
-use super::{OcrChar, OcrLine};
+use super::{ink, OcrChar, OcrLine};
 use crate::settings::GpuPreference;
 
 macro_rules! ortx {
@@ -250,12 +250,15 @@ pub fn plan_batches(boxes: &[TextBox]) -> Vec<Vec<TextBox>> {
 /// A text box cut out of the capture and resized to the recognizer's height.
 struct RecCrop {
     b: TextBox,
-    /// Left edge and width of the crop in capture pixels.
+    /// Left edge, top and width of the crop in capture pixels.
     x: u32,
+    y: u32,
     cw: u32,
     /// Width after resizing.
     tw: u32,
     image: RgbaImage,
+    /// The ink of the crop at capture resolution, to snap the word edges to.
+    ink: Option<ink::Ink>,
 }
 
 fn rec_crop(img: &RgbaImage, b: TextBox) -> Option<RecCrop> {
@@ -268,9 +271,11 @@ fn rec_crop(img: &RgbaImage, b: TextBox) -> Option<RecCrop> {
         return None;
     }
     let crop = image::imageops::crop_imm(img, x, y, cw, ch).to_image();
+    let lum: Vec<u8> = crop.pixels().map(|p| ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8).collect();
+    let ink = ink::measure(&lum, cw as usize, ch as usize);
     let tw = rec_width(cw, ch);
     let image = image::imageops::resize(&crop, tw, REC_HEIGHT, FilterType::Triangle);
-    Some(RecCrop { b, x, cw, tw, image })
+    Some(RecCrop { b, x, y, cw, tw, image, ink })
 }
 
 /// Writes one crop into its slot of a recognizer input (3 planes of REC_HEIGHT x `padded_w`,
@@ -852,25 +857,12 @@ impl PaddleOcr {
             .iter()
             .map(|(_, t)| x as f32 + (*t as f32 + 0.5) * step_w)
             .collect();
-        let mut chars = Vec::with_capacity(decoded.len());
-        for (i, (c, _)) in decoded.iter().enumerate() {
-            let left = if i == 0 {
-                b.x0.max(centers[0] - step_w * 2.0)
-            } else {
-                (centers[i - 1] + centers[i]) / 2.0
-            };
-            let right = if i + 1 == decoded.len() {
-                b.x1.min(centers[i] + step_w * 2.0)
-            } else {
-                (centers[i] + centers[i + 1]) / 2.0
-            };
-            chars.push(OcrChar {
-                ch: *c,
-                x0: left,
-                x1: right,
-            });
-        }
+        let blank: Vec<bool> = decoded.iter().map(|(c, _)| c.is_whitespace()).collect();
+        // Word edges snap to the ink of the line, as in Lookupper.
+        let spans = ink::spans(&centers, &blank, crop.ink.as_ref(), x as f32, b.x0, b.x1, step_w);
+        let chars = decoded.iter().zip(spans).map(|((c, _), (x0, x1))| OcrChar { ch: *c, x0, x1 }).collect();
         let text: String = decoded.iter().map(|(c, _)| *c).collect();
+        let ink_y = crop.ink.as_ref().map(|ink| (crop.y as f32 + ink.y0 as f32, crop.y as f32 + ink.y1 as f32));
         Some(OcrLine {
             text,
             x0: b.x0,
@@ -878,6 +870,7 @@ impl PaddleOcr {
             x1: b.x1,
             y1: b.y1,
             chars,
+            ink_y,
         })
     }
 }

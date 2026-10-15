@@ -3,6 +3,7 @@
 
 pub mod lens;
 pub mod cache;
+pub mod ink;
 mod lens_proto;
 pub mod paddle;
 
@@ -23,9 +24,17 @@ pub struct OcrLine {
     pub x1: f32,
     pub y1: f32,
     pub chars: Vec<OcrChar>,
+    /// The rows of the line's ink (`ink::measure`), tighter than the detected box; `None` when
+    /// the engine gives no ink or the crop had none.
+    pub ink_y: Option<(f32, f32)>,
 }
 
 impl OcrLine {
+    /// The top and bottom of the line's text: its ink, or its box.
+    pub fn text_rows(&self) -> (f32, f32) {
+        self.ink_y.unwrap_or((self.y0, self.y1))
+    }
+
     pub fn contains(&self, x: f32, y: f32, slack: f32) -> bool {
         x >= self.x0 - slack && x <= self.x1 + slack && y >= self.y0 - slack && y <= self.y1 + slack
     }
