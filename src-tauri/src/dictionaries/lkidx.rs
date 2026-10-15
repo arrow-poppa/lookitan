@@ -359,7 +359,7 @@ mod tests {
         let stamp = Stamp::of(&dir, &files).unwrap();
         let mut b = Builder::new();
         b.add("Cat", Location { file: 0, kind: 0, offset: 0, length: 20 }, &[]).unwrap();
-        b.add("run", Location { file: 0, kind: 1, offset: 20, length: 17 }, &["running", "ran"]).unwrap();
+        b.add("run", Location { file: 0, kind: 1, offset: 20, length: 18 }, &["running", "ran"]).unwrap();
         b.add("run", Location { file: 0, kind: 1, offset: 20, length: 3 }, &[]).unwrap();
         let path = dir.join("a.txt.lkidx");
         b.write(&path, "test", "Test", "A test", &stamp).unwrap();
