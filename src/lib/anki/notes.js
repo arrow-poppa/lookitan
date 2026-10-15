@@ -16,8 +16,8 @@ export function defaultAnkiOptions() {
         // What {sentence} and the cloze markers hold: the sentence (as translated) or the whole
         // paragraph (as sent to the AI).
         contextMode: 'sentence',
-        // What {ai-card} holds: the AI word card alone ('card'), or the whole card as the pop-up
-        // shows it, with its Contexto section ('full').
+        // What {ai-card} holds: the AI part alone ('card'), or the AI part followed by the
+        // dictionaries' entries ('dictionaries'). The context is never in it: it goes in {sentence}.
         aiCardMode: 'card',
         cardFormats: [{name: 'Expression', icon: 'big-circle', deck: '', model: '', type: 'term', fields: {}}],
         duplicateScope: 'collection',
@@ -35,7 +35,7 @@ export function normalizeAnkiOptions(stored) {
     const out = {...base, ...stored};
     out.screenshot = {...base.screenshot, ...(stored.screenshot || {})};
     if (out.contextMode !== 'paragraph') { out.contextMode = 'sentence'; }
-    if (out.aiCardMode !== 'full') { out.aiCardMode = 'card'; }
+    if (out.aiCardMode !== 'dictionaries') { out.aiCardMode = 'card'; }
     if (!Array.isArray(out.cardFormats) || out.cardFormats.length === 0) { out.cardFormats = base.cardFormats; }
     out.cardFormats = out.cardFormats.map((f) => ({...base.cardFormats[0], ...f, fields: {...(f.fields || {})}}));
     return out;
@@ -189,12 +189,12 @@ function definitions(clean, ai, order) {
 
 /**
  * The AI word card: headword, IPA, CEFR, part of speech and labels, translation, definition and
- * the explanation if it was generated. With `context` (aiCardMode 'full') it ends with the
- * card's Contexto section, the word marked in it, as the pop-up shows it; otherwise the context
- * is left out and goes in {sentence}.
+ * the explanation if it was generated. With `dictionaries` (aiCardMode 'dictionaries') the
+ * dictionaries' entries follow it. The context is left out: it goes in {sentence}.
  */
-function aiCardHtml(headword, ai, explanation, context = null) {
-    if (!ai.definition && !ai.translation && !explanation) { return ''; }
+function aiCardHtml(headword, ai, explanation, dictionaries = []) {
+    const glossary = glossaryHtml(dictionaries);
+    if (!ai.definition && !ai.translation && !explanation) { return glossary; }
     const head = [`<b>${escapeHtml(headword)}</b>`];
     if (ai.ipa) { head.push(`/${escapeHtml(ai.ipa)}/`); }
     const tags = [ai.cefr, ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
@@ -203,23 +203,21 @@ function aiCardHtml(headword, ai, explanation, context = null) {
     if (ai.translation) { parts.push(`<div>${escapeHtml(ai.translation)}</div>`); }
     if (ai.definition) { parts.push(`<div>${escapeHtml(ai.definition)}</div>`); }
     if (explanation) { parts.push(`<div>${renderMarkdown(explanation)}</div>`); }
-    if (context) {
-        const marked = `${escapeHtml(context.prefix)}<b>${escapeHtml(context.body)}</b>${escapeHtml(context.suffix)}`;
-        parts.push(`<div><i>Contexto:</i> ${marked}</div>`);
-    }
+    if (glossary) { parts.push(`<hr>${glossary}`); }
     return `<div style="text-align: left;">${parts.join('')}</div>`;
 }
 
-function aiCardPlain(headword, ai, explanation, context = null) {
-    if (!ai.definition && !ai.translation && !explanation) { return ''; }
+function aiCardPlain(headword, ai, explanation, dictionaries = []) {
+    const glossary = glossaryPlain(dictionaries);
+    if (!ai.definition && !ai.translation && !explanation) { return glossary; }
     const tags = [ai.cefr, ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
     const lines = [`${headword}${ai.ipa ? ` /${ai.ipa}/` : ''}`];
     if (tags.length) { lines.push(`(${tags.join(', ')})`); }
     if (ai.translation) { lines.push(ai.translation); }
     if (ai.definition) { lines.push(ai.definition); }
     if (explanation) { lines.push(markdownToText(explanation)); }
-    if (context) { lines.push(`Contexto: ${context.prefix}${context.body}${context.suffix}`); }
-    return escapeHtml(lines.join('\n')).replace(/\n/g, '<br>');
+    const text = escapeHtml(lines.join('\n')).replace(/\n/g, '<br>');
+    return glossary ? `${text}<br>${glossary}` : text;
 }
 
 function cloze(sentence, word) {
@@ -261,9 +259,8 @@ export async function buildNote(ctx, anki, conn) {
     const first = defs.slice(0, 1);
     const sentence = (anki.contextMode === 'paragraph' && ctx.context) || ctx.sentence || '';
     const c = cloze(sentence, ctx.word);
-    // The card's own Contexto section shows the paragraph (or, without one, the sentence).
-    const cardText = anki.aiCardMode === 'full' ? (ctx.context || ctx.sentence || '') : '';
-    const cardContext = cardText ? cloze(cardText, ctx.word) : null;
+    // The dictionaries' entries, for an AI card that carries them too.
+    const cardDictionaries = anki.aiCardMode === 'dictionaries' ? defs.filter((d) => d.dictionary !== AI_GLOSSARY_NAME) : [];
     const values = {
         'expression': escapeHtml(ctx.headword || ctx.word),
         'reading': escapeHtml(ai.ipa || ''),
@@ -282,8 +279,8 @@ export async function buildNote(ctx, anki, conn) {
         'cloze-body': escapeHtml(c.body),
         'cloze-suffix': escapeHtml(c.suffix),
         'dictionary': escapeHtml(first[0] ? first[0].dictionary : ''),
-        'ai-card': aiCardHtml(ctx.headword || ctx.word, ai, ctx.aiExplanation || '', cardContext),
-        'ai-card-plain': aiCardPlain(ctx.headword || ctx.word, ai, ctx.aiExplanation || '', cardContext),
+        'ai-card': aiCardHtml(ctx.headword || ctx.word, ai, ctx.aiExplanation || '', cardDictionaries),
+        'ai-card-plain': aiCardPlain(ctx.headword || ctx.word, ai, ctx.aiExplanation || '', cardDictionaries),
         'ai-definition': escapeHtml(ai.definition || ''),
         'ai-explanation': renderMarkdown(ctx.aiExplanation || ''),
         'ai-explanation-plain': escapeHtml(markdownToText(ctx.aiExplanation || '')).replace(/\n/g, '<br>'),

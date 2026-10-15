@@ -157,9 +157,9 @@ function render(root) {
         ], anki.contextMode === 'paragraph' ? 'paragraph' : 'sentence', (v) => { anki.contextMode = v; save(); })}));
     root.append(cardRow({icon: 'sparkle', title: 'Card de IA no card ({ai-card})', desc: 'O que os marcadores {ai-card} e {ai-card-plain} levam.', wide: true,
         control: select([
-            {value: 'card', label: 'Só o card de IA, sem o contexto'},
-            {value: 'full', label: 'O card de IA completo, com o contexto'},
-        ], anki.aiCardMode === 'full' ? 'full' : 'card', (v) => { anki.aiCardMode = v; save(); })}));
+            {value: 'card', label: 'Só a parte da IA'},
+            {value: 'dictionaries', label: 'A parte da IA e os dicionários'},
+        ], anki.aiCardMode === 'dictionaries' ? 'dictionaries' : 'card', (v) => { anki.aiCardMode = v; save(); })}));
     root.append(cardRow({icon: 'focus', title: 'Captura de tela no card ({screenshot})', wide: true,
         control: select([
             {value: 'sentence', label: 'Só a frase'},

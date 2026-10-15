@@ -161,7 +161,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
-- 2026-10-15 (Claude, `tests`): Yomitan articles laid out like Lookupper's (headword line with muted reading and grey tags, numbered senses, glossary line breaks run together, rules not shown); entry frames have no box, a hairline between entries. Anki: `anki.aiCardMode` ('card' default, 'full' adds the card's Contexto with the word bold) for {ai-card}/{ai-card-plain}.
+- 2026-10-15 (Claude, `tests`): Yomitan articles laid out like Lookupper's (headword line with muted reading and grey tags, numbered senses, glossary line breaks run together, rules not shown); entry frames have no box, a hairline between entries. Anki: `anki.aiCardMode` for {ai-card}/{ai-card-plain}: 'card' (default) is the AI part alone, 'dictionaries' adds the dictionaries' entries after it; the context is never in it.
 - 2026-10-15 (Claude, `tests`): imports also take RAR (RAR4/RAR5, volume sets), 7z, TAR (+gz/bz2/xz) and single gz/bz2/xz files, like Lookupper (`dictionaries/archive.rs`; pure-Rust rars, sevenz-rust2, tar, lzma-rust2).
 - 2026-10-15 (Claude, `tests`): Lookupper's own format variants added, detected as Lookupper detects them: jmdict-simplified/kanjidic2 JSON (`jsondict.rs`), WN-LMF (`wnlmf.rs`), Gutenberg Webster text (`webster_text.rs`), GCIDE CIDE.* (`cide.rs`, entity table from GCIDE's webfont.txt).
 - 2026-10-15 (Claude, `tests`): every format read in place with `.lkidx` (DSL, StarDict, CC-CEDICT, Kaikki, WordNet, XML, Slob); SQLite store and rusqlite removed.
