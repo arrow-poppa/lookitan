@@ -106,6 +106,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Names are in English and the list is sorted by them. An unknown tag falls back to `DEFAULT_LANGUAGE` (en-US).
   - Regional variants (en-US/en-GB, es-ES/es-MX, pt-BR/pt-PT, fr-FR/fr-CA, the three Chinese) read the same.
   - The tag also sets the pop-up's speech voice (`speak` in popup/main.js) and is saved on word cards. That is why the variants were kept, while Lookupper shows one Spanish.
+- **Definition and translation languages (`LANGUAGES` in src/main/ui.js):** Lookupper's 58 entries: the 53 languages it translates into, plus en-US/en-GB, es-ES/es-419, pt-BR/pt-PT, Serbian Cyrillic/Latin and Chinese Simplified/Traditional. They are named in English. The AI prompt names them with `Intl.DisplayNames` in English (`languageName` in word-card.js). `settings::migrate` turns the older tags `es-MX`, `zh-CN` and `zh-TW` into `es-419`, `zh-Hans-CN` and `zh-Hant-TW`.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
@@ -133,6 +134,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): definition and translation languages match Lookupper's 53 (58 with variants), named in English.
 - 2026-10-15 (Claude, `tests`): OCR languages match Lookupper's 38. Serbian (Latin and Cyrillic), Slovenian, Bosnian (Latin), Latin and Indonesian were added; names are in English.
 - 2026-10-15 (Claude, `tests`): the shortcut counts as on a word only inside its drawn box (`Pick::is_under`), so a pointer in the space between words or lines outlines the block instead of looking up the nearest word.
 - 2026-10-15 (Claude, `tests`): overlay words take the pointer over a wider hit area than their drawn box, because the ink-tight boxes had become hard to hover and click.

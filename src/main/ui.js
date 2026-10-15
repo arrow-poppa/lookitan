@@ -104,16 +104,78 @@ export function heading(text) {
 }
 
 /** Languages offered for definitions, translations and explanations. */
-export const LANGUAGE_TAGS = [
-    'pt-BR', 'pt-PT', 'en-US', 'en-GB', 'es-ES', 'es-MX', 'fr-FR', 'de-DE', 'it-IT', 'nl-NL', 'pl-PL', 'ru-RU',
-    'uk-UA', 'tr-TR', 'ja-JP', 'zh-CN', 'zh-TW', 'ko-KR', 'ar-SA', 'el-GR', 'sv-SE', 'da-DK', 'nb-NO', 'fi-FI',
-    'cs-CZ', 'ro-RO', 'hu-HU', 'id-ID', 'vi-VN', 'th-TH', 'hi-IN', 'he-IL',
+/**
+ * Languages for definitions and translations: the 53 Lookupper translates into, with its regional
+ * variants (English, Spanish, Portuguese, Serbian and Chinese), named in English.
+ */
+export const LANGUAGES = [
+    {tag: 'ar-SA', name: 'Arabic'},
+    {tag: 'hy-AM', name: 'Armenian'},
+    {tag: 'az-Latn-AZ', name: 'Azerbaijani'},
+    {tag: 'bn', name: 'Bangla'},
+    {tag: 'be-BY', name: 'Belarusian'},
+    {tag: 'bs-Latn-BA', name: 'Bosnian'},
+    {tag: 'bg-BG', name: 'Bulgarian'},
+    {tag: 'ca', name: 'Catalan'},
+    {tag: 'zh-Hans-CN', name: 'Chinese (Simplified)'},
+    {tag: 'zh-Hant-TW', name: 'Chinese (Traditional)'},
+    {tag: 'hr', name: 'Croatian'},
+    {tag: 'cs-CZ', name: 'Czech'},
+    {tag: 'da-DK', name: 'Danish'},
+    {tag: 'nl-NL', name: 'Dutch'},
+    {tag: 'en-GB', name: 'English (United Kingdom)'},
+    {tag: 'en-US', name: 'English (United States)'},
+    {tag: 'et-EE', name: 'Estonian'},
+    {tag: 'fil-PH', name: 'Filipino'},
+    {tag: 'fi-FI', name: 'Finnish'},
+    {tag: 'fr-FR', name: 'French'},
+    {tag: 'ka-GE', name: 'Georgian'},
+    {tag: 'de-DE', name: 'German'},
+    {tag: 'el-GR', name: 'Greek'},
+    {tag: 'he-IL', name: 'Hebrew'},
+    {tag: 'hi-IN', name: 'Hindi'},
+    {tag: 'hu-HU', name: 'Hungarian'},
+    {tag: 'id-ID', name: 'Indonesian'},
+    {tag: 'it-IT', name: 'Italian'},
+    {tag: 'ja-JP', name: 'Japanese'},
+    {tag: 'kk-KZ', name: 'Kazakh'},
+    {tag: 'ko-KR', name: 'Korean'},
+    {tag: 'lv-LV', name: 'Latvian'},
+    {tag: 'lt-LT', name: 'Lithuanian'},
+    {tag: 'ms', name: 'Malay'},
+    {tag: 'mr-IN', name: 'Marathi'},
+    {tag: 'nb-NO', name: 'Norwegian Bokmål'},
+    {tag: 'fa', name: 'Persian'},
+    {tag: 'pl-PL', name: 'Polish'},
+    {tag: 'pt-BR', name: 'Portuguese (Brazil)'},
+    {tag: 'pt-PT', name: 'Portuguese (Portugal)'},
+    {tag: 'ro-RO', name: 'Romanian'},
+    {tag: 'ru-RU', name: 'Russian'},
+    {tag: 'sr-Cyrl-RS', name: 'Serbian (Cyrillic)'},
+    {tag: 'sr-Latn-RS', name: 'Serbian (Latin)'},
+    {tag: 'sk-SK', name: 'Slovak'},
+    {tag: 'sl-SI', name: 'Slovenian'},
+    {tag: 'es-419', name: 'Spanish (Latin America)'},
+    {tag: 'es-ES', name: 'Spanish (Spain)'},
+    {tag: 'sw-KE', name: 'Swahili'},
+    {tag: 'sv-SE', name: 'Swedish'},
+    {tag: 'ta', name: 'Tamil'},
+    {tag: 'te-IN', name: 'Telugu'},
+    {tag: 'th-TH', name: 'Thai'},
+    {tag: 'tr-TR', name: 'Turkish'},
+    {tag: 'uk-UA', name: 'Ukrainian'},
+    {tag: 'ur', name: 'Urdu'},
+    {tag: 'uz-Latn-UZ', name: 'Uzbek'},
+    {tag: 'vi-VN', name: 'Vietnamese'},
 ];
 
+export const LANGUAGE_TAGS = LANGUAGES.map((l) => l.tag);
+
 export function languageLabel(tag) {
+    const known = LANGUAGES.find((l) => l.tag === tag);
+    if (known) { return known.name; }
     try {
-        const name = new Intl.DisplayNames(['pt-BR'], {type: 'language'}).of(tag) || tag;
-        return name.charAt(0).toUpperCase() + name.slice(1);
+        return new Intl.DisplayNames(['en'], {type: 'language'}).of(tag) || tag;
     } catch (_e) {
         return tag;
     }

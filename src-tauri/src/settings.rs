@@ -215,6 +215,13 @@ pub fn builtin_dictionaries() -> Vec<DictionaryConfig> {
 
 /// Settings saved by older versions have no built-in AI dictionaries; add them at the top.
 pub fn migrate(mut s: Settings) -> Settings {
+    // The definition and translation languages follow Lookupper's list: Latin American Spanish
+    // and Chinese by script replaced the Mexican, mainland and Taiwanese tags.
+    for tag in [&mut s.definition_language, &mut s.translation_language] {
+        if let Some(new) = renamed_language(tag.as_str()) {
+            *tag = new.to_string();
+        }
+    }
     // The scope is no longer a setting: lookups read around the pointer, and a shortcut pressed
     // away from text reads the whole screen.
     s.ocr_scope = OcrScope::Region;
@@ -229,6 +236,16 @@ pub fn migrate(mut s: Settings) -> Settings {
         }
     }
     s
+}
+
+/// The tag that replaced an older definition or translation language tag.
+fn renamed_language(tag: &str) -> Option<&'static str> {
+    match tag {
+        "es-MX" => Some("es-419"),
+        "zh-CN" => Some("zh-Hans-CN"),
+        "zh-TW" => Some("zh-Hant-TW"),
+        _ => None,
+    }
 }
 
 pub fn settings_path(config_dir: &Path) -> PathBuf {
@@ -259,6 +276,15 @@ pub fn save(config_dir: &Path, settings: &Settings) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renamed_definition_and_translation_languages_are_migrated() {
+        let s = migrate(Settings { definition_language: "zh-TW".into(), translation_language: "es-MX".into(), ..Settings::default() });
+        assert_eq!(s.definition_language, "zh-Hant-TW");
+        assert_eq!(s.translation_language, "es-419");
+        let s = migrate(Settings::default());
+        assert_eq!((s.definition_language.as_str(), s.translation_language.as_str()), ("en-US", "pt-BR"));
+    }
 
     #[test]
     fn profiles_choose_freeze_and_default_to_no_freeze() {
