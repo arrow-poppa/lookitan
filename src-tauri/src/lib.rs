@@ -78,7 +78,7 @@ pub struct AppState {
     pub settings: RwLock<Settings>,
     pub dicts: RwLock<DictList>,
     dict_errors: RwLock<HashMap<String, String>>,
-    paddle: Mutex<Option<(String, bool, Arc<PaddleOcr>)>>,
+    paddle: Mutex<Option<(String, bool, Option<settings::GpuPreference>, Arc<PaddleOcr>)>>,
     engine_error: RwLock<Option<String>>,
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
     lens: Mutex<Option<Arc<LensOcr>>>,
@@ -220,24 +220,24 @@ fn ensure_ort(state: &AppState) -> Result<()> {
 
 fn ensure_paddle(state: &AppState) -> Result<Arc<PaddleOcr>> {
     ensure_ort(state)?;
-    let (rec, gpu) = {
+    let (rec, gpu, choice) = {
         let s = state.settings.read();
-        (ocr::language(&s.ocr_language).rec.to_string(), s.use_gpu && cfg!(any(windows, target_os = "linux")))
+        (ocr::language(&s.ocr_language).rec.to_string(), s.use_gpu && cfg!(any(windows, target_os = "linux")), s.gpu_choice())
     };
     let mut slot = state.paddle.lock();
-    if let Some((r, g, engine)) = slot.as_ref() {
-        if *r == rec && *g == gpu {
+    if let Some((r, g, c, engine)) = slot.as_ref() {
+        if *r == rec && *g == gpu && *c == choice {
             return Ok(engine.clone());
         }
     }
     let models = state.resource_dir.join("models");
     // Drop the previous cached models before allocating their replacements.
     *slot = None;
-    match PaddleOcr::new(&models, &rec, gpu) {
+    match PaddleOcr::new(&models, &rec, gpu, choice) {
         Ok(engine) => {
             let engine = Arc::new(engine);
             engine.warm_up();
-            *slot = Some((rec, gpu, engine.clone()));
+            *slot = Some((rec, gpu, choice, engine.clone()));
             *state.engine_error.write() = None;
             Ok(engine)
         }
@@ -983,7 +983,8 @@ fn save_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: Se
     let mut next = settings;
     next.dictionaries = previous.dictionaries.clone();
     settings::save(&state.config_dir, &next).map_err(|e| format!("{e:#}"))?;
-    let engine_changed = previous.ocr_language != next.ocr_language || previous.use_gpu != next.use_gpu;
+    let engine_changed = previous.ocr_language != next.ocr_language || previous.use_gpu != next.use_gpu
+        || previous.gpu_choice() != next.gpu_choice();
     *state.settings.write() = next.clone();
     if engine_changed {
         warm_engine_in_background(&app);
@@ -1004,7 +1005,7 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
     // This synchronous command runs on the UI thread. Model initialization holds these
     // locks for seconds; report a loading snapshot instead of waiting and freezing the WebView.
     let ort = state.ort_ready.try_lock().and_then(|ready| ready.clone());
-    let paddle = state.paddle.try_lock().and_then(|slot| slot.as_ref().map(|(_, _, e)| e.clone()));
+    let paddle = state.paddle.try_lock().and_then(|slot| slot.as_ref().map(|(_, _, _, e)| e.clone()));
     EngineStatus {
         session: platform::session_kind(),
         runtime_loaded: matches!(ort, Some(Ok(()))),

@@ -13,6 +13,17 @@ pub enum OcrEngineKind {
     Lens,
 }
 
+/// Which video card OCR asks for when the user chooses one (`Settings::choose_gpu`).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GpuPreference {
+    /// The dedicated card on a machine with two (NVIDIA or AMD next to an Intel iGPU).
+    #[default]
+    HighPerformance,
+    /// The integrated card, which draws less power.
+    LowPower,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OcrScope {
@@ -120,6 +131,10 @@ pub struct Settings {
     /// BCP 47 tag selecting the recognition model (see `ocr::languages`).
     pub ocr_language: String,
     pub use_gpu: bool,
+    /// Off: the GPU API's own default (adapter 0 for DirectML, Dawn's default on Linux).
+    /// On: OCR asks for the card in `gpu_preference`.
+    pub choose_gpu: bool,
+    pub gpu_preference: GpuPreference,
     /// Key for the Google Lens endpoint; Lookitan ships none.
     pub lens_api_key: String,
     /// Automatic capture, as in Lookupper's pointer mode: the whole monitor is captured and
@@ -151,6 +166,11 @@ impl Settings {
     pub fn engine_for(&self, whole_screen: bool) -> OcrEngineKind {
         if whole_screen { self.screen_ocr_engine.unwrap_or(self.ocr_engine) } else { self.ocr_engine }
     }
+
+    /// The card OCR asks for, or `None` to leave the choice to the GPU API.
+    pub fn gpu_choice(&self) -> Option<GpuPreference> {
+        self.choose_gpu.then_some(self.gpu_preference)
+    }
 }
 
 impl Default for Settings {
@@ -165,6 +185,8 @@ impl Default for Settings {
             screen_ocr_engine: None,
             ocr_language: "en-US".into(),
             use_gpu: true,
+            choose_gpu: false,
+            gpu_preference: GpuPreference::HighPerformance,
             lens_api_key: String::new(),
             capture_auto: true,
             capture_width: 900,
@@ -249,5 +271,13 @@ mod tests {
         assert_eq!(s.profiles[0].freeze, FreezeMode::None, "the old global option is gone");
         assert_eq!(s.profiles[1].freeze, FreezeMode::Frame);
         assert_eq!(s.profiles[2].freeze, FreezeMode::None);
+    }
+
+    #[test]
+    fn gpu_choice_is_off_by_default() {
+        let old: Settings = serde_json::from_str(r#"{"useGpu": true}"#).unwrap();
+        assert_eq!(old.gpu_choice(), None, "settings saved before the option keep the API default");
+        let chosen: Settings = serde_json::from_str(r#"{"chooseGpu": true, "gpuPreference": "lowPower"}"#).unwrap();
+        assert_eq!(chosen.gpu_choice(), Some(GpuPreference::LowPower));
     }
 }

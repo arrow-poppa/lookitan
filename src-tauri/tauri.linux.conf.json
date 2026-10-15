@@ -11,7 +11,8 @@
           "libpipewire-0.3-0t64 | libpipewire-0.3-0",
           "libxcb-randr0",
           "libgbm1",
-          "libegl1"
+          "libegl1",
+          "libvulkan1"
         ],
         "desktopTemplate": "linux/lookitan.desktop"
       },
@@ -20,7 +21,8 @@
           "pipewire-libs",
           "libxcb",
           "mesa-libgbm",
-          "mesa-libEGL"
+          "mesa-libEGL",
+          "vulkan-loader"
         ],
         "desktopTemplate": "linux/lookitan.desktop"
       }
