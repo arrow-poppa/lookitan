@@ -14,15 +14,17 @@ The user is on **Fedora with KDE Plasma on Wayland**. Linux, KDE Wayland and the
 
 ## Branches: who owns what
 
-| Branch | Owner | Rule |
-|---|---|---|
-| `main` | Claude (Claude Code) | Claude commits here. |
-| `codex/restore-stable-lookup` | Codex | Codex commits here. |
+Since 2026-10-15 the repository has only two branches:
 
-- Feature branches named `claude/…` are Claude's experiments; they reach `main` only when the user approves.
-- Do not commit to the other agent's branch.
-- To take the other agent's work, merge its branch into yours. Fast-forward when possible. Do not rebase or force-push a shared branch.
-- On 2026-10-13, `main` was fast-forwarded to the codex tip `9ce4339`, so both branches started from the same commit.
+| Branch | Who writes to it | Rule |
+|---|---|---|
+| `tests` | Every agent: Claude Code, Claude in the cloud, Codex | All work is committed and pushed here. |
+| `main` | Only the user | The user merges `tests` into `main` after testing it. |
+
+- **Never commit, push, merge or open a PR into `main`.** That includes Claude in the cloud, which by default creates its own `claude/…` branch: check out `tests` instead.
+- **Do not create other branches** unless the user asks.
+- **Sharing `tests`:** before working, and again before pushing, run `git fetch` and integrate what the other agents pushed. Merge, or rebase your own unpushed commits on top. Never force-push or reset over someone else's commits.
+- **Commit e-mail:** commit only with `184733469+arrow-poppa@users.noreply.github.com` (or Claude's `noreply@anthropic.com`), never a personal address.
 
 ## Hard constraints
 
@@ -70,7 +72,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - The background whole-screen pass is batched: `plan_batches` groups lines of similar width (at most 16 lines and 12,000 padded columns per run), pads them with zeros like PaddleOCR, and decodes each line only over its own CTC steps. A failed batch retries line by line.
 - **Scan result:** the pop-up opens only when the pointer is on a word (`Pick::is_under`, with a pad of a quarter of the line height). Otherwise the scan re-captures the whole monitor and shows the focused overlay of clickable words with no pop-up, as Lookupper does. Also like Lookupper, that whole-screen overlay appears only after the background pass has read the whole screen (`deferred` in `run_scan`), not progressively; Right after the whole-screen capture, `show_overlay_window` raises the overlay transparent (body class `idle`, only the 0.01-alpha shade), so clicks and the scroll wheel cannot move the screen away from the captured frame while OCR runs; the words fade in with the final `emit_overlay`. A click or Esc meanwhile cancels: `overlay_close` bumps `scan_seq`, which stops the background pass and makes `run_scan` return early. `Recognition::scan` keeps the overlay's move/resize handler from redrawing an older lookup while a new scan is under way. An empty click on the overlay calls `overlay_dismiss`: in a whole-screen lookup with the pop-up pinned ("Fixar"), it hides only the pop-up and keeps the words clickable, and the next empty click closes the overlay (Lookupper's behavior, which the user wants only when pinned). Otherwise it closes the overlay and the pop-up at once. Esc or X in the pop-up always closes both (`hide_popup`). The "Área lida" setting is gone: `migrate()` forces `ocrScope` to Region, and the capture-region size is always editable.
 - **Freeze:** per app, as in Lookupper: each profile in Configurações › Jogos e programas has `freeze` = `none` ("Sem congelar", the default: the screen stays live and only the words are highlighted), `frame` ("Congelar": the captured frame covers the screen; on whole-screen lookups it is blurred with sharp word cut-outs) or `process` ("Pausar o programa"). There is no global freeze option; the short-lived `freezeOnLookup` key is ignored, and `migrate()` turns saved `default` profiles into `none`.
-- **Sentence (branch `claude/overlay-spotlight`):** like Lookupper, the context is the word's paragraph, and `Pick.sentence` is the sentence cut from it.
+- **Sentence:** like Lookupper, the context is the word's paragraph, and `Pick.sentence` is the sentence cut from it.
   - `words::paragraph` grows from the pointer line. It adds lines right above or below in the same column (gap ≤ 1 line height, height ratio ≤ 1.6) and pieces of the same row.
   - `sentence::split` applies Lookupper's rules (see the module header). Text longer than 400 characters without sentence marks falls back to the pointer row ±1.
   - `Pick.sentence_lines` frames the "sentence" screenshot (`focus_lines`).
@@ -111,13 +113,14 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - `npm test` runs the frontend contract tests.
   - `cargo test --manifest-path src-tauri/Cargo.toml --lib` runs on CI only.
   - Add a test when you fix a regression.
-- **CI:** every push to `main` and every PR builds both platforms. To check one run, use `gh run list --limit 1` and `gh run view <id> --log-failed`.
+- **CI:** every push to `tests` or `main` and every PR builds both platforms. To check one run, use `gh run list --limit 1` and `gh run view <id> --log-failed`.
 - **Commit messages:** imperative subject, then a body that explains why.
 
 ## Log
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude): `claude/overlay-spotlight` was renamed `tests`, and every other branch except `main` was deleted (all were already contained in it). From now on every agent works on `tests`, and only the user merges it into `main`.
 - 2026-10-15 (Claude): the repository was recreated so that no commit shows a personal e-mail. The old one is now the private `arrow-poppa/lookitan-old`, with PRs #1–#3.
   - Every branch was rewritten with the GitHub noreply address, so hashes before this entry differ from the ones quoted below. The file contents are unchanged.
   - Main tips: `052b339` → `19468c4`; codex `9ce4339` → `db0c4d1`.
