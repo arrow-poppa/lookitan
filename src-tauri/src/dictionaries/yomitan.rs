@@ -192,7 +192,8 @@ mod tests {
         assert!(term.contains("title=\"noun\""));
         let both = html(&d, "猫");
         assert_eq!(both.len(), 2, "term and kanji share the headword");
-        assert!(both[1].contains("strokes</dt><dd>11"));
+        assert!(both[1].contains("strokes: 11"));
+        assert!(!term.contains("yomitan-rules"), "deinflection rules are not shown");
         assert_eq!(d.headword(0).as_deref(), Some("猫"));
         assert!(dir.0.join(INDEX_FILE).is_file(), "the index sits beside the banks");
     }
@@ -219,6 +220,19 @@ mod tests {
         assert!(html(&d, "はし")[0].contains("は<span style=\"border-top:1px solid currentColor;border-right:1px solid currentColor;\">し</span>"), "odaka drops after the last mora");
         assert!(html(&d, "きょう")[0].contains("12㋕"));
         assert!(html(&d, "the")[0].contains("Frequência</span> 5"));
+    }
+
+    #[test]
+    fn glossary_line_breaks_run_together_and_tags_sit_on_the_headword_line() {
+        // As the MacMillan + IPA-v3 dictionary writes its definitions.
+        let dir = TestDir::new();
+        fs::write(dir.0.join("index.json"), r#"{"title":"MacMillan + IPA-v3","format":3,"revision":"2024.01.08"}"#).unwrap();
+        fs::write(dir.0.join("term_bank_1.json"), r#"[["download","download","mondo","noun",0,["US /ˈdaʊnˌloʊd/\nVERB INTRANSITIVE/TRANSITIVE COMPUTING\n1. to move information to your computer\n· You can download this software for free.\n\n"],0,""]]"#).unwrap();
+        let d = dir.open();
+        let html = &html(&d, "download")[0];
+        assert!(html.contains("<div class=\"yomitan-headword\">download<span class=\"yomitan-tag\" title=\"\">mondo</span></div>"), "{html}");
+        assert!(html.contains("US /ˈdaʊnˌloʊd/ VERB INTRANSITIVE/TRANSITIVE COMPUTING 1. to move information to your computer · You can download this software for free."), "{html}");
+        assert!(!html.contains("<br>") && !html.contains(">noun<"), "{html}");
     }
 
     #[test]

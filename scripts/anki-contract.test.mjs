@@ -158,6 +158,22 @@ test('{sentence} and the cloze hold the sentence by default and the whole paragr
     assert.equal(built.fields.Front, 'I run daily.', 'a lookup without a paragraph keeps the sentence');
 });
 
+test('{ai-card} is the AI card alone by default, and the whole card with its context when chosen', async () => {
+    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); });
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {Back: {value: '{ai-card}'}, Plain: {value: '{ai-card-plain}'}}}];
+    const ctx = {word: 'run', sentence: 'I run daily.', context: 'We train. I run daily.', aiCard: {definition: 'move fast'}};
+    assert.equal(notes.normalizeAnkiOptions({}).aiCardMode, 'card');
+    assert.equal(notes.normalizeAnkiOptions({aiCardMode: 'odd'}).aiCardMode, 'card');
+    let built = await notes.buildNote(ctx, options, null);
+    assert(!built.fields.Back.includes('train') && !built.fields.Plain.includes('train'), 'the context stays out by default');
+    options.aiCardMode = 'full';
+    built = await notes.buildNote(ctx, options, null);
+    assert(built.fields.Back.endsWith('<div><i>Contexto:</i> We train. I <b>run</b> daily.</div></div>'), built.fields.Back);
+    assert(built.fields.Plain.endsWith('<br>Contexto: We train. I run daily.'), built.fields.Plain);
+    built = await notes.buildNote({...ctx, context: undefined}, options, null);
+    assert(built.fields.Back.includes('<i>Contexto:</i> I <b>run</b> daily.'), 'without a paragraph the card shows the sentence');
+});
+
 // Enough of DOMParser for cleanGlossaryHtml and htmlToText on simple, script-free entries.
 class FakeDOMParser {
     parseFromString(html) {

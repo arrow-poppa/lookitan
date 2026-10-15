@@ -15,7 +15,13 @@ body.lkt-entry{padding:6px 10px;font:14px/1.45 system-ui,-apple-system,'Segoe UI
 img{max-width:100%;height:auto;}\
 .reading,.pronunciation{color:#888} .tags{font-size:.85em;opacity:.7}\
 dl{margin:.5em 0}dd{margin-left:1em}table{max-width:100%}pre{white-space:pre-wrap}\
-.dsl-example{font-style:italic}.dsl-translation{color:#629d65}details{margin:.4em 0}.yomitan-tag{display:inline-block;padding:0 .35em;margin-right:.25em;border-radius:3px;font-size:.78em;background:rgba(128,128,128,.22)}.yomitan-reading{color:#888}.yomitan-frequency,.yomitan-pitch,.yomitan-ipa{margin:.15em 0}";
+.dsl-example{font-style:italic}.dsl-translation{color:#629d65}details{margin:.4em 0}.yomitan-headword{margin:0 0 .3em;font-size:1.2em;font-weight:600}\
+.yomitan-reading{margin-left:.4em;font-size:.85em;font-weight:400;color:#5f6368}\
+.yomitan-tag{display:inline-block;margin-left:.4em;padding:.1em .35em;border-radius:.3em;background:rgba(0,0,0,.08);\
+font-size:.75em;font-weight:600;color:#5f6368;vertical-align:text-bottom;word-break:keep-all;cursor:help}\
+.yomitan-meta .yomitan-tag,.yomitan-frequency .yomitan-tag,.yomitan-pitch .yomitan-tag,.yomitan-ipa .yomitan-tag{margin:0 .4em 0 0}\
+.yomitan-senses{margin:0;padding-left:1.4em}.yomitan-senses>li{margin-bottom:.3em}.yomitan-senses>li::marker{color:#5f6368}\
+.yomitan-readings,.yomitan-frequency,.yomitan-pitch,.yomitan-ipa{margin:.2em 0 0}.yomitan-facts{margin-top:.2em;font-size:.85em;color:#5f6368}";
 
 fn normalize_resource_urls(html: &str, id: &str) -> String {
     use std::sync::LazyLock;
