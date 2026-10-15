@@ -127,6 +127,16 @@ impl Dictionary {
         result
     }
 
+    /// Whether the articles bring their own look: MDict and Slob write theirs for a white page.
+    /// Every other format is laid out by Lookitan and shown in the pop-up's theme.
+    pub fn own_look(&self) -> bool {
+        match &self.reader {
+            Reader::Mdict(_) => true,
+            Reader::InPlace(d) => d.format == inplace::SLOB,
+            Reader::Yomitan(_) => false,
+        }
+    }
+
     pub fn stylesheets(&self) -> Vec<String> {
         let mut names = vec!["styles.css".to_string(), "style.css".to_string()];
         if let Reader::Mdict(m) = &self.reader {
