@@ -1312,7 +1312,15 @@ pub fn run() {
             // Configured WebViews can invoke get_settings before setup reaches manage().
             // Create them explicitly once AppState exists so every window's first IPC is safe.
             for config in app.config().app.windows.clone() {
-                WebviewWindowBuilder::from_config(app, &config)?.build()?;
+                let window = WebviewWindowBuilder::from_config(app, &config)?.build()?;
+                // The overlay covers the whole monitor: as a tool window it does not make the
+                // browser under it stop drawing its video (see win::keep_tool_window).
+                #[cfg(windows)]
+                if matches!(config.label.as_str(), "overlay" | "popup") {
+                    if let Ok(hwnd) = window.hwnd() { platform::win::keep_tool_window(hwnd.0 as _); }
+                }
+                #[cfg(not(windows))]
+                let _ = window;
             }
 
             if let Err(e) = apply_hotkey(&handle, &hotkey) {

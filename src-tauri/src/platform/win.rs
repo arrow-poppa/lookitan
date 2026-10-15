@@ -1,12 +1,13 @@
 // Windows-only helpers: the foreground app (for per-app profiles), suspending and resuming a
-// process ("freeze process"), and a low-level mouse hook for mouse-button shortcuts.
+// process ("freeze process"), a low-level mouse hook for mouse-button shortcuts, and keeping the
+// floating windows tool windows.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
@@ -16,10 +17,13 @@ use windows_sys::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
+use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowTextW, GetWindowThreadProcessId, SetWindowsHookExW,
-    MSG, MSLLHOOKSTRUCT, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId,
+    SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, GWL_EXSTYLE, MSG, MSLLHOOKSTRUCT, STYLESTRUCT, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_STYLECHANGING, WM_XBUTTONDOWN, WM_XBUTTONUP, WS_EX_APPWINDOW,
+    WS_EX_TOOLWINDOW,
 };
 
 use crate::settings::{MouseButton, MouseHotkey};
@@ -189,4 +193,36 @@ pub fn set_mouse_hotkey(cfg: MouseHotkey, on_trigger: impl Fn() + Send + Sync + 
         // Low-level hooks run on this thread's message loop.
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {}
     });
+}
+
+/// Id of the subclass that keeps a window a tool window.
+const TOOL_WINDOW_SUBCLASS: usize = 0x4c4b_5401;
+
+fn tool_window_style(style: u32) -> u32 {
+    (style | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW
+}
+
+/// Makes one of Lookitan's floating windows (overlay, pop-up) a tool window, as Lookupper's are.
+/// Chromium (and Firefox) stop drawing a browser window that another window seems to cover, so a
+/// video under the whole-screen overlay turned black; tool windows never count as covering. tao
+/// rewrites the extended style whenever the window changes state (shown, on top, fullscreen), so
+/// a subclass puts the bit back on every change. Call it on the thread that owns the window.
+pub fn keep_tool_window(hwnd: HWND) {
+    unsafe {
+        if SetWindowSubclass(hwnd, Some(tool_window_proc), TOOL_WINDOW_SUBCLASS, 0) == 0 {
+            log::warn!("could not subclass a floating window");
+        }
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, tool_window_style(style) as isize);
+        SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, 0, 0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
+unsafe extern "system" fn tool_window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    if msg == WM_STYLECHANGING && wparam as i32 == GWL_EXSTYLE {
+        let change = &mut *(lparam as *mut STYLESTRUCT);
+        change.styleNew = tool_window_style(change.styleNew);
+    }
+    DefSubclassProc(hwnd, msg, wparam, lparam)
 }

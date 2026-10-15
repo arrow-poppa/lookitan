@@ -84,6 +84,10 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Pointer on no line: the whole-screen overlay, on the same capture.
   - Choosing a fixed region turns it off (`captureAuto: false`).
 - **Hiding the overlay and the pop-up (Linux):** a hidden WebKitGTK window shows its last painted frame again when it reappears, which flashed the previous lookup over the screen at every OCR. `hide_blank` first sends `overlay-closed`/`popup-blank` with a token, waits (≤150 ms, on its own thread) for the page's `webview_blank` after two animation frames, then hides; `run_scan` joins it before the capture. A per-window counter (`Blanking::order`) keeps a late hide from taking down a newer lookup. On KDE the overlay stays fullscreen between lookups on the same monitor instead of leaving and re-entering fullscreen. Windows hides at once, as before.
+- **Floating windows on Windows:** `platform::win::keep_tool_window` makes the overlay and the pop-up tool windows (`WS_EX_TOOLWINDOW`, no `WS_EX_APPWINDOW`), as Lookupper's are.
+  - Chromium's occlusion tracker stops drawing a browser window that other windows seem to cover fully, which made a video under the whole-screen overlay go black. `gfx::IsWindowVisibleAndFullyOpaque` ignores tool windows.
+  - tao rewrites the extended style on state changes. A `SetWindowSubclass` handler for `WM_STYLECHANGING` keeps the bit.
+  - Linux has no such tracker; the user checked that videos stay visible there.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
@@ -111,6 +115,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, branch `claude/overlay-spotlight`): on Windows, the overlay and the pop-up are kept tool windows (`keep_tool_window`, which adds the `Win32_UI_Shell` feature), so the browser no longer goes black under a lookup (Chromium occlusion tracking). No change on Linux.
 - 2026-10-15 (Claude, branch `claude/project-thread-x83872`): optional video card choice for OCR (Configurações › OCR › "Escolher a placa de vídeo", off by default) for machines with two cards; dedicated or integrated, on Windows and Linux. The `.rpm` and `.deb` now require the Vulkan loader, without which WebGPU fell back to the CPU silently.
 
 - 2026-10-15 (Claude, branch `claude/project-thread-o09n7y` from `claude/overlay-spotlight`): the screen flashed at every lookup on Linux. The overlay and the pop-up are now hidden only after they paint an empty frame (`hide_blank`, `webview_blank`), and the KDE overlay no longer leaves fullscreen between lookups on the same monitor. Windows unchanged.
