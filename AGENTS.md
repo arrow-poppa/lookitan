@@ -46,7 +46,8 @@ src/lib/anki/  AnkiConnect client and note building (ported from Yomitan)
 src-tauri/src/
   lib.rs         AppState, run_scan (capture → OCR → pick → overlay and pop-up), Tauri commands, setup
   settings.rs    Settings (camelCase JSON), built-in AI dictionaries, migrate()
-  mdict.rs       MDict .mdx/.mdd reader; dict.rs does lookup and inflection candidates
+  mdict.rs       MDict .mdx/.mdd reader; mdict_index.rs persists keys; dict.rs coordinates readers/resources
+  dictionaries/ independent format readers, SQLite indexes, archive/resource paths and language-aware morphology
   ocr/paddle.rs  PP-OCRv6 det+rec through ONNX Runtime (DirectML on Windows, WebGPU on Linux, CPU fallback)
   ocr/lens.rs    optional Google Lens cloud OCR (protobuf to lensfrontend-pa.googleapis.com/v1/crupload)
   ocr/cache.rs   per-frame cache of boxes and recognized lines
@@ -61,6 +62,18 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ```
 
 ## Key behavior
+
+- **Local dictionaries (0.2):** see `docs/dictionary-engine.md` for formats, evidence and limits.
+  The settings wire tag `kind: mdict` is retained for all local readers to keep existing settings
+  compatible; `DictInfo.format` identifies the actual format. Do not use this tag to infer file format.
+  Readers stream articles into SQLite; MDict stays lazy/mapped with versioned key sidecars. All
+  source/AI sections follow one configured popup order. Anki retains all homographs per source.
+  MDict block caches are bounded by bytes; do not restore a count-only cache. Imports/loads are
+  serialized in AppState, with atomic index publication and safe ZIP extraction.
+  Morphology uses the OCR language: Yomitan JA/EN rules + WordNet EN exceptions, conservative PT,
+  normalization only elsewhere. Original Lookupper language packs/algorithms are not copied.
+  Run reader tests on GitHub Actions (`dictionary-engine` / `scripts/dictionary-harness`), never
+  compile Rust locally. Dependency lockfile resolution without compiling is allowed.
 
 - **OCR:**
   - The detector tries det_small on the GPU first. If GPU inference fails, it releases the GPU session and retries on the CPU with det_tiny. Foreground and overlay OCR share that CPU session.
@@ -216,3 +229,5 @@ Newest first. One line per change that matters to the next agent.
   - It also added AGENTS.md.
 - 2026-10-13 (Claude): `5187d23`: AI response cache like yomitan-byok-ai; CI asset cache.
 - 2026-10-13 (Claude): `cdd01c2`: Lookupper-style UI, clickable overlay, mouse shortcuts, app profiles and Anki.
+
+- 2026-10-15 (Codex, `tests`): independent multi-format dictionary engine and persistent SQLite/MDict indexes, safe ZIP/resources, MDict block/alias/style fixes, bounded language-aware JA/EN/PT candidates, popup source order and complete homograph Anki export. Format/evidence limits in `docs/dictionary-engine.md`; actual reader tests run on Actions through `scripts/dictionary-harness`.

@@ -1,0 +1,807 @@
+{
+  "language": "en",
+  "provenance": {
+    "project": "Yomitan",
+    "upstream": "https://github.com/yomidevs/yomitan/blob/master/ext/js/language/en/english-transforms.js",
+    "localSourceVersion": "26.6.15.0",
+    "sourceSha256": "7d1e97f9fd87dadbf85388db8f64bad4736583ad5b48932c61f0e9d389923977",
+    "copyright": "Copyright (C) 2024-2026 Yomitan Authors",
+    "license": "GPL-3.0-or-later",
+    "skippedContextualRules": 39
+  },
+  "conditionMasks": {
+    "v": 1,
+    "v_phr": 1,
+    "n": 6,
+    "np": 2,
+    "ns": 4,
+    "adj": 8,
+    "adv": 16
+  },
+  "rules": [
+    {
+      "kind": "suffix",
+      "from": "s",
+      "to": "",
+      "input": 2,
+      "output": 4,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "es",
+      "to": "",
+      "input": 2,
+      "output": 4,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "ies",
+      "to": "y",
+      "input": 2,
+      "output": 4,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "ves",
+      "to": "fe",
+      "input": 2,
+      "output": 4,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "ves",
+      "to": "f",
+      "input": 2,
+      "output": 4,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "'s",
+      "to": "",
+      "input": 6,
+      "output": 6,
+      "reason": "possessive"
+    },
+    {
+      "kind": "suffix",
+      "from": "s'",
+      "to": "s",
+      "input": 6,
+      "output": 6,
+      "reason": "possessive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ed",
+      "to": "",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "ed",
+      "to": "e",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "ied",
+      "to": "y",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "cked",
+      "to": "c",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "bbed",
+      "to": "b",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "dded",
+      "to": "d",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "gged",
+      "to": "g",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "kked",
+      "to": "k",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "lled",
+      "to": "l",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "mmed",
+      "to": "m",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "nned",
+      "to": "n",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "pped",
+      "to": "p",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "rred",
+      "to": "r",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "ssed",
+      "to": "s",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "tted",
+      "to": "t",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "zzed",
+      "to": "z",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "laid",
+      "to": "lay",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "paid",
+      "to": "pay",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "said",
+      "to": "say",
+      "input": 1,
+      "output": 1,
+      "reason": "past"
+    },
+    {
+      "kind": "suffix",
+      "from": "ing",
+      "to": "",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "ing",
+      "to": "e",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "ying",
+      "to": "ie",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "cking",
+      "to": "c",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "bbing",
+      "to": "b",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "dding",
+      "to": "d",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "gging",
+      "to": "g",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "kking",
+      "to": "k",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "lling",
+      "to": "l",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "mming",
+      "to": "m",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "nning",
+      "to": "n",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "pping",
+      "to": "p",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "rring",
+      "to": "r",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "ssing",
+      "to": "s",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "tting",
+      "to": "t",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "zzing",
+      "to": "z",
+      "input": 1,
+      "output": 1,
+      "reason": "ing"
+    },
+    {
+      "kind": "suffix",
+      "from": "s",
+      "to": "",
+      "input": 1,
+      "output": 1,
+      "reason": "3rd pers. sing. pres"
+    },
+    {
+      "kind": "suffix",
+      "from": "es",
+      "to": "",
+      "input": 1,
+      "output": 1,
+      "reason": "3rd pers. sing. pres"
+    },
+    {
+      "kind": "suffix",
+      "from": "ies",
+      "to": "y",
+      "input": 1,
+      "output": 1,
+      "reason": "3rd pers. sing. pres"
+    },
+    {
+      "kind": "suffix",
+      "from": "'d",
+      "to": "ed",
+      "input": 1,
+      "output": 1,
+      "reason": "archaic"
+    },
+    {
+      "kind": "suffix",
+      "from": "ly",
+      "to": "",
+      "input": 16,
+      "output": 8,
+      "reason": "adverb"
+    },
+    {
+      "kind": "suffix",
+      "from": "ily",
+      "to": "y",
+      "input": 16,
+      "output": 8,
+      "reason": "adverb"
+    },
+    {
+      "kind": "suffix",
+      "from": "ly",
+      "to": "le",
+      "input": 16,
+      "output": 8,
+      "reason": "adverb"
+    },
+    {
+      "kind": "suffix",
+      "from": "er",
+      "to": "",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "er",
+      "to": "e",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "ier",
+      "to": "y",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "bber",
+      "to": "b",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "dder",
+      "to": "d",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "gger",
+      "to": "g",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "mmer",
+      "to": "m",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "nner",
+      "to": "n",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "tter",
+      "to": "t",
+      "input": 8,
+      "output": 8,
+      "reason": "comparative"
+    },
+    {
+      "kind": "suffix",
+      "from": "est",
+      "to": "",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "est",
+      "to": "e",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "iest",
+      "to": "y",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "bbest",
+      "to": "b",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "ddest",
+      "to": "d",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "ggest",
+      "to": "g",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "mmest",
+      "to": "m",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "nnest",
+      "to": "n",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "ttest",
+      "to": "t",
+      "input": 8,
+      "output": 8,
+      "reason": "superlative"
+    },
+    {
+      "kind": "suffix",
+      "from": "in'",
+      "to": "ing",
+      "input": 1,
+      "output": 1,
+      "reason": "dropped g"
+    },
+    {
+      "kind": "suffix",
+      "from": "y",
+      "to": "",
+      "input": 8,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "y",
+      "to": "e",
+      "input": 8,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "ggy",
+      "to": "g",
+      "input": 0,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "lly",
+      "to": "l",
+      "input": 0,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "mmy",
+      "to": "m",
+      "input": 0,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "nny",
+      "to": "n",
+      "input": 0,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "ppy",
+      "to": "p",
+      "input": 0,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "rry",
+      "to": "r",
+      "input": 0,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "ssy",
+      "to": "s",
+      "input": 0,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "suffix",
+      "from": "tty",
+      "to": "t",
+      "input": 0,
+      "output": 7,
+      "reason": "-y"
+    },
+    {
+      "kind": "prefix",
+      "from": "un",
+      "to": "",
+      "input": 25,
+      "output": 25,
+      "reason": "un-"
+    },
+    {
+      "kind": "prefix",
+      "from": "going to ",
+      "to": "",
+      "input": 1,
+      "output": 1,
+      "reason": "going-to future"
+    },
+    {
+      "kind": "prefix",
+      "from": "will ",
+      "to": "",
+      "input": 1,
+      "output": 1,
+      "reason": "will future"
+    },
+    {
+      "kind": "prefix",
+      "from": "don't ",
+      "to": "",
+      "input": 1,
+      "output": 1,
+      "reason": "imperative negative"
+    },
+    {
+      "kind": "prefix",
+      "from": "do not ",
+      "to": "",
+      "input": 1,
+      "output": 1,
+      "reason": "imperative negative"
+    },
+    {
+      "kind": "suffix",
+      "from": "able",
+      "to": "",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "able",
+      "to": "e",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "iable",
+      "to": "y",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "bbable",
+      "to": "b",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "ddable",
+      "to": "d",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "ggable",
+      "to": "g",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "kkable",
+      "to": "k",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "llable",
+      "to": "l",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "mmable",
+      "to": "m",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "nnable",
+      "to": "n",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "ppable",
+      "to": "p",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "rrable",
+      "to": "r",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "ssable",
+      "to": "s",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "ttable",
+      "to": "t",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    },
+    {
+      "kind": "suffix",
+      "from": "zzable",
+      "to": "z",
+      "input": 1,
+      "output": 8,
+      "reason": "-able"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "project": "Princeton WordNet 3.0",
+  "copyright": "Copyright 2006 by Princeton University. All rights reserved.",
+  "license": "WordNet-3.0",
+  "licenseUrl": "https://wordnet.princeton.edu/license-and-commercial-use",
+  "sourceRepository": "https://github.com/nltk/wordnet",
+  "sourceCommit": "a4856b5a54cb3d5ce1d973f73c2127f0aa6fa4ef",
+  "files": [
+    {
+      "path": "en-wordnet-noun.exc",
+      "url": "https://raw.githubusercontent.com/nltk/wordnet/a4856b5a54cb3d5ce1d973f73c2127f0aa6fa4ef/wn/data/wordnet-3.0/noun.exc",
+      "sha256": "2b5d675c380b39ecf595af9fa9d4e7feb1d58c643b0bff08c40ed5bfe41fab7a",
+      "bytes": 38301
+    },
+    {
+      "path": "en-wordnet-verb.exc",
+      "url": "https://raw.githubusercontent.com/nltk/wordnet/a4856b5a54cb3d5ce1d973f73c2127f0aa6fa4ef/wn/data/wordnet-3.0/verb.exc",
+      "sha256": "dbbcf9a601b2d77e934e413b91d90e88ec7f933a8b77cfc00602a923b891b42c",
+      "bytes": 38033
+    },
+    {
+      "path": "en-wordnet-adj.exc",
+      "url": "https://raw.githubusercontent.com/nltk/wordnet/a4856b5a54cb3d5ce1d973f73c2127f0aa6fa4ef/wn/data/wordnet-3.0/adj.exc",
+      "sha256": "8824cc24bbedd797b9702316b27f07cd4c2b76b629539f0a1276f03926758016",
+      "bytes": 23019
+    },
+    {
+      "path": "en-wordnet-adv.exc",
+      "url": "https://raw.githubusercontent.com/nltk/wordnet/a4856b5a54cb3d5ce1d973f73c2127f0aa6fa4ef/wn/data/wordnet-3.0/adv.exc",
+      "sha256": "e7291461b629abfe63301bbe1998cee09fd575ed7107abd7ea9763adb05bf0a8",
+      "bytes": 85
+    },
+    {
+      "path": "LICENSE-WordNet-3.0.txt",
+      "url": "https://raw.githubusercontent.com/nltk/wordnet/a4856b5a54cb3d5ce1d973f73c2127f0aa6fa4ef/wn/data/wordnet-3.0/LICENSE",
+      "sha256": "7731175a77952e259390b496fab905e57118b8d19ad3a8383c67eee724ff443f",
+      "bytes": 1625
+    }
+  ]
+}

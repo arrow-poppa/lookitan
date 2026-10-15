@@ -1,0 +1,32 @@
+name: dictionary-engine
+
+on:
+  push:
+    branches: [tests, main]
+    paths:
+      - 'src-tauri/src/dict.rs'
+      - 'src-tauri/src/mdict*.rs'
+      - 'src-tauri/src/dictionaries/**'
+      - 'scripts/dictionary-harness/**'
+      - '.github/workflows/dictionaries.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dictionary-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: scripts/dictionary-harness
+      - name: Test the actual dictionary readers and persistent indexes
+        run: cargo test --locked --manifest-path scripts/dictionary-harness/Cargo.toml

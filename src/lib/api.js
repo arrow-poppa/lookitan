@@ -9,6 +9,10 @@ export const api = {
     ocrLanguages: () => invoke('ocr_languages'),
     listDictionaries: () => invoke('list_dictionaries'),
     addDictionary: (path) => invoke('add_dictionary', {path}),
+    onDictionaryProgress: async (handler) => {
+        const {listen} = await import('@tauri-apps/api/event');
+        return listen('dictionary-progress', ({payload}) => handler(payload));
+    },
     removeDictionary: (id) => invoke('remove_dictionary', {id}),
     updateDictionary: (id, changes) => invoke('update_dictionary', {id, enabled: changes.enabled ?? null, moveTo: changes.moveTo ?? null}),
     lookupText: (text, sentence, context) => invoke('lookup_text', {text, sentence: sentence ?? null, context: context ?? null}),

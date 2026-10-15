@@ -6,7 +6,9 @@ the word with OCR and shows dictionary entries and an AI explanation in a pop-up
 - **Fast local OCR:** PaddleOCR PP-OCRv6 on ONNX Runtime. It uses the GPU through DirectML on
   Windows and through WebGPU on Vulkan on Linux (experimental), falls back to the CPU, and only
   reads the line under the pointer.
-- **Offline dictionaries:** MDict (`.mdx` + `.mdd`), with styles, images and audio.
+- **Offline dictionaries:** MDict, Yomitan, StarDict, DSL, Aard2/Slob, CC-CEDICT, JMdict,
+  JMnedict, KANJIDIC2, Kaikki, Webster/GCIDE XML and WordNet, with persistent indexes,
+  styles, images and audio. See [formats and compatibility](docs/dictionary-engine.md).
 - **Your own AI:** OpenAI, Gemini, DeepSeek or any OpenAI-compatible endpoint (OpenRouter,
   Ollama, LM Studio), with your key, your model, and your own prompt and system prompt.
 - **Optional Google Lens OCR:** a cloud engine you can switch to in Settings › OCR.
@@ -33,7 +35,8 @@ Download the installer for your system from
 
 ## Use
 
-1. Open Settings from the tray icon and add a dictionary (`.mdx`) under **Dictionaries**.
+1. Open Settings from the tray icon and add a local dictionary or a ZIP under **Dictionaries**.
+   Select the main file (`.mdx`, `.ifo`, `.dsl`, `index.json`, etc.) and keep its resources beside it.
 2. Optionally, configure your AI provider under **AI**.
 3. Point at a word and press the shortcut. The default is `Alt+D`.
 

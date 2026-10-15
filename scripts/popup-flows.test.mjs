@@ -71,7 +71,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         const module = stub ? new SyntheticModule(Object.keys(stub), function () {
             for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
         }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
-            '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+            '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
         {context, identifier: id});
         modules.set(id, module);
         await module.link((specifier) => get(specifier.startsWith('.') ? resolve(id, '..', specifier) : specifier));
@@ -107,6 +107,39 @@ test('popup forwards the streaming option and renders a safe card before complet
     await pending;
     assert.equal(view.lookup.aiCard.translation, 'correr');
     assert(!body.innerHTML.includes('Gerando'));
+});
+
+test('local dictionaries and AI sections follow the same configured order', async () => {
+    const dictionaries = [
+        {id: 'local-a', kind: 'mdict', name: 'Dictionary A', enabled: true},
+        {id: 'ai-word', kind: 'ai-word', name: 'AI', enabled: true},
+        {id: 'local-b', kind: 'mdict', name: 'Dictionary B', enabled: true},
+        {id: 'ai-context', kind: 'ai-context', name: 'Context', enabled: true},
+    ];
+    const view = await fixture({dictionaries});
+    Object.assign(view.ai, {customPrompt: 'explain', contextPrompt: 'translate', autoGenerateOnLookup: false});
+    await view.popup.render({word: 'run', sentence: 'I run daily.', entries: [
+        {dictId: 'local-a', dictName: 'Dictionary A', entry: 1, headword: 'run'},
+        {dictId: 'local-b', dictName: 'Dictionary B', entry: 2, headword: 'run'},
+    ]});
+    const sections = view.document.getElementById('sections').children;
+    assert.equal(sections.length, 4);
+    assert(sections[0].innerHTML.includes('Dictionary A'));
+    assert(sections[1].innerHTML.includes('IA — palavra no contexto'));
+    assert(sections[2].innerHTML.includes('Dictionary B'));
+    assert(sections[3].innerHTML.includes('Tradutor de contexto'));
+});
+
+test('Anki glossary export retains all homographs once in each dictionary', async () => {
+    const view = await fixture({entryHtml: async (id, entry) => `<p>${id}:${entry}</p>`});
+    view.lookup.payload.entries = [
+        {dictId: 'a', dictName: 'A', entry: 1}, {dictId: 'a', dictName: 'A', entry: 2},
+        {dictId: 'a', dictName: 'A', entry: 1}, {dictId: 'b', dictName: 'B', entry: 3},
+    ];
+    const result = await view.popup.glossaries();
+    assert.equal(result.length, 2);
+    assert.equal(result[0].html, '<p>a:1</p><hr><p>a:2</p>');
+    assert.equal(result[1].html, '<p>b:3</p>');
 });
 
 test('the word card and the explanation read the whole paragraph, the context translation only the sentence', async () => {

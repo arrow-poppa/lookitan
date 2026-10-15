@@ -7,6 +7,8 @@ or adapts the following work.
 | --- | --- | --- |
 | [yomitan-byok-ai](https://github.com/arrow-poppa/yomitan-byok-ai) (Yomitan fork) | `src/lib/ai/ai-provider.js` and the AI option set | GPL-3.0-or-later |
 | [Yomitan](https://github.com/yomidevs/yomitan) | `src/lib/ai/json.js`, `src/lib/ai/object-utilities.js` | GPL-3.0-or-later |
+| Yomitan Authors, © 2024–2026 | Japanese/English declarative morphology rules, independently traversed in Rust; source versions/hashes and generator in `src-tauri/src/dictionaries/data/` | GPL-3.0-or-later |
+| [Princeton WordNet 3.0](https://wordnet.princeton.edu/) | English exception lists; original data, full license and immutable-source hashes in `src-tauri/src/dictionaries/data/` | WordNet 3.0 license (© 2006 Princeton University) |
 | [MaruPop](https://github.com/marunine/marupop) | KWin cursor relay approach; `src-tauri/resources/kwin/lookitan-cursor.js` is adapted from its `marupopcursor` script | LGPL-3.0-only (`src-tauri/resources/kwin/LICENSE-LGPL-3.0.txt`) |
 | [YomiNinja](https://github.com/matt-m-o/YomiNinja) | Request and response handling of the optional Google Lens engine (`src-tauri/src/ocr/lens.rs`) | GPL-3.0 |
 | [Chromium](https://chromium.googlesource.com/chromium/src/+/main/third_party/lens_server_proto/) | Field numbers of the Lens Overlay protocol messages (`src-tauri/src/ocr/lens_proto.rs`) | BSD-3-Clause |

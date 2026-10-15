@@ -7,6 +7,7 @@
 mod block;
 mod cards;
 mod dict;
+mod dictionaries;
 mod mdict;
 mod ocr;
 mod platform;
@@ -78,6 +79,7 @@ pub struct AppState {
     pub settings: RwLock<Settings>,
     pub dicts: RwLock<DictList>,
     dict_errors: RwLock<HashMap<String, String>>,
+    dictionary_gate: Mutex<()>,
     paddle: Mutex<Option<(String, bool, Option<settings::GpuPreference>, Arc<PaddleOcr>)>>,
     engine_error: RwLock<Option<String>>,
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
@@ -183,6 +185,9 @@ pub struct DictInfo {
     pub loaded: bool,
     pub entries: usize,
     pub resource_files: usize,
+    pub format: String,
+    pub description: String,
+    pub warnings: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -265,6 +270,7 @@ fn lens_engine(state: &AppState) -> Result<Arc<LensOcr>> {
 // Dictionaries
 
 fn load_dictionaries(state: &AppState) {
+    let _loading = state.dictionary_gate.lock();
     let configs: Vec<DictionaryConfig> = state.settings.read().dictionaries.clone();
     let mut loaded: DictList = Vec::new();
     let mut errors = HashMap::new();
@@ -273,7 +279,7 @@ fn load_dictionaries(state: &AppState) {
             loaded.push(d.clone());
             continue;
         }
-        match Dictionary::open(&c.id, std::path::Path::new(&c.path)) {
+        match Dictionary::open_cached(&c.id, std::path::Path::new(&c.path), &state.config_dir.join("dictionaries"), &|_| {}) {
             Ok(d) => loaded.push(Arc::new(d)),
             Err(e) => {
                 log::warn!("dictionary {}: {e:#}", c.path);
@@ -301,8 +307,11 @@ fn dictionary_infos(state: &AppState) -> Vec<DictInfo> {
                 path: c.path.clone(),
                 enabled: c.enabled,
                 loaded: d.is_some() || c.kind != DictionaryKind::Mdict,
-                entries: d.map(|d| d.mdx.len()).unwrap_or(0),
+                entries: d.map(|d| d.len()).unwrap_or(0),
                 resource_files: d.map(|d| d.mdds.len()).unwrap_or(0),
+                format: d.map(|d| d.format.clone()).unwrap_or_default(),
+                description: d.map(|d| d.description.clone()).unwrap_or_default(),
+                warnings: d.map(|d| d.warnings.clone()).unwrap_or_default(),
                 error: errors.get(&c.id).cloned(),
             }
         })
@@ -321,7 +330,16 @@ fn new_dict_id(path: &str) -> String {
 
 fn lookup_words(state: &AppState, candidates: &[String]) -> Vec<EntryRef> {
     let dicts = state.dicts.read().clone();
-    dict::lookup(&dicts, candidates)
+    let language = state.settings.read().ocr_language.clone();
+    let mut forms = Vec::new();
+    for surface in candidates {
+        for form in dictionaries::morphology::candidates(surface, &language) {
+            if !forms.contains(&form) { forms.push(form); }
+            if forms.len() >= 256 { break; }
+        }
+        if forms.len() >= 256 { break; }
+    }
+    dict::lookup(&dicts, &forms)
 }
 
 fn manual_candidates(text: &str) -> Vec<String> {
@@ -1001,7 +1019,8 @@ fn import_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: 
     let mut next = settings::migrate(settings);
     let mut missing = Vec::new();
     next.dictionaries.retain(|d| {
-        let here = d.kind != DictionaryKind::Mdict || std::path::Path::new(&d.path).is_file();
+        let path = std::path::Path::new(&d.path);
+        let here = d.kind != DictionaryKind::Mdict || path.is_file() || path.is_dir();
         if !here { missing.push(if d.name.is_empty() { d.path.clone() } else { d.name.clone() }); }
         here
     });
@@ -1065,11 +1084,21 @@ fn list_dictionaries(state: tauri::State<'_, AppState>) -> Vec<DictInfo> {
 async fn add_dictionary(app: AppHandle, path: String) -> std::result::Result<Vec<DictInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
+        let _loading = state.dictionary_gate.lock();
+        let source = std::path::Path::new(&path).canonicalize().map_err(|e| format!("Abrir dicionário: {e}"))?;
+        if state.settings.read().dictionaries.iter().any(|d| d.kind == DictionaryKind::Mdict
+            && std::path::Path::new(&d.path).canonicalize().ok().as_ref() == Some(&source)) {
+            return Err("Este dicionário já está instalado.".into());
+        }
+        let path = source.to_string_lossy().into_owned();
         let id = new_dict_id(&path);
         if state.settings.read().dictionaries.iter().any(|d| d.id == id) {
             return Err("This dictionary is already installed.".to_string());
         }
-        let dict = Dictionary::open(&id, std::path::Path::new(&path)).map_err(|e| format!("{e:#}"))?;
+        let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "reading", "entries": 0}));
+        let dict = Dictionary::open_cached(&id, std::path::Path::new(&path), &state.config_dir.join("dictionaries"), &|entries| {
+            let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "indexing", "entries": entries}));
+        }).map_err(|e| format!("{e:#}"))?;
         let name = dict.name.clone();
         {
             let mut s = state.settings.write();
@@ -1077,6 +1106,7 @@ async fn add_dictionary(app: AppHandle, path: String) -> std::result::Result<Vec
             settings::save(&state.config_dir, &s).map_err(|e| format!("{e:#}"))?;
         }
         state.dicts.write().push(Arc::new(dict));
+        drop(_loading);
         load_dictionaries(&state);
         Ok(dictionary_infos(&state))
     })
@@ -1334,6 +1364,7 @@ pub fn run() {
                 settings: RwLock::new(settings),
                 dicts: RwLock::new(Vec::new()),
                 dict_errors: RwLock::new(HashMap::new()),
+                dictionary_gate: Mutex::new(()),
                 paddle: Mutex::new(None),
                 engine_error: RwLock::new(None),
                 ort_ready: Mutex::new(None),

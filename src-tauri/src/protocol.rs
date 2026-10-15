@@ -8,50 +8,28 @@ use tauri::{AppHandle, Manager};
 
 use crate::AppState;
 
-const ENTRY_SCRIPT: &str = r#"(function () {
-  var parts = location.pathname.split('/');
-  var dictId = parts[2];
-  function post(m) { try { m.lookitan = true; parent.postMessage(m, '*'); } catch (e) {} }
-  document.addEventListener('click', function (ev) {
-    var a = ev.target && ev.target.closest ? ev.target.closest('a') : null;
-    if (!a) return;
-    var href = a.getAttribute('href') || '';
-    if (href.indexOf('sound://') === 0) {
-      ev.preventDefault();
-      var p = href.slice(8).replace(/\\/g, '/').replace(/^\/+/, '');
-      new Audio('/d/' + dictId + '/' + p.split('/').map(encodeURIComponent).join('/')).play().catch(function () {});
-      return;
-    }
-    if (href.indexOf('entry://') === 0 || href.indexOf('bword://') === 0) {
-      ev.preventDefault();
-      var w = decodeURIComponent(href.slice(8));
-      if (w.charAt(0) === '#') {
-        var el = document.getElementsByName(w.slice(1))[0] || document.getElementById(w.slice(1));
-        if (el) el.scrollIntoView();
-        return;
-      }
-      post({type: 'lookup', text: w});
-      return;
-    }
-    if (/^https?:/i.test(href)) { ev.preventDefault(); post({type: 'open', url: href}); }
-  }, true);
-  // The pop-up cannot read a cross-origin iframe's selection; send it for {popup-selection-text}.
-  document.addEventListener('selectionchange', function () {
-    var s = '';
-    try { s = String(window.getSelection() || ''); } catch (e) {}
-    post({type: 'selection', text: s});
-  });
-  function report() {
-    post({type: 'height', path: location.pathname, height: Math.ceil(document.documentElement.scrollHeight)});
-  }
-  window.addEventListener('load', report);
-  try { new ResizeObserver(report).observe(document.documentElement); } catch (e) {}
-  setTimeout(report, 60);
-})();"#;
+const ENTRY_SCRIPT: &str = include_str!("../../src/lib/dictionaries/article.js");
 
 const ENTRY_STYLE: &str = "html,body{margin:0;padding:0;background:transparent;}\
 body.lkt-entry{padding:6px 10px;font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;overflow:hidden;word-wrap:break-word;}\
-img{max-width:100%;height:auto;}";
+img{max-width:100%;height:auto;}\
+.reading,.pronunciation{color:#888} .tags{font-size:.85em;opacity:.7}\
+dl{margin:.5em 0}dd{margin-left:1em}table{max-width:100%}pre{white-space:pre-wrap}\
+.dsl-example{font-style:italic}.dsl-translation{color:#629d65}details{margin:.4em 0}";
+
+fn normalize_resource_urls(html: &str, id: &str) -> String {
+    use std::sync::LazyLock;
+    static ATTRS: LazyLock<regex::Regex> = LazyLock::new(||
+        regex::Regex::new(r#"(?i)\b(src|href|poster)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap());
+    ATTRS.replace_all(html, |c: &regex::Captures<'_>| {
+        let raw = c.get(2).or_else(|| c.get(3)).map(|s| s.as_str()).unwrap_or("");
+        let value = raw.replace('\\', "/");
+        let value = if value.starts_with('/') && !value.starts_with("//") {
+            format!("/d/{id}/{}", value.trim_start_matches('/'))
+        } else { value };
+        format!("{}=\"{}\"", &c[1], value.replace('"', "&quot;"))
+    }).into_owned()
+}
 
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -101,7 +79,7 @@ fn respond(status: u16, content_type: &str, body: Vec<u8>) -> Response<Vec<u8>> 
     Response::builder()
         .status(status)
         .header("Content-Type", content_type)
-        .header("Cache-Control", "max-age=3600")
+        .header("Cache-Control", "no-cache")
         .body(body)
         .unwrap_or_else(|_| Response::new(Vec::new()))
 }
@@ -145,9 +123,12 @@ pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> 
             let Ok(idx) = rest.parse::<u32>() else { return not_found() };
             match dict.entry_html(idx) {
                 Ok(html) => {
+                    let styles = dict.stylesheets().into_iter().map(|name| format!("<link rel=\"stylesheet\" href=\"{}\">",
+                        crate::dictionaries::escape_html(&name))).collect::<String>();
+                    let html = normalize_resource_urls(&html, dict_id);
                     let doc = format!(
                         "<!doctype html><html><head><meta charset=\"utf-8\"><base href=\"/d/{dict_id}/\">\
-                         <style>{ENTRY_STYLE}</style><script>{ENTRY_SCRIPT}</script></head>\
+                         <style>{ENTRY_STYLE}</style>{styles}<script>{ENTRY_SCRIPT}</script></head>\
                          <body class=\"lkt-entry\">{html}</body></html>"
                     );
                     respond(200, "text/html; charset=utf-8", doc.into_bytes())
@@ -160,5 +141,19 @@ pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> 
             None => not_found(),
         },
         _ => not_found(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn resources_resolve_inside_the_dictionary_and_cross_references_stay_clickable() {
+        let html = r#"<img src="\Images\a.png"><link href='/style.css'><a href="entry://cat">cat</a><a href="sound://a.mp3">play</a>"#;
+        let result = normalize_resource_urls(html, "d1");
+        assert!(result.contains("src=\"/d/d1/Images/a.png\""));
+        assert!(result.contains("href=\"/d/d1/style.css\""));
+        assert!(result.contains("entry://cat"));
+        assert!(result.contains("sound://a.mp3"));
     }
 }

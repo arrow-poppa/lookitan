@@ -31,16 +31,25 @@ export async function refreshDicts() {
 }
 
 async function addDictionary() {
-    const path = await open({multiple: false, directory: false, filters: [{name: 'MDict', extensions: ['mdx']}]});
+    const path = await open({multiple: false, directory: false, filters: [{name: 'Dicionários',
+        extensions: ['mdx', 'ifo', 'dsl', 'dz', 'zip', 'xml', 'gz', 'bz2', 'txt', 'u8', 'json', 'jsonl', 'slob', 'noun', 'verb', 'adj', 'adv']}]});
     if (!path) { return; }
     const btn = document.getElementById('add-dict');
+    const label = btn.innerHTML;
     btn.disabled = true;
+    btn.textContent = 'Abrindo dicionário…';
+    let stop;
     try {
+        stop = await api.onDictionaryProgress?.(({stage, entries}) => {
+            btn.textContent = stage === 'indexing' ? `Indexando… ${Number(entries).toLocaleString('pt-BR')} verbetes` : 'Lendo dicionário…';
+        });
         dicts = await api.addDictionary(path);
         selectedId = dicts[dicts.length - 1]?.id || selectedId;
     } catch (e) {
         alertDetail(String(e));
     } finally {
+        stop?.();
+        btn.innerHTML = label;
         btn.disabled = false;
     }
     renderList();
@@ -85,7 +94,7 @@ function renderDetail() {
     root.replaceChildren();
     const d = dicts.find((x) => x.id === selectedId);
     if (!d) {
-        root.append(el('div', {class: 'empty', html: `${icon('book', 'lg')}<strong>Nenhum dicionário</strong>Adicione um dicionário MDict (.mdx).`}));
+        root.append(el('div', {class: 'empty', html: `${icon('book', 'lg')}<strong>Nenhum dicionário</strong>Adicione um dicionário local ou um arquivo ZIP.`}));
         return;
     }
     if (d.id === 'ai-word') { renderAiWord(root); return; }
@@ -102,10 +111,12 @@ function renderMdict(root, d) {
     });
     root.append(
         el('h2', {}, d.name || d.path),
-        el('p', {class: 'lead'}, d.error ? `Erro ao abrir: ${d.error}` : 'Dicionário MDict instalado. Os arquivos .mdd e .css com o mesmo nome, na mesma pasta, são usados para estilos, imagens e áudio.'),
+        el('p', {class: 'lead'}, d.error ? `Erro ao abrir: ${d.error}` : 'Dicionário local. Estilos, imagens e áudio são lidos da mesma pasta, dos arquivos .mdd ou do ZIP importado.'),
+        d.description ? el('p', {class: 'muted'}, d.description) : null,
+        ...(d.warnings || []).map((text) => el('p', {class: 'error'}, text)),
         el('h3', {}, 'Informações'),
         el('div', {class: 'group'},
-            cardRow({icon: 'book', title: 'Formato', control: el('span', {class: 'muted'}, 'MDict (.mdx)')}),
+            cardRow({icon: 'book', title: 'Formato', control: el('span', {class: 'muted'}, d.format || 'Dicionário local')}),
             cardRow({icon: 'list', title: 'Verbetes', control: el('span', {class: 'muted'}, d.loaded ? d.entries.toLocaleString('pt-BR') : (d.enabled ? 'Carregando…' : 'Desativado'))}),
             cardRow({icon: 'folder', title: 'Arquivos de recursos (.mdd)', control: el('span', {class: 'muted'}, String(d.resourceFiles))}),
             cardRow({icon: 'folder', title: 'Arquivo', desc: d.path, control: remove})),

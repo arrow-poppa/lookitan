@@ -227,31 +227,43 @@ function highlightStars(text) {
 
 // ------------------------------------------------------------------ dictionaries
 
-function renderMdictSections() {
+function renderDictionary(d) {
     const entries = state.payload.entries || [];
-    for (const d of dicts.filter((x) => x.kind === 'mdict' && x.enabled)) {
-        const mine = entries.filter((e) => e.dictId === d.id);
-        if (mine.length === 0) { continue; }
-        const body = section(d.name);
-        body.classList.add('entry');
-        for (const e of mine) {
-            const frame = document.createElement('iframe');
-            frame.src = entryUrl(e.dictId, e.entry);
-            frame.title = `${d.name}: ${e.headword}`;
-            body.append(frame);
-        }
+    const mine = entries.filter((e) => e.dictId === d.id);
+    if (mine.length === 0) { return false; }
+    const body = section(d.name);
+    body.classList.add('entry');
+    for (const e of mine) {
+        const frame = document.createElement('iframe');
+        frame.src = entryUrl(e.dictId, e.entry) + (state.payload.fragment ? `#${encodeURIComponent(state.payload.fragment)}` : '');
+        frame.title = `${d.name}: ${e.headword}`;
+        frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+        body.append(frame);
+    }
+    return true;
+}
+
+function stopDictionaryAudio() {
+    for (const frame of document.querySelectorAll?.('.entry iframe') || []) {
+        frame.contentWindow?.postMessage({lookitan: true, type: 'stop-audio'}, '*');
     }
 }
 
 async function glossaries(lookup = state) {
     if (lookup.glossaries) { return lookup.glossaries; }
     const out = [];
+    const grouped = new Map();
     const seen = new Set();
     for (const e of lookup.payload.entries || []) {
-        // One entry per dictionary, so every {single-glossary-…} marker can be filled.
-        if (seen.has(e.dictId)) { continue; }
-        seen.add(e.dictId);
-        try { out.push({name: e.dictName, html: await api.entryHtml(e.dictId, e.entry)}); } catch (_e) { /* skip */ }
+        const key = `${e.dictId}:${e.entry}`;
+        if (seen.has(key)) { continue; }
+        seen.add(key);
+        try {
+            const html = await api.entryHtml(e.dictId, e.entry);
+            let group = grouped.get(e.dictId);
+            if (!group) { group = {name: e.dictName, html: ''}; grouped.set(e.dictId, group); out.push(group); }
+            group.html += (group.html ? '<hr>' : '') + html;
+        } catch (_e) { /* skip unreadable articles */ }
     }
     lookup.glossaries = out;
     return out;
@@ -465,23 +477,21 @@ async function render(payload) {
                 body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Traduzir</button>`;
                 body.querySelector('button').addEventListener('click', () => void runContext(body));
             }
-        }
+        } else if (d.kind === 'mdict' && renderDictionary(d)) { shown++; }
     }
-    const before = $('sections').children.length;
-    renderMdictSections();
-    shown += $('sections').children.length - before;
     if (shown === 0) {
         $('sections').innerHTML = '<div class="empty"><strong>Nenhum resultado</strong>Adicione dicionários ou configure a IA na janela do Lookitan.</div>';
     }
     void refreshAnkiButton();
 }
 
-async function lookup(text) {
+async function lookup(text, fragment = '') {
     const t = text.trim();
     if (!t) { return; }
     const payload = await api.lookupText(t, state?.payload.sentence || '', state?.payload.context || '');
     payload.recognition = state?.payload.recognition ?? null;
     payload.app = state?.payload.app ?? null;
+    payload.fragment = fragment;
     await render(payload);
 }
 
@@ -505,14 +515,14 @@ document.addEventListener('selectionchange', () => noteSelection('popup', window
 window.addEventListener('message', (ev) => {
     const d = ev.data;
     if (!d || d.lookitan !== true) { return; }
+    const frame = [...document.querySelectorAll('.entry iframe')].find((f) => f.contentWindow === ev.source);
+    if (!frame) { return; }
     if (d.type === 'selection') {
         noteSelection(ev.source, d.text);
     } else if (d.type === 'height') {
-        for (const f of document.querySelectorAll('.entry iframe')) {
-            if (new URL(f.src).pathname === d.path) { f.style.height = `${Math.min(Math.max(d.height + 4, 40), 4000)}px`; }
-        }
+        if (Number.isFinite(d.height)) { frame.style.height = `${Math.min(Math.max(d.height + 4, 40), 10000)}px`; }
     } else if (d.type === 'lookup' && typeof d.text === 'string') {
-        void lookup(d.text);
+        void lookup(d.text, typeof d.fragment === 'string' ? d.fragment : '');
     } else if (d.type === 'open' && typeof d.url === 'string') {
         void api.openExternal(d.url);
     }
@@ -556,6 +566,7 @@ function closePopup() {
 // Before the backend hides the pop-up (Linux): show nothing, then say so once it is on screen,
 // because a hidden WebKitGTK window shows its last painted frame again when it reappears.
 void listen('popup-blank', (event) => {
+    stopDictionaryAudio();
     if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
     const card = $('card');
     card.classList.remove('tip-open', 'tip-close');
@@ -590,7 +601,10 @@ applyZoom();
 void listen('lookup', (event) => { void render(event.payload); });
 // Closed like Yomitan's pop-up (Esc, X, a click elsewhere, a lookup that ends without a pop-up):
 // drop the AI requests nobody will see.
-void listen('popup-hidden', () => { if (ai?.cancelPendingRequests !== false) { responses.cancelPending(); } });
+void listen('popup-hidden', () => {
+    stopDictionaryAudio();
+    if (ai?.cancelPendingRequests !== false) { responses.cancelPending(); }
+});
 void listen('settings-changed', async () => {
     try {
         const all = await loadAllSettings();

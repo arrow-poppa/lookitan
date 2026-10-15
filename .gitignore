@@ -1,6 +1,7 @@
 node_modules/
 dist/
 src-tauri/target/
+scripts/dictionary-harness/target/
 src-tauri/gen/
 src-tauri/icons/
 src-tauri/resources/models/
