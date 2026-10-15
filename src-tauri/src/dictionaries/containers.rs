@@ -506,11 +506,8 @@ pub(super) struct StarDictInfo {
 /// The .ifo header of a StarDict dictionary.
 pub(super) fn stardict_info(path: &Path) -> Result<StarDictInfo> {
     let header = String::from_utf8(read_bounded(path, MAX_HEADER)?)?;
-    let mut lines = header.split(['
-', '
-']);
-    ensure!(lines.next().unwrap_or("").trim_end_matches('
-') == "StarDict's dict ifo file", "Este .ifo não é um dicionário StarDict normal");
+    let mut lines = header.split(['\r', '\n']);
+    ensure!(lines.next().unwrap_or("").trim_end_matches('\r') == "StarDict's dict ifo file", "Este .ifo não é um dicionário StarDict normal");
     let props: HashMap<&str, &str> = lines.filter_map(|l| l.split_once('=')).map(|(k, v)| (k.trim(), v.trim())).collect();
     let get = |key| props.get(key).copied().unwrap_or("");
     ensure!(matches!(get("version"), "2.4.2" | "3.0.0"), "Versão StarDict não suportada");
