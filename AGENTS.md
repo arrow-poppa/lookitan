@@ -118,6 +118,11 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude): the repository was recreated so that no commit shows a personal e-mail. The old one is now the private `arrow-poppa/lookitan-old`, with PRs #1–#3.
+  - Every branch was rewritten with the GitHub noreply address, so hashes before this entry differ from the ones quoted below. The file contents are unchanged.
+  - Main tips: `052b339` → `19468c4`; codex `9ce4339` → `db0c4d1`.
+  - Clones made before this must `git fetch --prune` and reset their branches to the new `origin/*`.
+  - Commit only with `184733469+arrow-poppa@users.noreply.github.com`.
 - 2026-10-15 (Claude, branch `claude/overlay-spotlight`): settings export and import without the API keys (`settings-file.js`, `settings-transfer.js`, `import_settings` and `read_text_file` in lib.rs).
 - 2026-10-15 (Claude, branch `claude/overlay-spotlight`): on Windows, the overlay and the pop-up are kept tool windows (`keep_tool_window`, which adds the `Win32_UI_Shell` feature), so the browser no longer goes black under a lookup (Chromium occlusion tracking). No change on Linux.
 - 2026-10-15 (Claude, branch `claude/project-thread-x83872`): optional video card choice for OCR (Configurações › OCR › "Escolher a placa de vídeo", off by default) for machines with two cards; dedicated or integrated, on Windows and Linux. The `.rpm` and `.deb` now require the Vulkan loader, without which WebGPU fell back to the CPU silently.
