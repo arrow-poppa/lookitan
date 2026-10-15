@@ -57,13 +57,20 @@ excepcionalmente grandes produzem um erro, em vez de uma alocação sem limite n
 
 ## Formas de dicionário
 
-O idioma de OCR seleciona as transformações. Inglês utiliza regras literais do Yomitan e
+O idioma de OCR seleciona as transformações. A ordem das formas tentadas é: a grafia da tela
+(e suas normalizações), depois as formas de dicionário do **Hunspell**, depois as regras abaixo.
+Como o Lookupper, o Hunspell cobre alemão, inglês, espanhol, francês, português e russo, com os
+mesmos arquivos `.aff`/`.dic` que ele distribui: os pacotes `dictionary-*` do wooorm/dictionaries
+(conferidos byte a byte, exceto quebras de linha), baixados da fonte original pelo
+`scripts/fetch-assets.py` e instalados em `hunspell/`. Só o idioma do OCR fica carregado.
+
+Inglês utiliza ainda regras literais do Yomitan e
 exceções lexicais do WordNet 3.0; japonês utiliza regras condicionais do Yomitan e normalização
 de kana. Português possui regras conservadoras de plural e `-mente`. Os outros idiomas
 recebem normalização de grafia, sem aplicar indevidamente sufixos ingleses ou portugueses.
 As regras são limitadas a 256 candidatos, 1.024 estados e 12 passos por consulta.
 
-Isso não reproduz os packs Hunspell/Sudachi/coreano/chinês do Lookupper. A seleção de prefixos
+Isso não reproduz os packs Sudachi/coreano/chinês do Lookupper. A seleção de prefixos
 CJK da camada OCR é mantida; não há promessa de equivalência com sua segmentação lexical.
 Os dados GPL do Yomitan e a licença WordNet estão em `src-tauri/src/dictionaries/data/`.
 

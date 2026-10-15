@@ -53,15 +53,16 @@ jobs:
             libxcb1-dev libxcb-randr0-dev libxrandr-dev libdbus-1-dev libpipewire-0.3-dev \
             libwayland-dev libegl-dev libgbm-dev libclang-dev pkg-config libfuse2t64 file
 
-      - name: Cache OCR models and ONNX Runtime
+      - name: Cache OCR models, ONNX Runtime and Hunspell dictionaries
         uses: actions/cache@v4
         with:
           path: |
             src-tauri/resources/models
             src-tauri/resources/ort
+            src-tauri/resources/hunspell
           key: assets-${{ matrix.platform }}-${{ hashFiles('scripts/fetch-assets.py') }}
 
-      - name: Fetch OCR models and ONNX Runtime
+      - name: Fetch OCR models, ONNX Runtime and Hunspell dictionaries
         run: |
           python -m pip install --quiet pyyaml
           python scripts/fetch-assets.py --platform ${{ matrix.platform }}

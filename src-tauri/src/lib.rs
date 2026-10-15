@@ -333,7 +333,13 @@ fn lookup_words(state: &AppState, candidates: &[String]) -> Vec<EntryRef> {
     let language = state.settings.read().ocr_language.clone();
     let mut forms = Vec::new();
     for surface in candidates {
-        for form in dictionaries::morphology::candidates(surface, &language) {
+        // The spelling on screen first, then Hunspell's dictionary forms, then the rule-based
+        // guesses: a stem Hunspell knows is a real word, a guessed reduction may not be.
+        let clean = surface.trim().trim_matches(|c: char| !c.is_alphanumeric());
+        let stems = dictionaries::hunspell::stems(clean, &language);
+        let spellings = dictionaries::morphology::candidates(surface, "und");
+        let guesses = dictionaries::morphology::candidates(surface, &language);
+        for form in spellings.into_iter().chain(stems).chain(guesses) {
             if !forms.contains(&form) { forms.push(form); }
             if forms.len() >= 256 { break; }
         }
@@ -1041,6 +1047,10 @@ fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: S
     if engine_changed {
         warm_engine_in_background(app);
     }
+    if previous.ocr_language != next.ocr_language {
+        let language = next.ocr_language.clone();
+        std::thread::spawn(move || dictionaries::hunspell::warm(&language));
+    }
     if previous.autostart != next.autostart {
         apply_autostart(app, next.autostart);
     }
@@ -1354,6 +1364,7 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
             let resource_dir = app.path().resource_dir()?;
+            dictionaries::hunspell::set_root(resource_dir.join("hunspell"));
             let first_run = !settings::settings_path(&config_dir).exists();
             let settings = settings::load(&config_dir);
             let hotkey = settings.hotkey.clone();
@@ -1412,6 +1423,8 @@ pub fn run() {
                     let state = handle.state::<AppState>();
                     load_dictionaries(&state);
                     let _ = handle.emit("dictionaries-changed", ());
+                    let language = state.settings.read().ocr_language.clone();
+                    dictionaries::hunspell::warm(&language);
                 });
             }
             warm_engine_in_background(&handle);

@@ -3,7 +3,8 @@
     "targets": ["deb", "rpm", "appimage"],
     "resources": {
       "resources/ort/libonnxruntime.so": "ort/libonnxruntime.so",
-      "resources/models/*": "models/"
+      "resources/models/*": "models/",
+      "resources/hunspell/*": "hunspell/"
     },
     "linux": {
       "deb": {

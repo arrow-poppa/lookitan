@@ -6,5 +6,6 @@ src-tauri/gen/
 src-tauri/icons/
 src-tauri/resources/models/
 src-tauri/resources/ort/
+src-tauri/resources/hunspell/
 *.log
 .DS_Store

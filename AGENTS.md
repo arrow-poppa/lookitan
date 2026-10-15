@@ -70,8 +70,10 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   source/AI sections follow one configured popup order. Anki retains all homographs per source.
   MDict block caches are bounded by bytes; do not restore a count-only cache. Imports/loads are
   serialized in AppState, with atomic index publication and safe ZIP extraction.
-  Morphology uses the OCR language: Yomitan JA/EN rules + WordNet EN exceptions, conservative PT,
-  normalization only elsewhere. Original Lookupper language packs/algorithms are not copied.
+  Morphology uses the OCR language. Order of forms: on-screen spelling, then Hunspell stems
+  (de/en/es/fr/pt/ru, `dictionaries/hunspell.rs`; files in `resources/hunspell/` from
+  `fetch-assets.py`, one language loaded at a time), then Yomitan JA/EN rules + WordNet EN
+  exceptions and conservative PT rules. Original Lookupper language packs/algorithms are not copied.
   Run reader tests on GitHub Actions (`dictionary-engine` / `scripts/dictionary-harness`), never
   compile Rust locally. Dependency lockfile resolution without compiling is allowed.
 
@@ -147,6 +149,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): Hunspell dictionary forms (`dictionaries/hunspell.rs`, hunspell-rs bundled) for de/en/es/fr/pt/ru with Lookupper's same wooorm/dictionaries releases, fetched by `fetch-assets.py`; tried after the on-screen spelling and before the rule guesses.
+- 2026-10-15 (Codex, `tests`): independent multi-format dictionary engine and persistent SQLite/MDict indexes, safe ZIP/resources, MDict block/alias/style fixes, bounded language-aware JA/EN/PT candidates, popup source order and complete homograph Anki export. Format/evidence limits in `docs/dictionary-engine.md`; actual reader tests run on Actions through `scripts/dictionary-harness`.
 - 2026-10-15 (Claude, `tests`): definition and translation languages match Lookupper's 53 (58 with variants), named in English.
 - 2026-10-15 (Claude, `tests`): OCR languages match Lookupper's 38. Serbian (Latin and Cyrillic), Slovenian, Bosnian (Latin), Latin and Indonesian were added; names are in English.
 - 2026-10-15 (Claude, `tests`): the shortcut counts as on a word only inside its drawn box (`Pick::is_under`), so a pointer in the space between words or lines outlines the block instead of looking up the nearest word.
@@ -229,5 +233,3 @@ Newest first. One line per change that matters to the next agent.
   - It also added AGENTS.md.
 - 2026-10-13 (Claude): `5187d23`: AI response cache like yomitan-byok-ai; CI asset cache.
 - 2026-10-13 (Claude): `cdd01c2`: Lookupper-style UI, clickable overlay, mouse shortcuts, app profiles and Anki.
-
-- 2026-10-15 (Codex, `tests`): independent multi-format dictionary engine and persistent SQLite/MDict indexes, safe ZIP/resources, MDict block/alias/style fixes, bounded language-aware JA/EN/PT candidates, popup source order and complete homograph Anki export. Format/evidence limits in `docs/dictionary-engine.md`; actual reader tests run on Actions through `scripts/dictionary-harness`.

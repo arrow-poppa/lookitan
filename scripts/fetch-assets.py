@@ -8,6 +8,9 @@ Everything comes from official sources at pinned versions:
     library of Microsoft's onnxruntime-webgpu 1.27.0 wheel from PyPI (CPU plus the WebGPU provider,
     with Dawn linked in), checked against the SHA-256 that PyPI reports.
 The character list of each recognition model is extracted from its inference.yml.
+  * Hunspell dictionaries for dictionary forms (de, en, es, fr, pt, ru): the npm packages of
+    wooorm/dictionaries, the same releases Lookupper ships, checked against pinned SHA-256s.
+    Each language's license file is kept beside its .aff/.dic.
 
 Usage: python scripts/fetch-assets.py --platform windows|linux
 """
@@ -18,6 +21,7 @@ import io
 import json
 import shutil
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -30,6 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RES = ROOT / "src-tauri" / "resources"
 MODELS = RES / "models"
 ORT_DIR = RES / "ort"
+HUNSPELL_DIR = RES / "hunspell"
 
 HF = "https://huggingface.co"
 
@@ -43,6 +48,16 @@ MODEL_REPOS = {
     "rec_arabic": ("PaddlePaddle/arabic_PP-OCRv5_mobile_rec_onnx", "14aaedcd75825982689ecf5cd64ab33ee083215a"),
     "rec_el": ("PaddlePaddle/el_PP-OCRv5_mobile_rec_onnx", "8152b89d2ee0e1d4c92decab75fe75e5e3d836b6"),
     "rec_korean": ("PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx", "5c6f574b8e2230adf4287b33e736d71b9fabd28e"),
+}
+
+# language -> (npm package, version, SHA-256 of the package tarball)
+HUNSPELL = {
+    "de": ("dictionary-de", "3.0.0", "50b5640b33c276a49cc15f426f2d31ee5faf397f4a27e92b1678e77f43f8d14a"),
+    "en": ("dictionary-en", "4.0.0", "160cba5e6c0230d43d70b0c929e498566ff2c3c4bcf840318d98ce28e31ee756"),
+    "es": ("dictionary-es", "4.0.0", "b46986527b23ff1a578d601db7f1e6dc80cc36b728fdcb6044b5212e12e202d5"),
+    "fr": ("dictionary-fr", "3.0.0", "b20ab69249881bc36b1dcdfbfd2df226660a7cecc95f2cf122714008b491c78e"),
+    "pt": ("dictionary-pt", "4.0.0", "644a05af5c6d2c16eea1093c7ac4c14b45637170cf5b3dd1c07ae0f13256b54d"),
+    "ru": ("dictionary-ru", "3.0.0", "53fe1b0ff870c35b61dbc957116a15590458d145dbf89126ebf85a13adce0416"),
 }
 
 ORT_VERSION = "1.24.4"
@@ -110,6 +125,22 @@ def fetch_models() -> None:
             print(f"{stem}: {len(onnx) / 1e6:.1f} MB")
 
 
+def fetch_hunspell() -> None:
+    HUNSPELL_DIR.mkdir(parents=True, exist_ok=True)
+    for lang, (package, version, want) in HUNSPELL.items():
+        names = {"package/index.aff": f"{lang}.aff", "package/index.dic": f"{lang}.dic", "package/license": f"{lang}.license.txt"}
+        if all(have(HUNSPELL_DIR / n) for n in names.values()):
+            print(f"Hunspell {lang}: cached")
+            continue
+        tgz = get(f"https://registry.npmjs.org/{package}/-/{package}-{version}.tgz")
+        if sha256(tgz) != want:
+            sys.exit(f"checksum mismatch for {package}@{version}")
+        with tarfile.open(fileobj=io.BytesIO(tgz), mode="r:gz") as t:
+            for member, name in names.items():
+                (HUNSPELL_DIR / name).write_bytes(t.extractfile(member).read())
+        print(f"Hunspell {lang}: {package}@{version}")
+
+
 def fetch_ort_windows() -> None:
     ORT_DIR.mkdir(parents=True, exist_ok=True)
     if have(ORT_DIR / "onnxruntime.dll") and have(ORT_DIR / "DirectML.dll"):
@@ -151,6 +182,7 @@ def main() -> None:
     ap.add_argument("--platform", choices=["windows", "linux"], required=True)
     args = ap.parse_args()
     fetch_models()
+    fetch_hunspell()
     if args.platform == "windows":
         fetch_ort_windows()
     else:

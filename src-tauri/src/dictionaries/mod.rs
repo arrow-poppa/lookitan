@@ -1,6 +1,7 @@
 // Independent dictionary readers. The installed Lookupper provides behavioral references;
 // its implementation and its private index format are not dependencies of this engine.
 pub mod containers;
+pub mod hunspell;
 pub mod lexicons;
 pub mod morphology;
 pub mod slob;

@@ -4,7 +4,8 @@
     "resources": {
       "resources/ort/onnxruntime.dll": "onnxruntime.dll",
       "resources/ort/DirectML.dll": "DirectML.dll",
-      "resources/models/*": "models/"
+      "resources/models/*": "models/",
+      "resources/hunspell/*": "hunspell/"
     },
     "windows": {
       "nsis": {
