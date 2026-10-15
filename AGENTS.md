@@ -101,6 +101,11 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Drawn box and hit area are separate, so the tight box does not make words hard to hit. `WordBox.hit` (`OverlayWord.hit`, `[x, y, w, h]`) spans the line's whole detected height and reaches halfway to the neighbouring words, or 0.25 × line height past a line's ends. In the overlay, `.w` is that area and takes the clicks and the hover, and its `.ink` child (`pointer-events: none`) draws the highlight and the cut-out. The pointer mode never used these boxes.
   - `Pick::is_under` tests the drawn box, the same one the user sees highlighted. Before 2026-10-15 it reached a quarter of the line height past the word box, which then spanned the whole line height and half the spaces. That made the space between words and lines count as on a word, so the block outline almost never appeared.
   - With little contrast, under 40 levels, the old halfway estimates stay. Google Lens lines have no ink.
+- **OCR languages (`ocr::LANGUAGES`):** the same 38 entries and models as Lookupper's table.
+  - Latin scripts use `rec_tiny`, except Romanian. Romanian, Japanese and Chinese use `rec_small`. Korean, Arabic and Greek use their own PP-OCRv5 models. Russian, Ukrainian, Bulgarian and Serbian (Cyrillic) use `rec_cyrillic`.
+  - Names are in English and the list is sorted by them. An unknown tag falls back to `DEFAULT_LANGUAGE` (en-US).
+  - Regional variants (en-US/en-GB, es-ES/es-MX, pt-BR/pt-PT, fr-FR/fr-CA, the three Chinese) read the same.
+  - The tag also sets the pop-up's speech voice (`speak` in popup/main.js) and is saved on word cards. That is why the variants were kept, while Lookupper shows one Spanish.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
@@ -128,6 +133,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): OCR languages match Lookupper's 38. Serbian (Latin and Cyrillic), Slovenian, Bosnian (Latin), Latin and Indonesian were added; names are in English.
 - 2026-10-15 (Claude, `tests`): the shortcut counts as on a word only inside its drawn box (`Pick::is_under`), so a pointer in the space between words or lines outlines the block instead of looking up the nearest word.
 - 2026-10-15 (Claude, `tests`): overlay words take the pointer over a wider hit area than their drawn box, because the ink-tight boxes had become hard to hover and click.
 - 2026-10-15 (Claude, `tests`): the snapped word boxes got a little room around the ink, because they looked too small.

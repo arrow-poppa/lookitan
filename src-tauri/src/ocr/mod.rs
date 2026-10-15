@@ -43,43 +43,58 @@ pub struct LanguageModel {
     pub rec: &'static str,
 }
 
+/// Sorted by English name, as the settings list shows them. Every language Lookupper reads, with
+/// the same model; regional variants share it and differ only in the speech voice.
 pub const LANGUAGES: &[LanguageModel] = &[
-    LanguageModel { tag: "en-US", name: "English (US)", rec: "rec_tiny" },
-    LanguageModel { tag: "en-GB", name: "English (UK)", rec: "rec_tiny" },
-    LanguageModel { tag: "pt-BR", name: "Português (Brasil)", rec: "rec_tiny" },
-    LanguageModel { tag: "pt-PT", name: "Português (Portugal)", rec: "rec_tiny" },
-    LanguageModel { tag: "es-ES", name: "Español (España)", rec: "rec_tiny" },
-    LanguageModel { tag: "es-MX", name: "Español (México)", rec: "rec_tiny" },
-    LanguageModel { tag: "fr-FR", name: "Français (France)", rec: "rec_tiny" },
-    LanguageModel { tag: "fr-CA", name: "Français (Canada)", rec: "rec_tiny" },
-    LanguageModel { tag: "de-DE", name: "Deutsch", rec: "rec_tiny" },
-    LanguageModel { tag: "it-IT", name: "Italiano", rec: "rec_tiny" },
-    LanguageModel { tag: "nl-NL", name: "Nederlands", rec: "rec_tiny" },
-    LanguageModel { tag: "sv-SE", name: "Svenska", rec: "rec_tiny" },
-    LanguageModel { tag: "da-DK", name: "Dansk", rec: "rec_tiny" },
-    LanguageModel { tag: "nb-NO", name: "Norsk bokmål", rec: "rec_tiny" },
-    LanguageModel { tag: "fi-FI", name: "Suomi", rec: "rec_tiny" },
-    LanguageModel { tag: "pl-PL", name: "Polski", rec: "rec_tiny" },
-    LanguageModel { tag: "cs-CZ", name: "Čeština", rec: "rec_tiny" },
-    LanguageModel { tag: "sk-SK", name: "Slovenčina", rec: "rec_tiny" },
-    LanguageModel { tag: "hu-HU", name: "Magyar", rec: "rec_tiny" },
-    LanguageModel { tag: "hr-HR", name: "Hrvatski", rec: "rec_tiny" },
-    LanguageModel { tag: "tr-TR", name: "Türkçe", rec: "rec_tiny" },
-    LanguageModel { tag: "ro-RO", name: "Română", rec: "rec_small" },
-    LanguageModel { tag: "ja-JP", name: "日本語", rec: "rec_small" },
-    LanguageModel { tag: "zh-CN", name: "中文（简体）", rec: "rec_small" },
-    LanguageModel { tag: "zh-TW", name: "中文（台灣）", rec: "rec_small" },
-    LanguageModel { tag: "zh-HK", name: "中文（香港）", rec: "rec_small" },
-    LanguageModel { tag: "ko-KR", name: "한국어", rec: "rec_korean" },
-    LanguageModel { tag: "ru-RU", name: "Русский", rec: "rec_cyrillic" },
-    LanguageModel { tag: "uk-UA", name: "Українська", rec: "rec_cyrillic" },
-    LanguageModel { tag: "bg-BG", name: "Български", rec: "rec_cyrillic" },
-    LanguageModel { tag: "ar-SA", name: "العربية", rec: "rec_arabic" },
-    LanguageModel { tag: "el-GR", name: "Ελληνικά", rec: "rec_el" },
+    LanguageModel { tag: "ar-SA", name: "Arabic", rec: "rec_arabic" },
+    LanguageModel { tag: "bs-Latn-BA", name: "Bosnian (Latin)", rec: "rec_tiny" },
+    LanguageModel { tag: "bg-BG", name: "Bulgarian", rec: "rec_cyrillic" },
+    LanguageModel { tag: "zh-CN", name: "Chinese (Simplified, China)", rec: "rec_small" },
+    LanguageModel { tag: "zh-HK", name: "Chinese (Traditional, Hong Kong)", rec: "rec_small" },
+    LanguageModel { tag: "zh-TW", name: "Chinese (Traditional, Taiwan)", rec: "rec_small" },
+    LanguageModel { tag: "hr-HR", name: "Croatian", rec: "rec_tiny" },
+    LanguageModel { tag: "cs-CZ", name: "Czech", rec: "rec_tiny" },
+    LanguageModel { tag: "da-DK", name: "Danish", rec: "rec_tiny" },
+    LanguageModel { tag: "nl-NL", name: "Dutch", rec: "rec_tiny" },
+    LanguageModel { tag: "en-GB", name: "English (United Kingdom)", rec: "rec_tiny" },
+    LanguageModel { tag: "en-US", name: "English (United States)", rec: "rec_tiny" },
+    LanguageModel { tag: "fi-FI", name: "Finnish", rec: "rec_tiny" },
+    LanguageModel { tag: "fr-CA", name: "French (Canada)", rec: "rec_tiny" },
+    LanguageModel { tag: "fr-FR", name: "French (France)", rec: "rec_tiny" },
+    LanguageModel { tag: "de-DE", name: "German", rec: "rec_tiny" },
+    LanguageModel { tag: "el-GR", name: "Greek", rec: "rec_el" },
+    LanguageModel { tag: "hu-HU", name: "Hungarian", rec: "rec_tiny" },
+    LanguageModel { tag: "id-ID", name: "Indonesian", rec: "rec_tiny" },
+    LanguageModel { tag: "it-IT", name: "Italian", rec: "rec_tiny" },
+    LanguageModel { tag: "ja-JP", name: "Japanese", rec: "rec_small" },
+    LanguageModel { tag: "ko-KR", name: "Korean", rec: "rec_korean" },
+    LanguageModel { tag: "la", name: "Latin", rec: "rec_tiny" },
+    LanguageModel { tag: "nb-NO", name: "Norwegian Bokmål", rec: "rec_tiny" },
+    LanguageModel { tag: "pl-PL", name: "Polish", rec: "rec_tiny" },
+    LanguageModel { tag: "pt-BR", name: "Portuguese (Brazil)", rec: "rec_tiny" },
+    LanguageModel { tag: "pt-PT", name: "Portuguese (Portugal)", rec: "rec_tiny" },
+    LanguageModel { tag: "ro-RO", name: "Romanian", rec: "rec_small" },
+    LanguageModel { tag: "ru-RU", name: "Russian", rec: "rec_cyrillic" },
+    LanguageModel { tag: "sr-Cyrl-RS", name: "Serbian (Cyrillic)", rec: "rec_cyrillic" },
+    LanguageModel { tag: "sr-Latn-RS", name: "Serbian (Latin)", rec: "rec_tiny" },
+    LanguageModel { tag: "sk-SK", name: "Slovak", rec: "rec_tiny" },
+    LanguageModel { tag: "sl-SI", name: "Slovenian", rec: "rec_tiny" },
+    LanguageModel { tag: "es-MX", name: "Spanish (Mexico)", rec: "rec_tiny" },
+    LanguageModel { tag: "es-ES", name: "Spanish (Spain)", rec: "rec_tiny" },
+    LanguageModel { tag: "sv-SE", name: "Swedish", rec: "rec_tiny" },
+    LanguageModel { tag: "tr-TR", name: "Turkish", rec: "rec_tiny" },
+    LanguageModel { tag: "uk-UA", name: "Ukrainian", rec: "rec_cyrillic" },
 ];
 
+/// The language an unknown tag falls back to.
+pub const DEFAULT_LANGUAGE: &str = "en-US";
+
 pub fn language(tag: &str) -> &'static LanguageModel {
-    LANGUAGES.iter().find(|l| l.tag.eq_ignore_ascii_case(tag)).unwrap_or(&LANGUAGES[0])
+    LANGUAGES
+        .iter()
+        .find(|l| l.tag.eq_ignore_ascii_case(tag))
+        .or_else(|| LANGUAGES.iter().find(|l| l.tag == DEFAULT_LANGUAGE))
+        .expect("the default language is in the table")
 }
 
 /// Scripts written without spaces between words; the picker tries the longest dictionary match.
@@ -96,4 +111,24 @@ pub fn is_unspaced_script(c: char) -> bool {
         | 0x1000..=0x109F // Myanmar
         | 0x1780..=0x17FF // Khmer
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn languages_are_sorted_unique_and_an_unknown_tag_reads_english() {
+        let names: Vec<&str> = LANGUAGES.iter().map(|l| l.name).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
+        let mut tags: Vec<String> = LANGUAGES.iter().map(|l| l.tag.to_ascii_lowercase()).collect();
+        tags.sort();
+        tags.dedup();
+        assert_eq!(tags.len(), LANGUAGES.len());
+        assert_eq!(language("xx-XX").tag, DEFAULT_LANGUAGE);
+        assert_eq!(language("sr-latn-rs").rec, "rec_tiny");
+        assert_eq!(language("sr-Cyrl-RS").rec, "rec_cyrillic");
+    }
 }
