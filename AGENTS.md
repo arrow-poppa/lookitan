@@ -161,6 +161,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude): fast-forwarded `main` to `10f5be2` at the user's request (dictionary engine port, RAR/7z/TAR imports, article look, Anki AI card choice).
 - 2026-10-15 (Claude, `tests`): articles in the formats Lookitan lays out itself (all but MDict and Slob, `Dictionary::own_look`) take the pop-up's look, like the AI card: its font, text and muted colours on the pop-up background, no invert filter (`html.lkt-themed` in protocol.rs ENTRY_STYLE). MDict/Slob keep a white page, inverted in the dark theme inside the frame (`html.lkt-own`). Yomitan tags are plain muted text and senses number inline, as in Lookupper.
 - 2026-10-15 (Claude, `tests`): Yomitan articles laid out like Lookupper's (headword line with muted reading and grey tags, numbered senses, glossary line breaks run together, rules not shown); entry frames have no box, a hairline between entries. Anki: `anki.aiCardMode` for {ai-card}/{ai-card-plain}: 'card' (default) is the AI part alone, 'dictionaries' adds the dictionaries' entries after it; the context is never in it.
 - 2026-10-15 (Claude, `tests`): imports also take RAR (RAR4/RAR5, volume sets), 7z, TAR (+gz/bz2/xz) and single gz/bz2/xz files, like Lookupper (`dictionaries/archive.rs`; pure-Rust rars, sevenz-rust2, tar, lzma-rust2).
