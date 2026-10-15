@@ -530,7 +530,7 @@ function animateOpen(origin) {
     const card = $('card');
     card.style.setProperty('--tip-x', origin.relative ? `${origin.x * 100}%` : `${origin.x}px`);
     card.style.setProperty('--tip-y', `${origin.y}px`);
-    card.classList.remove('tip-close', 'tip-open');
+    card.classList.remove('tip-close', 'tip-open', 'tip-blank');
     void card.offsetWidth; // restart the animation for back-to-back lookups
     card.classList.add('tip-open');
 }
@@ -547,9 +547,24 @@ function closePopup() {
     closeTimer = setTimeout(() => {
         closeTimer = null;
         void api.hidePopup();
+        // Stay empty instead of growing back to full size before the window is hidden.
+        card.classList.add('tip-blank');
         card.classList.remove('tip-close');
     }, 200);
 }
+
+// Before the backend hides the pop-up (Linux): show nothing, then say so once it is on screen,
+// because a hidden WebKitGTK window shows its last painted frame again when it reappears.
+void listen('popup-blank', (event) => {
+    if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
+    const card = $('card');
+    card.classList.remove('tip-open', 'tip-close');
+    card.classList.add('tip-blank');
+    const token = event?.payload?.token;
+    if (token && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => requestAnimationFrame(() => { void api.webviewBlank(token); }));
+    }
+});
 
 void listen('popup-open', (event) => {
     // A new lookup during the close animation keeps the popup open.

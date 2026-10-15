@@ -24,7 +24,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use base64::Engine;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -91,6 +91,22 @@ pub struct AppState {
     pub cards: CardStore,
     busy: AtomicBool,
     pinned: AtomicBool,
+    blank: Blanking,
+}
+
+/// The overlay and the pop-up are hidden only once they show nothing (see `hide_blank`).
+#[derive(Default)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct Blanking {
+    /// The last blank request each window confirmed painting, by `window_slot`.
+    painted: Mutex<[u64; 2]>,
+    changed: Condvar,
+    token: AtomicU64,
+    /// Held while a window is shown or hidden, so a late hide cannot take down a newer lookup.
+    order: Mutex<[u64; 2]>,
+    /// The monitor the overlay last went fullscreen on (KDE), so a lookup on the same monitor does
+    /// not take it out of fullscreen and back.
+    overlay_output: Mutex<Option<platform::geometry::Rect>>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -363,13 +379,13 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     }
     let scan = state.scan_seq.fetch_add(1, Ordering::SeqCst) + 1;
     // A new lookup replaces the previous overlay (and resumes a frozen app).
-    close_overlay(app);
-    if let Some(popup) = app.get_webview_window("popup") {
-        let was_visible = popup.is_visible().unwrap_or(false);
-        let _ = popup.hide();
-        // Give the compositor one frame to remove our popup from the next captured bitmap.
-        if was_visible { std::thread::sleep(std::time::Duration::from_millis(20)); }
-    }
+    let overlay_hidden = close_overlay(app);
+    let popup_visible = app.get_webview_window("popup").is_some_and(|p| p.is_visible().unwrap_or(false));
+    let popup_hidden = hide_blank(app, "popup");
+    // Both must be off the screen before the capture.
+    for hidden in [overlay_hidden, popup_hidden].into_iter().flatten() { let _ = hidden.join(); }
+    // Give the compositor one frame to remove our popup from the next captured bitmap.
+    if popup_visible { std::thread::sleep(std::time::Duration::from_millis(20)); }
 
     let settings = state.settings.read().clone();
     let fg = platform::foreground_app();
@@ -713,31 +729,91 @@ fn show_overlay(app: &AppHandle, id: u64, anchor: Option<(f64, f64, f64, f64)>, 
 /// for a new recognition arrives (see `close_overlay`).
 fn show_overlay_window(app: &AppHandle, monitor: DisplayGeometry, focus: bool) {
     let Some(win) = app.get_webview_window("overlay") else { return };
+    let state = app.state::<AppState>();
+    let mut order = state.blank.order.lock();
+    order[window_slot("overlay")] += 1;
     let kde = platform::session_kind() == SessionKind::KdeWayland;
-    if kde { let _ = win.set_fullscreen(false); }
     let m = monitor.native;
-    let _ = win.set_position(PhysicalPosition::new(m.x.round() as i32, m.y.round() as i32));
-    let _ = win.set_size(PhysicalSize::new(m.width.round() as u32, m.height.round() as u32));
+    // On KDE, leaving and re-entering fullscreen at every lookup makes KWin animate the overlay;
+    // on the same monitor it is already fullscreen there.
+    let same_output = kde && state.blank.overlay_output.lock().replace(m) == Some(m);
+    if !same_output {
+        if kde { let _ = win.set_fullscreen(false); }
+        let _ = win.set_position(PhysicalPosition::new(m.x.round() as i32, m.y.round() as i32));
+        let _ = win.set_size(PhysicalSize::new(m.width.round() as u32, m.height.round() as u32));
+    }
     let _ = win.show();
     // A normal KDE window is constrained by the panel work area (e.g. y=28). Fullscreen
     // covers the actual output; resize/move events update the borders after configuration.
     if kde { let _ = win.set_fullscreen(true); }
+    drop(order);
     if focus {
         let _ = win.set_focus();
     }
 }
 
-fn close_overlay(app: &AppHandle) {
+/// Hides the overlay and clears its content, so the next lookup does not flash the old one.
+/// Returns the pending hide on Linux (see `hide_blank`).
+fn close_overlay(app: &AppHandle) -> Option<std::thread::JoinHandle<()>> {
     let state = app.state::<AppState>();
     let frozen = state.recognition.lock().as_mut().and_then(|r| r.frozen_pid.take());
     if let Some(pid) = frozen {
         platform::resume_process(pid);
     }
-    if let Some(w) = app.get_webview_window("overlay") {
-        let _ = w.hide();
+    hide_blank(app, "overlay")
+}
+
+fn window_slot(label: &str) -> usize {
+    if label == "overlay" { 0 } else { 1 }
+}
+
+/// How long a window may take to paint its empty state before it is hidden anyway.
+#[cfg(target_os = "linux")]
+const BLANK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Hides the overlay or the pop-up.
+///
+/// On Linux, WebKitGTK stops painting a hidden webview and, when the window is shown again, the
+/// compositor first shows the last frame it painted: the previous lookup's dimmed or frozen
+/// screen, or the previous pop-up at full size. That frame is the flash the user sees at every
+/// lookup. So the window is first told to show nothing (`overlay-closed` / `popup-blank` with a
+/// token), and hidden once it confirms it painted that (`webview_blank`), or after
+/// `BLANK_TIMEOUT`. The hide runs on its own thread, since the main thread must keep running for
+/// the window to paint; the caller can join it. Windows hides at once, as before.
+fn hide_blank(app: &AppHandle, label: &'static str) -> Option<std::thread::JoinHandle<()>> {
+    let win = app.get_webview_window(label)?;
+    let event = if label == "overlay" { "overlay-closed" } else { "popup-blank" };
+    #[cfg(target_os = "linux")]
+    if win.is_visible().unwrap_or(false) {
+        let state = app.state::<AppState>();
+        let slot = window_slot(label);
+        let shown = state.blank.order.lock()[slot];
+        let token = state.blank.token.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = app.emit_to(label, event, serde_json::json!({ "token": token }));
+        let app = app.clone();
+        return Some(std::thread::spawn(move || {
+            let state = app.state::<AppState>();
+            let painted = {
+                let deadline = Instant::now() + BLANK_TIMEOUT;
+                let mut painted = state.blank.painted.lock();
+                while painted[slot] < token {
+                    if state.blank.changed.wait_until(&mut painted, deadline).timed_out() { break; }
+                }
+                painted[slot] >= token
+            };
+            // The page has drawn its empty frame; let GTK and the compositor put it on screen.
+            if painted { std::thread::sleep(std::time::Duration::from_millis(20)); }
+            let order = state.blank.order.lock();
+            // Shown again for a newer lookup meanwhile: keep it.
+            if order[slot] == shown {
+                if let Some(w) = app.get_webview_window(label) { let _ = w.hide(); }
+            }
+            drop(order);
+        }));
     }
-    // Clear the overlay's content, so the next lookup does not flash the old one before it fades in.
-    let _ = app.emit_to("overlay", "overlay-closed", ());
+    let _ = win.hide();
+    if label == "overlay" { let _ = app.emit_to(label, event, ()); }
+    None
 }
 
 /// Tells the pop-up it was closed: like Yomitan, a closed pop-up cancels its pending AI requests
@@ -748,9 +824,7 @@ fn popup_hidden(app: &AppHandle) {
 
 /// Hides the pop-up and cancels its pending AI requests.
 fn dismiss_popup(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("popup") {
-        let _ = w.hide();
-    }
+    hide_blank(app, "popup");
     popup_hidden(app);
 }
 
@@ -789,7 +863,11 @@ fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64
     }
     let (ox, oy, relative) = origin;
     let _ = app.emit_to("popup", "popup-open", serde_json::json!({ "x": ox, "y": oy, "relative": relative }));
+    let state = app.state::<AppState>();
+    let mut order = state.blank.order.lock();
+    order[window_slot("popup")] += 1;
     let _ = win.show();
+    drop(order);
     let _ = win.set_focus();
 }
 
@@ -1110,6 +1188,15 @@ fn hide_popup(app: AppHandle) {
     close_overlay(&app);
 }
 
+/// The overlay or the pop-up painted the empty state asked for by `hide_blank`.
+#[tauri::command]
+fn webview_blank(window: tauri::WebviewWindow, state: tauri::State<'_, AppState>, token: u64) {
+    let slot = window_slot(window.label());
+    let mut painted = state.blank.painted.lock();
+    painted[slot] = painted[slot].max(token);
+    state.blank.changed.notify_all();
+}
+
 #[tauri::command]
 fn set_popup_pinned(state: tauri::State<'_, AppState>, pinned: bool) {
     state.pinned.store(pinned, Ordering::SeqCst);
@@ -1218,6 +1305,7 @@ pub fn run() {
                 cards: CardStore::open(&data_dir),
                 busy: AtomicBool::new(false),
                 pinned: AtomicBool::new(false),
+                blank: Blanking::default(),
             });
 
             // Configured WebViews can invoke get_settings before setup reaches manage().
@@ -1269,13 +1357,11 @@ pub fn run() {
             .build(app)?;
 
             if let Some(popup) = app.get_webview_window("popup") {
-                let p = popup.clone();
                 let h = handle.clone();
                 popup.on_window_event(move |event| {
                     if let WindowEvent::Focused(false) = event {
                         if !h.state::<AppState>().pinned.load(Ordering::SeqCst) {
-                            let _ = p.hide();
-                            popup_hidden(&h);
+                            dismiss_popup(&h);
                         }
                     }
                 });
@@ -1331,6 +1417,7 @@ pub fn run() {
             capture_image,
             scan_now,
             hide_popup,
+            webview_blank,
             set_popup_pinned,
             open_external,
             open_settings,

@@ -27,7 +27,7 @@ async function fixture() {
     body.animations = [];
     body.animate = (keyframes, options) => { body.animations.push({keyframes, options}); };
     const window = {innerWidth: 1920, innerHeight: 1080, addEventListener: (name, callback) => { handlers[`window:${name}`] = callback; }};
-    const context = createContext({window, HTMLElement: Element, document: {
+    const context = createContext({window, HTMLElement: Element, requestAnimationFrame: (callback) => callback(), document: {
         body,
         getElementById: (id) => id === 'words' ? root : id === 'frame' ? frame : (others[id] ||= new Element()),
         createElement: () => new Element(), createDocumentFragment: () => new Element(),
@@ -44,7 +44,7 @@ async function fixture() {
     }, {context}));
     await module.evaluate();
     return {root, frame, body, hint: others.hint, dim: others.dim, block: others.block, window, handlers, requests,
-        emit: (payload) => listeners.overlay({payload}), close: () => listeners['overlay-closed']({payload: null})};
+        emit: (payload) => listeners.overlay({payload}), close: (payload = null) => listeners['overlay-closed']({payload})};
 }
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {
@@ -218,4 +218,18 @@ test('a block of text pressed off its words is outlined, and only while the look
     assert.equal(view.block.style.height, '72px');
     view.emit({id: 2, words: [word]});
     assert.equal(view.block.style.display, 'none');
+});
+
+test('a closed overlay confirms its empty frame so Linux hides it only then (no flash on the next lookup)', async () => {
+    const view = await fixture();
+    view.emit({id: 1, words: [{text: 'old', x: 10, y: 20, w: 50, h: 18}], spotlight: true});
+    view.close({token: 7});
+    assert(view.body.classList.contains('idle'));
+    assert.equal(view.root.children.length, 0);
+    assert.equal(view.requests.at(-1).command, 'webview_blank');
+    assert.equal(view.requests.at(-1).args.token, 7);
+    // Windows hides at once and sends no token: nothing to confirm.
+    const count = view.requests.length;
+    view.close();
+    assert.equal(view.requests.length, count);
 });

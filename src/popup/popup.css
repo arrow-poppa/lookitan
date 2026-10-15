@@ -4,6 +4,8 @@ html, body { height: 100%; overflow: hidden; background: transparent; }
    WinUI's expand curve, shrink back in 200 ms with its contract curve. */
 .card.tip-open { animation: tip-open 300ms cubic-bezier(0.1, 0.9, 0.2, 1) both; transform-origin: var(--tip-x, 50%) var(--tip-y, 0px); }
 .card.tip-close { animation: tip-close 200ms cubic-bezier(0.7, 0, 1, 0.5) both; transform-origin: var(--tip-x, 50%) var(--tip-y, 0px); }
+/* Hidden pop-up (see `hide_blank` in lib.rs): nothing for the compositor to show again. */
+.card.tip-blank { visibility: hidden; }
 @keyframes tip-open {
     from { transform: scale(0.01); box-shadow: 0 0 0 rgba(0, 0, 0, 0); }
     to { transform: scale(1); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); }
