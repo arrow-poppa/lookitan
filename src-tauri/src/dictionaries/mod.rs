@@ -1,6 +1,7 @@
 // Independent dictionary readers. The installed Lookupper provides behavioral references;
 // its implementation and its private index format are not dependencies of this engine.
 pub mod cide;
+pub mod archive;
 pub mod containers;
 pub mod dictzip;
 pub mod hunspell;

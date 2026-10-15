@@ -29,3 +29,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 unicode-normalization = "0.1"
 zip = { version = "4", default-features = false, features = ["deflate"] }
+# Archives Lookupper imports besides ZIP (archive.rs): pure Rust, Apache/MIT licensed.
+rars = { version = "0.10", default-features = false }
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["ppmd"] }
+tar = "0.4"
+lzma-rust2 = { version = "0.22", default-features = false, features = ["std", "xz"] }
+
+[dev-dependencies]
+# Tests write the archives they unpack: RAR4/RAR5 volume sets, 7z and xz.
+rars = { version = "0.10", default-features = false, features = ["write"] }
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["ppmd", "compress", "util"] }
+lzma-rust2 = { version = "0.22", default-features = false, features = ["std", "xz", "encoder"] }

@@ -67,7 +67,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   The settings wire tag `kind: mdict` is retained for all local readers to keep existing settings
   compatible; `DictInfo.format` identifies the actual format. Do not use this tag to infer file format.
   **Storage follows Lookupper's model (user's decision, 2026-10-15): no database.** Importing a ZIP
-  unpacks it into `<local data>/dictionaries/content/<id>/` (`source::install`), and the files are
+  unpacks it into `<local data>/dictionaries/content/<id>/` (`source::install`; ZIP, RAR, 7z, TAR or gz/bz2/xz, `dictionaries/archive.rs`), and the files are
   read from there unchanged; removing the dictionary deletes that copy. A main file chosen directly
   is read in place. MDict reads its own key index on every open (no sidecar). Every other format
   keeps a headword index beside its files, `<main>.lkidx` (`dictionaries/lkidx.rs`: Lookupper's
@@ -161,6 +161,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): imports also take RAR (RAR4/RAR5, volume sets), 7z, TAR (+gz/bz2/xz) and single gz/bz2/xz files, like Lookupper (`dictionaries/archive.rs`; pure-Rust rars, sevenz-rust2, tar, lzma-rust2).
 - 2026-10-15 (Claude, `tests`): Lookupper's own format variants added, detected as Lookupper detects them: jmdict-simplified/kanjidic2 JSON (`jsondict.rs`), WN-LMF (`wnlmf.rs`), Gutenberg Webster text (`webster_text.rs`), GCIDE CIDE.* (`cide.rs`, entity table from GCIDE's webfont.txt).
 - 2026-10-15 (Claude, `tests`): every format read in place with `.lkidx` (DSL, StarDict, CC-CEDICT, Kaikki, WordNet, XML, Slob); SQLite store and rusqlite removed.
 - 2026-10-15 (Claude, `tests`): dictionaries stored the Lookupper way: ZIPs unpacked into `content/<id>/` and read in place, `.lkidx` headword index (Yomitan first), no MDict sidecar; other formats still on SQLite until ported.

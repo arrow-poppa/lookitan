@@ -1,9 +1,8 @@
-use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 
 fn is_main(path: &Path) -> bool {
     let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
@@ -72,13 +71,13 @@ impl Drop for PendingDirectory {
 /// deleted at the next start.
 pub const REMOVED_MARKER: &str = ".lookitan-removed";
 
-/// Installs a dictionary the way Lookupper does: an archive is unpacked into its own folder,
-/// `<content>/<id>/`, and the dictionary is then read from the unpacked files, which stay as they
-/// are. Other paths (a main file or a folder chosen directly) are used in place and returned as
-/// they are. Members are streamed to disk; nothing is held in memory.
+/// Installs a dictionary the way Lookupper does: an archive (ZIP, RAR, 7z, TAR, or one gzip,
+/// bzip2 or xz file; see archive.rs) is unpacked into its own folder, `<content>/<id>/`, and the
+/// dictionary is then read from the unpacked files, which stay as they are. Other paths (a main
+/// file or a folder chosen directly) are used in place and returned as they are.
 pub fn install(path: &Path, content: &Path, id: &str, progress: &dyn Fn(u64)) -> Result<PathBuf> {
     let path = path.canonicalize().with_context(|| format!("open {}", path.display()))?;
-    if !path.extension().map(|e| e.eq_ignore_ascii_case("zip")).unwrap_or(false) { return Ok(path); }
+    let Some(kind) = super::archive::kind(&path) else { return Ok(path) };
     fs::create_dir_all(content)?;
     let target = content.join(id);
     if target.join(REMOVED_MARKER).is_file() {
@@ -89,29 +88,7 @@ pub fn install(path: &Path, content: &Path, id: &str, progress: &dyn Fn(u64)) ->
     let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let pending = PendingDirectory { path: content.join(format!(".unpacking-{id}-{unique}")), parent: content.to_path_buf() };
     fs::create_dir(&pending.path)?;
-    let mut archive = zip::ZipArchive::new(File::open(&path)?).context("o arquivo não é um ZIP legível")?;
-    if archive.len() > 200_000 { bail!("dictionary archive contains too many members"); }
-    let mut total = 0u64;
-    const MAX_TOTAL: u64 = 32 * 1024 * 1024 * 1024;
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let member = file.enclosed_name().ok_or_else(|| anyhow!("unsafe dictionary archive path"))?.to_path_buf();
-        if file.name().contains('\\') || member.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
-            || member.to_string_lossy().contains(':') {
-            bail!("unsafe dictionary archive path");
-        }
-        if file.unix_mode().map(|mode| mode & 0o170000 == 0o120000).unwrap_or(false) { bail!("dictionary archive symlinks are unsupported"); }
-        if file.size() > MAX_TOTAL.saturating_sub(total) { bail!("dictionary archive exceeds the 32 GiB extraction limit"); }
-        let output = pending.path.join(member);
-        if file.is_dir() { fs::create_dir_all(output)?; continue; }
-        if let Some(parent) = output.parent() { fs::create_dir_all(parent)?; }
-        let mut out = File::options().create_new(true).write(true).open(output)?;
-        let written = std::io::copy(&mut (&mut file).take(MAX_TOTAL - total + 1), &mut out)?;
-        total = total.checked_add(written).ok_or_else(|| anyhow!("archive size overflow"))?;
-        if total > MAX_TOTAL { bail!("dictionary archive exceeds the 32 GiB extraction limit"); }
-        out.flush()?;
-        progress(total);
-    }
+    super::archive::unpack(&path, kind, &pending.path, progress)?;
     // An archive that holds several dictionaries, or none, is refused before it is kept.
     discover(&pending.path)?;
     fs::rename(&pending.path, &target).context("publish unpacked dictionary")?;

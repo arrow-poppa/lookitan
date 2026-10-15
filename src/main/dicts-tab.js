@@ -31,10 +31,11 @@ export async function refreshDicts() {
 }
 
 async function addDictionary() {
-    // As in Lookupper, a dictionary normally comes as an archive, which is unpacked into Lookitan's
-    // own folder. A main file can also be chosen; it is then read where it is.
+    // As in Lookupper, a dictionary normally comes as an archive (ZIP, RAR, 7z, TAR, gzip/bzip2/xz),
+    // which is unpacked into Lookitan's own folder. A main file can also be chosen; it is then read
+    // where it is.
     const path = await open({multiple: false, directory: false, filters: [
-        {name: 'Dicionário (ZIP)', extensions: ['zip']},
+        {name: 'Dicionário compactado', extensions: ['zip', 'rar', '7z', 'tar', 'tgz', 'gz', 'bz2', 'xz', 'txz', 'tbz2']},
         {name: 'Arquivo de dicionário', extensions: ['mdx', 'ifo', 'dsl', 'dz', 'xml', 'gz', 'bz2', 'txt', 'u8', 'json', 'jsonl', 'slob', 'noun', 'verb', 'adj', 'adv']},
     ]});
     if (!path) { return; }

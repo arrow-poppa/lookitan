@@ -7,10 +7,12 @@ com uma implementação independente, e não afirma equivalência de todos os al
 
 ## Adicionar um dicionário
 
-Em **Dicionários → Adicionar**, selecione o arquivo principal abaixo. Mantenha os arquivos
-companheiros e as pastas de recursos ao lado dele. Também é possível selecionar um ZIP que
-contenha um dicionário; o importador o extrai para uma pasta própria do aplicativo.
-Quando um ZIP contém vários dicionários independentes, extraia-o e adicione cada principal.
+Em **Dicionários → Adicionar**, selecione o arquivo compactado do dicionário, como no Lookupper:
+ZIP, RAR (RAR4/RAR5, também dividido em volumes `.part1.rar`… ou `.rar`/`.r00`…), 7z, TAR
+(`.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`) ou um único arquivo `.gz`/`.bz2`/`.xz`. Ele é
+extraído para uma pasta própria do aplicativo. Também é possível escolher o arquivo principal
+abaixo; ele é lido onde está, com os arquivos companheiros ao lado. Quando um arquivo compactado
+contém vários dicionários independentes, extraia-o e adicione cada principal.
 
 | Formato | Arquivo principal | Conteúdo lido |
 | --- | --- | --- |
@@ -97,10 +99,8 @@ Os dados GPL do Yomitan e a licença WordNet estão em `src-tauri/src/dictionari
   proprietários. StarDict não lê resourceDB `.rifo/.ridx/.rdic`; use recursos na pasta `res/`.
 - Slob precisa estar em um arquivo físico; partes divididas devem ser reunidas previamente.
   Referências a fragmentos preservam o artigo completo. Aliases podem repetir HTML no índice.
-- GCIDE aceita a distribuição XML, não o SGML bruto `CIDE.*`. WordNet não implementa navegação
-  do grafo semântico. Catálogos, downloads e servidores do Lookupper não são dependências.
-- A importação de arquivos compactados gerais é ZIP; gzip/bzip2 são aceitos pelos leitores
-  indicados. RAR, 7z e arquivos multipart não são extraídos automaticamente.
+- WordNet não implementa navegação do grafo semântico. Catálogos, downloads e servidores do Lookupper não são dependências.
+- RAR e 7z protegidos por senha não são suportados.
 
 ## Evidências e validação
 
