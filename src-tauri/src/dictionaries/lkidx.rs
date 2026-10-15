@@ -332,6 +332,13 @@ pub fn read(root: &Path, stamp: &Stamp, location: Location, max: usize) -> Resul
 /// Opens the index at `path`, or builds it with `build` and opens the result.
 pub fn open_or_build(path: &Path, format: &str, stamp: &Stamp,
     build: impl FnOnce() -> Result<(Builder, String, String)>) -> Result<Index> {
+    // One build at a time: a second open of the same dictionary waits and then uses the index the
+    // first one wrote, instead of replacing a file the first one already has mapped.
+    static BUILDING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    if let Ok(index) = Index::open(path, format, stamp) {
+        return Ok(index);
+    }
+    let _building = BUILDING.lock();
     match Index::open(path, format, stamp) {
         Ok(index) => return Ok(index),
         Err(e) if path.exists() => log::info!("re-indexing {}: {e:#}", path.display()),

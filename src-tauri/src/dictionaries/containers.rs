@@ -16,10 +16,9 @@ use flate2::read::MultiGzDecoder;
 use serde::de::{DeserializeSeed, Error as _, SeqAccess, Visitor};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAX_LINE: usize = 4 * 1024 * 1024;
 const MAX_ARTICLE: usize = 16 * 1024 * 1024;
@@ -33,23 +32,7 @@ const MAX_ALIAS_MEMORY: usize = 32 * 1024 * 1024;
 const MAX_VARIANTS: usize = 64;
 const MAX_DEPTH: usize = 64;
 
-pub fn supports(path: &Path) -> bool {
-    let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-    name.ends_with(".ifo") || name.ends_with(".dsl") || name.ends_with(".dsl.dz")
-}
-
-pub fn import(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
-    let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-    if name.ends_with(".ifo") {
-        import_stardict(path, sink)
-    } else if name.ends_with(".dsl") || name.ends_with(".dsl.dz") {
-        import_dsl(path, sink)
-    } else {
-        bail!("Formato de dicionário não reconhecido: {}", path.display())
-    }
-}
-
-fn default_name(path: &Path) -> String {
+pub(super) fn default_name(path: &Path) -> String {
     path.file_stem().unwrap_or_default().to_string_lossy().trim_end_matches(".dsl").to_string()
 }
 
@@ -128,7 +111,7 @@ fn media_html(path: &str, prefix: &str) -> String {
 
 // DSL -----------------------------------------------------------------------
 
-struct DslLines {
+pub(super) struct DslLines {
     input: BufReader<Box<dyn Read>>,
     utf16: Option<bool>, // true = little endian
     encoding: &'static Encoding,
@@ -136,7 +119,18 @@ struct DslLines {
 }
 
 impl DslLines {
-    fn new(path: &Path) -> Result<Self> {
+    /// Lines of `bytes`, a span of a DSL file decoded like the whole file (`decoding`).
+    pub(super) fn over(bytes: Vec<u8>, decoding: (Option<bool>, &'static Encoding)) -> Self {
+        let input: Box<dyn Read> = Box::new(std::io::Cursor::new(bytes));
+        Self { input: BufReader::new(input), utf16: decoding.0, encoding: decoding.1, total: 0 }
+    }
+
+    /// The text encoding: UTF-16 (`Some(little endian)`) or the 8-bit encoding.
+    pub(super) fn decoding(&self) -> (Option<bool>, &'static Encoding) {
+        (self.utf16, self.encoding)
+    }
+
+    pub(super) fn new(path: &Path) -> Result<Self> {
         let mut input = BufReader::with_capacity(16 * 1024, gzip_or_file(path)?);
         let prefix = input.fill_buf()?;
         let (utf16, bom) = if prefix.starts_with(&[0xff, 0xfe]) {
@@ -265,14 +259,17 @@ fn dsl_headwords(text: &str) -> Vec<String> {
     variants
 }
 
-fn import_dsl(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
-    let mut lines = DslLines::new(path)?;
-    let mut name = default_name(path);
+/// Reads DSL articles from `lines`. Before each article's entries, `sink.span` receives the
+/// article's place in the decompressed file, so the article can be read again in place.
+pub(super) fn dsl_entries(mut lines: DslLines, mut name: String, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
     let mut description = String::new();
     let mut headings: Vec<String> = Vec::new();
     let mut body = String::new();
     let mut comment = false;
-    while let Some(line) = lines.next()? {
+    let mut start = 0u64;
+    loop {
+        let at = lines.total;
+        let Some(line) = lines.next()? else { break };
         let line = without_dsl_comments(&line, &mut comment);
         if line.trim().is_empty() { continue; }
         if line.starts_with('#') && headings.is_empty() {
@@ -293,10 +290,12 @@ fn import_dsl(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
             }
         } else {
             if !body.is_empty() {
+                sink.span(0, start, at - start);
                 emit_dsl(sink, &headings, &body)?;
                 headings.clear();
                 body.clear();
             }
+            if headings.is_empty() { start = at; }
             ensure!(line.len() <= MAX_HEADWORD, "Cabeçalho DSL excede 16 KiB");
             for heading in dsl_headwords(&line) {
                 ensure!(headings.len() < 1024, "Muitos cabeçalhos no mesmo verbete DSL");
@@ -306,7 +305,10 @@ fn import_dsl(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
         }
     }
     ensure!(!comment, "Comentário DSL não terminado");
-    if !headings.is_empty() && !body.is_empty() { emit_dsl(sink, &headings, &body)?; }
+    if !headings.is_empty() && !body.is_empty() {
+        sink.span(0, start, lines.total - start);
+        emit_dsl(sink, &headings, &body)?;
+    }
     Ok(ImportInfo { name, format: "dsl", description })
 }
 
@@ -446,56 +448,6 @@ fn render_dsl(source: &str, headword: &str) -> Result<String> {
 
 /// Created with create_new, removed on every return path, and never placed next
 /// to the user's source dictionary. Close the handle before unlinking on Windows.
-struct OwnedTemp {
-    file: Option<File>,
-    path: PathBuf,
-}
-
-impl OwnedTemp {
-    fn create() -> Result<Self> {
-        static SERIAL: AtomicU64 = AtomicU64::new(0);
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
-        for _ in 0..16 {
-            let id = SERIAL.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!("lookitan-stardict-{}-{stamp}-{id}.tmp", std::process::id()));
-            match OpenOptions::new().read(true).write(true).create_new(true).open(&path) {
-                Ok(file) => return Ok(Self { file: Some(file), path }),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e.into()),
-            }
-        }
-        bail!("Não foi possível criar arquivo temporário StarDict")
-    }
-}
-
-impl Drop for OwnedTemp {
-    fn drop(&mut self) {
-        drop(self.file.take());
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-enum DictData { Original(File), Unpacked(OwnedTemp) }
-impl DictData {
-    fn file(&mut self) -> &mut File {
-        match self { Self::Original(f) => f, Self::Unpacked(t) => t.file.as_mut().unwrap() }
-    }
-}
-
-fn dict_data(path: &Path) -> Result<DictData> {
-    let plain = sibling(path, ".dict");
-    if plain.is_file() { return Ok(DictData::Original(File::open(plain)?)); }
-    let compressed = sibling(path, ".dict.dz");
-    let mut input = gzip_or_file(&compressed)?;
-    let mut temp = OwnedTemp::create()?;
-    let output = temp.file.as_mut().unwrap();
-    let n = std::io::copy(&mut input.by_ref().take(MAX_UNPACKED_DICT + 1), output)?;
-    ensure!(n <= MAX_UNPACKED_DICT, "StarDict descompactado excede 32 GiB");
-    output.flush()?;
-    output.seek(SeekFrom::Start(0))?;
-    Ok(DictData::Unpacked(temp))
-}
-
 fn zero_string(reader: &mut dyn BufRead, max: usize) -> Result<Option<(String, usize)>> {
     let mut bytes = Vec::new();
     loop {
@@ -540,57 +492,89 @@ fn stardict_aliases(path: &Path) -> Result<(HashMap<u32, Vec<String>>, u64)> {
     Ok((aliases, count))
 }
 
-fn import_stardict(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
+pub(super) struct StarDictInfo {
+    pub name: String,
+    pub description: String,
+    /// `sametypesequence`: the field types when every entry has the same ones.
+    pub sequence: String,
+    offset64: bool,
+    count: u64,
+    idx_size: u64,
+    synonyms: Option<u64>,
+}
+
+/// The .ifo header of a StarDict dictionary.
+pub(super) fn stardict_info(path: &Path) -> Result<StarDictInfo> {
     let header = String::from_utf8(read_bounded(path, MAX_HEADER)?)?;
-    let mut lines = header.split(['\r', '\n']);
-    ensure!(lines.next().unwrap_or("").trim_end_matches('\r') == "StarDict's dict ifo file", "Este .ifo não é um dicionário StarDict normal");
+    let mut lines = header.split(['
+', '
+']);
+    ensure!(lines.next().unwrap_or("").trim_end_matches('
+') == "StarDict's dict ifo file", "Este .ifo não é um dicionário StarDict normal");
     let props: HashMap<&str, &str> = lines.filter_map(|l| l.split_once('=')).map(|(k, v)| (k.trim(), v.trim())).collect();
     let get = |key| props.get(key).copied().unwrap_or("");
     ensure!(matches!(get("version"), "2.4.2" | "3.0.0"), "Versão StarDict não suportada");
-    let expected_count: u64 = get("wordcount").parse().context("wordcount inválido no StarDict")?;
-    let expected_size: u64 = get("idxfilesize").parse().context("idxfilesize inválido no StarDict")?;
-    ensure!(expected_size <= MAX_INDEX_BYTES, "Índice StarDict excede 2 GiB");
-    ensure!(expected_count <= u32::MAX as u64, "Contagem StarDict fora do intervalo de 32 bits");
+    let count: u64 = get("wordcount").parse().context("wordcount inválido no StarDict")?;
+    let idx_size: u64 = get("idxfilesize").parse().context("idxfilesize inválido no StarDict")?;
+    ensure!(idx_size <= MAX_INDEX_BYTES, "Índice StarDict excede 2 GiB");
+    ensure!(count <= u32::MAX as u64, "Contagem StarDict fora do intervalo de 32 bits");
     let offset_bits = if get("idxoffsetbits").is_empty() { "32" } else { get("idxoffsetbits") };
     ensure!(matches!(offset_bits, "32" | "64"), "idxoffsetbits deve ser 32 ou 64");
     let sequence = get("sametypesequence");
     ensure!(sequence.bytes().all(|b| b.is_ascii_alphabetic()), "sametypesequence inválido");
+    Ok(StarDictInfo {
+        name: if get("bookname").is_empty() { default_name(path) } else { get("bookname").to_string() },
+        description: get("description").to_string(),
+        sequence: sequence.to_string(),
+        offset64: offset_bits == "64",
+        count,
+        idx_size,
+        synonyms: if get("synwordcount").is_empty() { None } else { Some(get("synwordcount").parse().context("synwordcount inválido no StarDict")?) },
+    })
+}
+
+/// The files of a StarDict dictionary beside its .ifo: index, data and (if any) synonyms.
+pub(super) fn stardict_files(path: &Path) -> Result<(PathBuf, PathBuf, Option<PathBuf>)> {
+    let idx = [".idx", ".idx.gz"].iter().map(|x| sibling(path, x)).find(|p| p.is_file())
+        .ok_or_else(|| anyhow!("No .idx file next to '{}'.", path.display()))?;
+    let dict = [".dict", ".dict.dz"].iter().map(|x| sibling(path, x)).find(|p| p.is_file())
+        .ok_or_else(|| anyhow!("No .dict file next to '{}'.", path.display()))?;
+    let syn = Some(sibling(path, ".syn")).filter(|p| p.is_file());
+    Ok((idx, dict, syn))
+}
+
+/// Every entry of the .idx: its word, its place in the decompressed .dict and its synonyms.
+pub(super) fn stardict_index(path: &Path, info: &StarDictInfo, data_len: u64,
+    mut entry: impl FnMut(&str, u64, u32, &[String]) -> Result<()>) -> Result<()> {
     let (mut aliases, alias_count) = stardict_aliases(path)?;
-    if !get("synwordcount").is_empty() {
-        ensure!(get("synwordcount").parse::<u64>()? == alias_count, "Contagem de aliases StarDict incorreta");
+    if let Some(expected) = info.synonyms {
+        ensure!(expected == alias_count, "Contagem de aliases StarDict incorreta");
     }
-    let mut data = dict_data(path)?;
-    let data_len = data.file().metadata()?.len();
-    let plain = sibling(path, ".idx");
-    let idx_path = if plain.is_file() { plain } else { sibling(path, ".idx.gz") };
+    let (idx_path, _, _) = stardict_files(path)?;
     let mut idx = BufReader::new(gzip_or_file(&idx_path)?);
     let mut count = 0u64;
     let mut index_bytes = 0u64;
     while let Some((word, n)) = zero_string(&mut idx, MAX_HEADWORD)? {
-        let offset = if offset_bits == "64" {
+        let offset = if info.offset64 {
             let mut buf = [0; 8];
             idx.read_exact(&mut buf)?;
             u64::from_be_bytes(buf)
         } else { read_be32(&mut idx)? as u64 };
-        let size = read_be32(&mut idx)? as usize;
-        index_bytes += n as u64 + if offset_bits == "64" { 12 } else { 8 };
-        ensure!(index_bytes <= MAX_INDEX_BYTES && count < expected_count, "Índice StarDict maior que a contagem declarada");
-        ensure!(size <= MAX_ARTICLE, "Verbete StarDict excede 16 MiB");
+        let size = read_be32(&mut idx)?;
+        index_bytes += n as u64 + if info.offset64 { 12 } else { 8 };
+        ensure!(index_bytes <= MAX_INDEX_BYTES && count < info.count, "Índice StarDict maior que a contagem declarada");
+        ensure!(size as usize <= MAX_ARTICLE, "Verbete StarDict excede 16 MiB");
         ensure!(offset.checked_add(size as u64).is_some_and(|end| end <= data_len), "Offset StarDict fora do arquivo .dict");
-        let mut bytes = vec![0u8; size];
-        data.file().seek(SeekFrom::Start(offset))?;
-        data.file().read_exact(&mut bytes)?;
-        let html = stardict_article(&bytes, sequence)?;
         let entry_aliases = aliases.remove(&(count as u32)).unwrap_or_default();
-        add_entry(sink, &word, &html, &entry_aliases)?;
+        entry(&word, offset, size, &entry_aliases)?;
         count += 1;
     }
-    ensure!(count == expected_count && index_bytes == expected_size, "Contagem ou tamanho do índice StarDict não confere");
+    ensure!(count == info.count && index_bytes == info.idx_size, "Contagem ou tamanho do índice StarDict não confere");
     ensure!(aliases.is_empty(), "Alias StarDict aponta para um verbete inexistente");
-    Ok(ImportInfo { name: if get("bookname").is_empty() { default_name(path) } else { get("bookname").to_string() }, format: "stardict", description: get("description").to_string() })
+    Ok(())
 }
 
-fn stardict_article(bytes: &[u8], sequence: &str) -> Result<String> {
+pub(super) fn stardict_article(bytes: &[u8], sequence: &str) -> Result<String> {
     let mut html = String::new();
     let mut p = 0usize;
     let fixed = sequence.as_bytes();
@@ -1151,56 +1135,6 @@ fn yomitan_image(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::{write::GzEncoder, Compression};
-
-    #[derive(Default)]
-    struct Sink(Vec<(String, String, Vec<String>)>);
-    impl ImportSink for Sink {
-        fn add(&mut self, headword: &str, html: &str, aliases: &[String]) -> Result<()> {
-            self.0.push((headword.to_string(), html.to_string(), aliases.to_vec()));
-            Ok(())
-        }
-    }
-
-    struct TestDir(PathBuf);
-    impl TestDir {
-        fn new() -> Self {
-            static ID: AtomicU64 = AtomicU64::new(0);
-            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-            let path = std::env::temp_dir().join(format!("lookitan-container-test-{}-{stamp}-{}", std::process::id(), ID.fetch_add(1, Ordering::Relaxed)));
-            fs::create_dir(&path).unwrap();
-            Self(path)
-        }
-    }
-    impl Drop for TestDir { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
-
-    fn gzip(path: &Path, bytes: &[u8]) {
-        let mut encoder = GzEncoder::new(File::create(path).unwrap(), Compression::default());
-        encoder.write_all(bytes).unwrap(); encoder.finish().unwrap();
-    }
-
-    #[test]
-    fn dsl_utf16_gzip_aliases_subentries_and_escaped_markup() {
-        let dir = TestDir::new();
-        let path = dir.0.join("demo.dsl.dz");
-        let text = "#NAME \"Study DSL\"\ncat(s)\nfeline\n\t[b]A cat[/b] <script> & \\[literal\\]\n\t[ref]dog[/ref] [s]cat.wav[/s]\n\t@kitten\n\t[i]Young cat[/i]\n\t@\ndog\n\tDog\n";
-        let mut bytes = vec![0xff, 0xfe];
-        for unit in text.encode_utf16() { bytes.extend_from_slice(&unit.to_le_bytes()); }
-        gzip(&path, &bytes);
-        let mut sink = Sink::default();
-        let info = import(&path, &mut sink).unwrap();
-        assert_eq!(info.name, "Study DSL");
-        assert_eq!(sink.0.len(), 3);
-        assert_eq!(sink.0[0].0, "cat");
-        assert!(sink.0[0].2.contains(&"cats".to_string()));
-        assert!(sink.0[0].2.contains(&"feline".to_string()));
-        assert!(sink.0[0].1.contains("<b>A cat</b>"));
-        assert!(sink.0[0].1.contains("&lt;script&gt;"));
-        assert!(sink.0[0].1.contains("[literal]"));
-        assert!(sink.0[0].1.contains(&entry_link("dog")));
-        assert!(sink.0[0].1.contains("src=\"cat.wav\""));
-        assert_eq!(sink.0[1].0, "kitten");
-    }
 
     #[test]
     fn dsl_comments_do_not_eat_escaped_braces() {
@@ -1212,45 +1146,8 @@ mod tests {
         assert_eq!(dsl_headwords("read(ing)"), vec!["read", "reading"]);
     }
 
-    fn make_stardict(dir: &Path, compressed: bool, offset64: bool) -> PathBuf {
-        let ifo = dir.join("demo.ifo");
-        let definitions = b"k\xc3\xa6t\0small animaldog\0another animal";
-        let second = b"k\xc3\xa6t\0small animal".len();
-        let mut index = Vec::new();
-        for (word, offset, size) in [("cat", 0, second), ("dog", second, definitions.len() - second)] {
-            index.extend_from_slice(word.as_bytes()); index.push(0);
-            if offset64 { index.extend_from_slice(&(offset as u64).to_be_bytes()); }
-            else { index.extend_from_slice(&(offset as u32).to_be_bytes()); }
-            index.extend_from_slice(&(size as u32).to_be_bytes());
-        }
-        fs::write(&ifo, format!("StarDict's dict ifo file\nversion=3.0.0\nbookname=Study StarDict\nwordcount=2\nsynwordcount=1\nidxoffsetbits={}\nidxfilesize={}\nsametypesequence=tm\n", if offset64 { 64 } else { 32 }, index.len())).unwrap();
-        if compressed { gzip(&dir.join("demo.idx.gz"), &index); gzip(&dir.join("demo.dict.dz"), definitions); }
-        else { fs::write(dir.join("demo.idx"), index).unwrap(); fs::write(dir.join("demo.dict"), definitions).unwrap(); }
-        let mut synonyms = b"feline\0".to_vec(); synonyms.extend_from_slice(&0u32.to_be_bytes());
-        fs::write(dir.join("demo.syn"), synonyms).unwrap();
-        ifo
-    }
-
     #[test]
-    fn stardict_gzip_offsets64_and_synonyms() {
-        let dir = TestDir::new();
-        let ifo = make_stardict(&dir.0, true, true);
-        let mut sink = Sink::default();
-        let info = import(&ifo, &mut sink).unwrap();
-        assert_eq!(info.name, "Study StarDict");
-        assert_eq!(sink.0.len(), 2);
-        assert!(sink.0[0].1.contains("kæt"));
-        assert!(sink.0[0].1.contains("small animal"));
-        assert_eq!(sink.0[0].2, vec!["feline"]);
-        assert!(sink.0[1].1.contains("another animal"));
-    }
-
-    #[test]
-    fn stardict_rejects_truncated_offsets_and_bad_aliases() {
-        let dir = TestDir::new();
-        let ifo = make_stardict(&dir.0, false, false);
-        fs::write(dir.0.join("demo.dict"), b"short").unwrap();
-        assert!(import(&ifo, &mut Sink::default()).is_err());
+    fn stardict_articles_need_their_terminators() {
         assert!(stardict_article(b"mno terminating nul", "").is_err());
         assert!(stardict_article(b"a\0b", "tm").is_ok());
     }

@@ -1,7 +1,9 @@
 // Independent dictionary readers. The installed Lookupper provides behavioral references;
 // its implementation and its private index format are not dependencies of this engine.
 pub mod containers;
+pub mod dictzip;
 pub mod hunspell;
+pub mod inplace;
 pub mod lkidx;
 pub mod lexicons;
 pub mod morphology;
@@ -25,6 +27,9 @@ pub struct ImportInfo {
 pub trait ImportSink {
     fn add(&mut self, headword: &str, html: &str, aliases: &[String]) -> Result<()>;
     fn add_resource(&mut self, _key: &str, _reference: u32) -> Result<()> { Ok(()) }
+    /// The entries added next come from `length` bytes at `offset` of source file `file` (offsets
+    /// in the decompressed stream). Readers that report spans are read in place (inplace.rs).
+    fn span(&mut self, _file: u16, _offset: u64, _length: u64) {}
 }
 
 pub fn escape_html(text: &str) -> String {

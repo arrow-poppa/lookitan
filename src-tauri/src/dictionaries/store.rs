@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 
-use super::{containers, folded, lexicons, slob, ImportSink};
+use super::{folded, lexicons, slob, ImportSink};
 
 const SCHEMA_VERSION: &str = "lookitan-dictionary-1";
 const MAX_ARTICLE: usize = 16 * 1024 * 1024;
@@ -101,9 +101,7 @@ impl Store {
             CREATE TABLE resources(name TEXT PRIMARY KEY,reference INTEGER NOT NULL) WITHOUT ROWID;
             BEGIN IMMEDIATE;")?;
         let mut writer = Writer { db: &db, count: 0, progress };
-        let info = if containers::supports(source) {
-            containers::import(source, &mut writer)?
-        } else if lexicons::supports(source) {
+        let info = if lexicons::supports(source) {
             lexicons::import(source, &mut writer)?
         } else if slob::supports(source) {
             slob::import(source, &mut writer)?
@@ -164,22 +162,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("lkt-index-{}-{}", std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
         fs::create_dir_all(&dir).unwrap();
-        let source = dir.join("test.dsl");
-        fs::write(&source, "#NAME \"Fixture\"\nrun\nrunning\n\t[b]move[/b]\nrun\n\toperate\n").unwrap();
+        let source = dir.join("test.u8");
+        fs::write(&source, "行 行 [xing2] /to walk/\n行 行 [hang2] /row/\n車 车 [che1] /car/\n").unwrap();
         let cache = dir.join("cache");
         let store = Store::open(&source, &cache, "test", &|_| {}).unwrap();
-        let hits = store.find("ＲＵＮ").unwrap();
+        let hits = store.find("行").unwrap();
         assert_eq!(hits.len(), 2);
-        assert_eq!(store.find("running").unwrap(), vec![hits[0]]);
-        assert!(store.record_text(hits[0]).unwrap().contains("move"));
+        assert_eq!(store.find("車").unwrap(), store.find("车").unwrap());
+        assert!(store.record_text(hits[0]).unwrap().contains("to walk"));
         drop(store);
         let reopened = Store::open(&source, &cache, "test", &|_| panic!("cache was not reused")).unwrap();
-        assert_eq!(reopened.len(), 2);
+        assert_eq!(reopened.len(), 3);
         drop(reopened);
-        fs::write(&source, "#NAME \"Changed\"\nwalk\n\tgo on foot\n").unwrap();
+        fs::write(&source, "走 走 [zou3] /to walk/\n").unwrap();
         let changed = Store::open(&source, &cache, "test", &|_| {}).unwrap();
-        assert!(changed.find("run").unwrap().is_empty());
-        assert_eq!(changed.find("walk").unwrap().len(), 1);
+        assert!(changed.find("行").unwrap().is_empty());
+        assert_eq!(changed.find("走").unwrap().len(), 1);
         drop(changed);
         fs::remove_dir_all(&dir).unwrap();
     }

@@ -11,12 +11,23 @@ use serde::Serialize;
 use parking_lot::Mutex;
 
 use crate::mdict::Mdict;
-use crate::dictionaries::{source, store::Store, yomitan::{self, Yomitan}};
+use crate::dictionaries::{inplace::{self, InPlace}, source, store::Store, yomitan::{self, Yomitan}};
 
 enum Reader {
     Mdict(Mdict),
     Yomitan(Yomitan),
+    InPlace(InPlace),
     Indexed(Store),
+}
+
+/// Where a dictionary's `.lkidx` goes: beside its files in Lookitan's own copy (as Lookupper keeps
+/// it), or in the app's cache for a file used in place, so the user's folder is never written to.
+fn index_path(installed: bool, beside: PathBuf, cache: &Path, id: &str) -> Result<PathBuf> {
+    if installed { return Ok(beside); }
+    let dir = cache.join("indexes");
+    std::fs::create_dir_all(&dir)?;
+    let name = beside.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(dir.join(format!("{id}.{name}")))
 }
 
 pub struct Dictionary {
@@ -69,13 +80,14 @@ impl Dictionary {
         } else if is_index_json && yomitan::supports(&dir) {
             // The index goes beside the banks in Lookitan's own copy, and into the app's cache for
             // a folder used in place.
-            let index_path = if installed { dir.join(yomitan::INDEX_FILE) } else {
-                std::fs::create_dir_all(cache.join("indexes"))?;
-                cache.join("indexes").join(format!("{id}.{}", yomitan::INDEX_FILE))
-            };
-            let y = Yomitan::open(&dir, &index_path, progress)?;
+            let y = Yomitan::open(&dir, &index_path(installed, dir.join(yomitan::INDEX_FILE), cache, id)?, progress)?;
             let (name, description) = (y.title().to_string(), y.description().to_string());
             (Reader::Yomitan(y), name, yomitan::FORMAT.to_string(), description)
+        } else if inplace::format_of(&path).is_some() {
+            let beside = PathBuf::from(format!("{}.lkidx", path.display()));
+            let d = InPlace::open(&path, &index_path(installed, beside, cache, id)?, progress)?;
+            let (name, description, format) = (d.title().to_string(), d.description().to_string(), d.format.to_string());
+            (Reader::InPlace(d), name, format, description)
         } else {
             let store = Store::open(&path, &cache.join("indexes"), id, progress)?;
             let name = store.name.clone();
@@ -88,13 +100,19 @@ impl Dictionary {
     }
 
     pub fn len(&self) -> usize {
-        match &self.reader { Reader::Mdict(m) => m.len(), Reader::Yomitan(y) => y.len(), Reader::Indexed(s) => s.len() }
+        match &self.reader {
+            Reader::Mdict(m) => m.len(),
+            Reader::Yomitan(y) => y.len(),
+            Reader::InPlace(d) => d.len(),
+            Reader::Indexed(s) => s.len(),
+        }
     }
 
     pub fn headword(&self, idx: u32) -> Option<String> {
         match &self.reader {
             Reader::Mdict(m) => m.headword(idx).map(str::to_string),
             Reader::Yomitan(y) => y.headword(idx),
+            Reader::InPlace(d) => d.headword(idx),
             Reader::Indexed(s) => s.headword(idx),
         }
     }
@@ -105,6 +123,7 @@ impl Dictionary {
         let result = match &self.reader {
             Reader::Mdict(m) => m.find(word),
             Reader::Yomitan(y) => y.find(word, crate::dictionaries::store::MAX_HITS),
+            Reader::InPlace(d) => d.find(word, crate::dictionaries::store::MAX_HITS),
             Reader::Indexed(s) => s.find(word).unwrap_or_else(|e| { log::warn!("dictionary lookup: {e:#}"); Vec::new() }),
         };
         let result: Vec<_> = result.into_iter().take(crate::dictionaries::store::MAX_HITS).collect();
@@ -124,8 +143,10 @@ impl Dictionary {
 
     /// Entry HTML, following `@@@LINK=` redirects.
     pub fn entry_html(&self, mut idx: u32) -> Result<String> {
-        if let Reader::Yomitan(y) = &self.reader {
-            return y.entry_html(idx);
+        match &self.reader {
+            Reader::Yomitan(y) => return y.entry_html(idx),
+            Reader::InPlace(d) => return d.entry_html(idx),
+            _ => {}
         }
         let mut visited = HashSet::new();
         for _ in 0..32 {
@@ -133,7 +154,7 @@ impl Dictionary {
             let text = match &self.reader {
                 Reader::Mdict(m) => m.record_text(idx)?,
                 Reader::Indexed(s) => s.record_text(idx)?,
-                Reader::Yomitan(_) => unreachable!("Yomitan entries are rendered above"),
+                Reader::Yomitan(_) | Reader::InPlace(_) => unreachable!("rendered above"),
             };
             let trimmed = text.trim();
             if let Some(target) = trimmed.strip_prefix("@@@LINK=") {
