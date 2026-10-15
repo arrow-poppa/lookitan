@@ -34,3 +34,19 @@ jobs:
           workspaces: scripts/dictionary-harness
       - name: Test the actual dictionary readers and persistent indexes
         run: cargo test --locked --manifest-path scripts/dictionary-harness/Cargo.toml
+      # The published dictionaries of the formats Lookupper reads, at pinned releases.
+      - name: Fetch real dictionaries
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          R="$RUNNER_TEMP/real"; mkdir -p "$R"/{jmdict,kanjidic,wordnet,webster,gcide}
+          J=https://github.com/scriptin/jmdict-simplified/releases/download/3.6.2%2B20261012204142
+          curl -sfL "$J/jmdict-eng-common-3.6.2%2B20261012204142.json.zip" -o "$R/j.zip" && unzip -q "$R/j.zip" -d "$R/jmdict"
+          curl -sfL "$J/kanjidic2-en-3.6.2%2B20261012204142.json.zip" -o "$R/k.zip" && unzip -q "$R/k.zip" -d "$R/kanjidic"
+          curl -sfL https://github.com/globalwordnet/english-wordnet/releases/download/2025-edition/english-wordnet-2025.xml.gz | gunzip > "$R/wordnet/english-wordnet-2025.xml"
+          curl -sfL https://www.gutenberg.org/cache/epub/29765/pg29765.txt -o "$R/webster/pg29765.txt"
+          curl -sfL https://ftp.gnu.org/gnu/gcide/gcide-0.53.tar.xz | tar -xJ -C "$R/gcide"
+          echo "LOOKITAN_REAL_DICTIONARIES=$R" >> "$GITHUB_ENV"
+      - name: Test the real dictionaries
+        if: runner.os == 'Linux'
+        run: cargo test --locked --release --manifest-path scripts/dictionary-harness/Cargo.toml real_published_dictionaries -- --nocapture

@@ -185,6 +185,35 @@ fn lookupper_style_archives_are_recognized_like_lookupper_does() {
     assert!(html.contains("noun (common)") && html.contains("cat"), "{html}");
 }
 
+/// The published dictionaries themselves, when the workflow has downloaded them into
+/// `LOOKITAN_REAL_DICTIONARIES` (one folder per dictionary, as an install unpacks them).
+#[test]
+fn real_published_dictionaries_are_indexed_and_read() {
+    let Ok(root) = std::env::var("LOOKITAN_REAL_DICTIONARIES") else { return };
+    let root = PathBuf::from(root);
+    let cache = root.join("cache");
+    for (folder, format, word, expected) in [
+        ("jmdict", "jmdict-simplified-json", "猫", "cat"),
+        ("kanjidic", "kanjidic2-json", "猫", "cat"),
+        ("wordnet", "wordnet-lmf-xml", "cat", "feline mammal"),
+        ("webster", "webster-text", "aback", "Toward the back"),
+        ("gcide", "gcide", "aback", "Toward the back or rear"),
+    ] {
+        let started = std::time::Instant::now();
+        let dictionary = Dictionary::open_cached(folder, &root.join(folder), &cache, &|_| {}).unwrap();
+        let built = started.elapsed();
+        assert_eq!(dictionary.format, format, "{folder}");
+        let hits = dictionary.find(word);
+        assert!(!hits.is_empty(), "{folder}: {word} not found");
+        let html: String = hits.iter().map(|&h| dictionary.entry_html(h).unwrap()).collect();
+        assert!(html.contains(expected), "{folder}: {word} lacks {expected:?}: {}", html.chars().take(2000).collect::<String>());
+        drop(dictionary);
+        let started = std::time::Instant::now();
+        let reopened = Dictionary::open_cached(folder, &root.join(folder), &cache, &|_| panic!("{folder}: the index was rebuilt")).unwrap();
+        println!("{folder}: {} entries, indexed in {built:?}, reopened in {:?}", reopened.len(), started.elapsed());
+    }
+}
+
 #[test]
 fn a_damaged_lkidx_is_rebuilt_and_a_dsl_is_read_where_it_is() {
     let directory = Directory::new();
