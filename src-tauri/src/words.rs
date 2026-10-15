@@ -27,8 +27,10 @@ pub struct Pick {
     pub y1: f32,
 }
 
-/// How far past a word's drawn box the pointer still counts as on it, in capture pixels.
-const UNDER_SLACK: f32 = 2.0;
+/// How far past a word's drawn box the pointer still counts as on it: a share of the box's
+/// height, so it scales with the text, and at least a few capture pixels.
+const UNDER_SLACK: f32 = 0.1;
+const UNDER_SLACK_MIN: f32 = 3.0;
 
 impl Pick {
     /// True when the pointer is on the picked word itself: inside its drawn box, which already
@@ -36,7 +38,8 @@ impl Pick {
     /// shortcut is off any word: the automatic capture then outlines the block of text, and a
     /// region capture opens the whole-screen overlay instead of a pop-up.
     pub fn is_under(&self, px: f32, py: f32) -> bool {
-        px >= self.x0 - UNDER_SLACK && px <= self.x1 + UNDER_SLACK && py >= self.y0 - UNDER_SLACK && py <= self.y1 + UNDER_SLACK
+        let slack = ((self.y1 - self.y0) * UNDER_SLACK).max(UNDER_SLACK_MIN);
+        px >= self.x0 - slack && px <= self.x1 + slack && py >= self.y0 - slack && py <= self.y1 + slack
     }
 }
 
@@ -472,7 +475,7 @@ mod tests {
         let p = pick(std::slice::from_ref(&l), 165.0, 101.0).unwrap();
         assert!((p.y0 - 102.56).abs() < 0.01 && (p.y1 - 117.44).abs() < 0.01);
         assert!(p.is_under(165.0, 110.0));
-        assert!(!p.is_under(165.0, 100.0), "the detected box's padding above the ink is off the word");
+        assert!(!p.is_under(165.0, 99.0), "above the word's box and its slack is off the word");
     }
 
     #[test]
