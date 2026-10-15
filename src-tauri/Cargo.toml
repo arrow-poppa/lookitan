@@ -46,6 +46,10 @@ bzip2 = "0.6"
 lzma-rs = "0.3"
 regex = "1"
 hunspell-rs = "0.4"
+# hunspell-rs turns off hunspell-sys's default features, so its bindgen would not load libclang
+# itself; with another bindgen user (pipewire on Linux) clang-sys is in runtime mode and panics.
+# hunspell-sys's defaults make its bindgen load libclang at run time too.
+hunspell-sys = { version = "0.3", features = ["bundled"] }
 prost = "0.14"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "gzip"] }
 
