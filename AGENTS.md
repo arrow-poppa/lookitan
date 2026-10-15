@@ -66,10 +66,21 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 - **Local dictionaries (0.2):** see `docs/dictionary-engine.md` for formats, evidence and limits.
   The settings wire tag `kind: mdict` is retained for all local readers to keep existing settings
   compatible; `DictInfo.format` identifies the actual format. Do not use this tag to infer file format.
-  Readers stream articles into SQLite; MDict stays lazy/mapped with versioned key sidecars. All
+  **Storage follows Lookupper's model (user's decision, 2026-10-15): no database.** Importing a ZIP
+  unpacks it into `<local data>/dictionaries/content/<id>/` (`source::install`), and the files are
+  read from there unchanged; removing the dictionary deletes that copy. A main file chosen directly
+  is read in place. MDict reads its own key index on every open (no sidecar). Other formats keep a
+  headword index beside their files, `<main>.lkidx` (`dictionaries/lkidx.rs`, Lookupper's
+  HeadwordIndex layout plus each entry's offset/length in the source), and render the entry from
+  the source bytes at lookup time; Yomitan's is `yomitan.lkidx` (`dictionaries/yomitan.rs`).
+  Formats not yet moved to `.lkidx` still go through the SQLite `store.rs`; it goes once all are
+  ported. Lookupper's formats: mdict, yomitan, stardict, slob, dsl, cc-cedict, gcide,
+  webster-text, wordnet-lmf-xml, jmdict-simplified-json, kanjidic2-json, kaikki-jsonl; Codex's
+  other readers stay as extras. All
   source/AI sections follow one configured popup order. Anki retains all homographs per source.
   MDict block caches are bounded by bytes; do not restore a count-only cache. Imports/loads are
-  serialized in AppState, with atomic index publication and safe ZIP extraction.
+  serialized in AppState, with atomic index publication and safe ZIP extraction. Cleanup at start
+  deletes only `.unpacking-*` folders and copies marked `.lookitan-removed`, never unmarked ones.
   Morphology uses the OCR language. Order of forms: on-screen spelling, then Hunspell stems
   (de/en/es/fr/pt/ru, `dictionaries/hunspell.rs`; files in `resources/hunspell/` from
   `fetch-assets.py`, one language loaded at a time), then Yomitan JA/EN rules + WordNet EN
@@ -149,6 +160,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): dictionaries stored the Lookupper way: ZIPs unpacked into `content/<id>/` and read in place, `.lkidx` headword index (Yomitan first), no MDict sidecar; other formats still on SQLite until ported.
 - 2026-10-15 (Claude, `tests`): Hunspell dictionary forms (`dictionaries/hunspell.rs`, hunspell-rs bundled) for de/en/es/fr/pt/ru with Lookupper's same wooorm/dictionaries releases, fetched by `fetch-assets.py`; tried after the on-screen spelling and before the rule guesses.
 - 2026-10-15 (Codex, `tests`): independent multi-format dictionary engine and persistent SQLite/MDict indexes, safe ZIP/resources, MDict block/alias/style fixes, bounded language-aware JA/EN/PT candidates, popup source order and complete homograph Anki export. Format/evidence limits in `docs/dictionary-engine.md`; actual reader tests run on Actions through `scripts/dictionary-harness`.
 - 2026-10-15 (Claude, `tests`): definition and translation languages match Lookupper's 53 (58 with variants), named in English.

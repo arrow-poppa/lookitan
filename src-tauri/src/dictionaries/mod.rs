@@ -2,11 +2,13 @@
 // its implementation and its private index format are not dependencies of this engine.
 pub mod containers;
 pub mod hunspell;
+pub mod lkidx;
 pub mod lexicons;
 pub mod morphology;
 pub mod slob;
 pub mod source;
 pub mod store;
+pub mod yomitan;
 
 #[cfg(test)]
 mod engine_tests;

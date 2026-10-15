@@ -58,7 +58,7 @@ fn dsl_lookup_preserves_homographs_aliases_candidate_precedence_and_dictionary_o
 }
 
 #[test]
-fn zipped_yomitan_is_indexed_with_reading_aliases_structured_resources_and_reused() {
+fn zipped_yomitan_is_unpacked_read_in_place_and_its_index_reused() {
     let directory = Directory::new();
     let source_zip = directory.0.join("study.zip");
     let index = br#"{"title":"Engine fixture","format":3,"revision":"one"}"#;
@@ -72,7 +72,11 @@ fn zipped_yomitan_is_indexed_with_reading_aliases_structured_resources_and_reuse
     let original = fs::read(&source_zip).unwrap();
     let progress = AtomicUsize::new(0);
     let cache = directory.0.join("cache");
-    let dictionary = Dictionary::open_cached("zip", &source_zip, &cache, &|entries| { progress.store(entries, Ordering::SeqCst); }).unwrap();
+    // As in Lookupper: the archive is unpacked into the app's content folder, then read from there.
+    let installed = source::install(&source_zip, &directory.0.join("content"), "zip", &|_| {}).unwrap();
+    assert_eq!(installed, directory.0.join("content").join("zip"));
+    assert!(installed.join("Nested/term_bank_1.json").is_file(), "the bank stays as it was in the archive");
+    let dictionary = Dictionary::open_cached("zip", &installed, &cache, &|entries| { progress.store(entries, Ordering::SeqCst); }).unwrap();
     assert_eq!(dictionary.name, "Engine fixture");
     assert_eq!(dictionary.format, "yomitan");
     assert_eq!(progress.load(Ordering::SeqCst), 1);
@@ -86,20 +90,26 @@ fn zipped_yomitan_is_indexed_with_reading_aliases_structured_resources_and_reuse
     assert_eq!(dictionary.resource("\\images\\CAT.SVG"), Some(b"<svg xmlns='http://www.w3.org/2000/svg'></svg>".to_vec()));
     assert!(dictionary.resource("../study.zip").is_none());
     assert!(dictionary.resource("C:/Windows/win.ini").is_none());
+    assert!(installed.join("Nested/yomitan.lkidx").is_file(), "the headword index sits beside the banks");
+    assert!(!cache.join("indexes").exists(), "nothing is copied into a database");
     drop(dictionary);
-    let reopened = Dictionary::open_cached("zip", &source_zip, &cache, &|_| panic!("warm ZIP reimported articles")).unwrap();
+    let reopened = Dictionary::open_cached("zip", &installed, &cache, &|_| panic!("warm open re-indexed the banks")).unwrap();
     assert_eq!(reopened.find("ねこ").len(), 1);
     assert_eq!(fs::read(&source_zip).unwrap(), original, "import must never change source archive");
+    assert!(source::install(&source_zip, &directory.0.join("content"), "zip", &|_| {}).is_err(), "installing twice is refused");
+    assert!(source::is_installed_copy(&installed, &directory.0.join("content")));
+    assert!(!source::is_installed_copy(&directory.0, &directory.0.join("content")));
 }
 
 #[test]
 fn archive_extraction_rejects_traversal_and_windows_path_syntax() {
     let directory = Directory::new();
-    let cache = directory.0.join("cache");
+    let content = directory.0.join("content");
     for (ordinal, member) in ["../escaped.dsl", "/escaped.dsl", "C:/escaped.dsl", "folder\\escaped.dsl"].iter().enumerate() {
         let zip = directory.0.join(format!("unsafe-{ordinal}.zip"));
         archive(&zip, &[(member, b"word\n\tdefinition\n")]);
-        assert!(source::prepare(&zip, &cache, &format!("unsafe-{ordinal}")).is_err(), "accepted unsafe ZIP member {member}");
+        assert!(source::install(&zip, &content, &format!("unsafe-{ordinal}"), &|_| {}).is_err(), "accepted unsafe ZIP member {member}");
+        assert!(!content.join(format!("unsafe-{ordinal}")).exists(), "a refused archive leaves nothing installed");
     }
     assert!(!directory.0.join("escaped.dsl").exists());
 }

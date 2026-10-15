@@ -1,7 +1,7 @@
 // Dictionaries tab: the pop-up order on the left (drag to reorder, switch to enable) and the selected
 // dictionary's details on the right. The two AI dictionaries carry the BYOK provider settings.
 
-import {open} from '@tauri-apps/plugin-dialog';
+import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {DEFAULT_PROMPT} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
@@ -31,8 +31,12 @@ export async function refreshDicts() {
 }
 
 async function addDictionary() {
-    const path = await open({multiple: false, directory: false, filters: [{name: 'Dicionários',
-        extensions: ['mdx', 'ifo', 'dsl', 'dz', 'zip', 'xml', 'gz', 'bz2', 'txt', 'u8', 'json', 'jsonl', 'slob', 'noun', 'verb', 'adj', 'adv']}]});
+    // As in Lookupper, a dictionary normally comes as an archive, which is unpacked into Lookitan's
+    // own folder. A main file can also be chosen; it is then read where it is.
+    const path = await open({multiple: false, directory: false, filters: [
+        {name: 'Dicionário (ZIP)', extensions: ['zip']},
+        {name: 'Arquivo de dicionário', extensions: ['mdx', 'ifo', 'dsl', 'dz', 'xml', 'gz', 'bz2', 'txt', 'u8', 'json', 'jsonl', 'slob', 'noun', 'verb', 'adj', 'adv']},
+    ]});
     if (!path) { return; }
     const btn = document.getElementById('add-dict');
     const label = btn.innerHTML;
@@ -40,8 +44,9 @@ async function addDictionary() {
     btn.textContent = 'Abrindo dicionário…';
     let stop;
     try {
-        stop = await api.onDictionaryProgress?.(({stage, entries}) => {
-            btn.textContent = stage === 'indexing' ? `Indexando… ${Number(entries).toLocaleString('pt-BR')} verbetes` : 'Lendo dicionário…';
+        stop = await api.onDictionaryProgress?.(({stage, entries, bytes}) => {
+            btn.textContent = stage === 'unpacking' ? `Extraindo… ${Math.round(Number(bytes || 0) / 1048576).toLocaleString('pt-BR')} MB`
+                : stage === 'indexing' ? `Indexando… ${Number(entries).toLocaleString('pt-BR')} verbetes` : 'Lendo dicionário…';
         });
         dicts = await api.addDictionary(path);
         selectedId = dicts[dicts.length - 1]?.id || selectedId;
@@ -105,13 +110,20 @@ function renderDetail() {
 function renderMdict(root, d) {
     const remove = el('button', {html: `${icon('trash', 'sm')}Remover dicionário`});
     remove.addEventListener('click', async () => {
+        const copy = d.installed;
+        const message = copy
+            ? `Remover "${d.name || d.path}"? Os arquivos que o Lookitan extraiu para a pasta dele serão apagados; o arquivo original que você importou não é alterado.`
+            : `Remover "${d.name || d.path}" da lista? O arquivo do dicionário não é apagado.`;
+        if (!await ask(message, {title: 'Remover dicionário', kind: 'warning', okLabel: 'Remover', cancelLabel: 'Cancelar'})) { return; }
         dicts = await api.removeDictionary(d.id);
         selectedId = null;
         renderList();
     });
     root.append(
         el('h2', {}, d.name || d.path),
-        el('p', {class: 'lead'}, d.error ? `Erro ao abrir: ${d.error}` : 'Dicionário local. Estilos, imagens e áudio são lidos da mesma pasta, dos arquivos .mdd ou do ZIP importado.'),
+        el('p', {class: 'lead'}, d.error ? `Erro ao abrir: ${d.error}` : (d.installed
+            ? 'Dicionário importado. Os arquivos foram extraídos para a pasta do Lookitan e são lidos de lá, sem conversão.'
+            : 'Dicionário local, lido do lugar onde está. Estilos, imagens e áudio vêm da mesma pasta ou dos arquivos .mdd.')),
         d.description ? el('p', {class: 'muted'}, d.description) : null,
         ...(d.warnings || []).map((text) => el('p', {class: 'error'}, text)),
         el('h3', {}, 'Informações'),
@@ -119,7 +131,7 @@ function renderMdict(root, d) {
             cardRow({icon: 'book', title: 'Formato', control: el('span', {class: 'muted'}, d.format || 'Dicionário local')}),
             cardRow({icon: 'list', title: 'Verbetes', control: el('span', {class: 'muted'}, d.loaded ? d.entries.toLocaleString('pt-BR') : (d.enabled ? 'Carregando…' : 'Desativado'))}),
             cardRow({icon: 'folder', title: 'Arquivos de recursos (.mdd)', control: el('span', {class: 'muted'}, String(d.resourceFiles))}),
-            cardRow({icon: 'folder', title: 'Arquivo', desc: d.path, control: remove})),
+            cardRow({icon: 'folder', title: d.installed ? 'Pasta' : 'Arquivo', desc: d.path, control: remove})),
     );
 }
 

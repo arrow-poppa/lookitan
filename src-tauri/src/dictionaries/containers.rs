@@ -35,7 +35,7 @@ const MAX_DEPTH: usize = 64;
 
 pub fn supports(path: &Path) -> bool {
     let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-    name.ends_with(".ifo") || name.ends_with(".dsl") || name.ends_with(".dsl.dz") || name == "index.json"
+    name.ends_with(".ifo") || name.ends_with(".dsl") || name.ends_with(".dsl.dz")
 }
 
 pub fn import(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
@@ -44,8 +44,6 @@ pub fn import(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
         import_stardict(path, sink)
     } else if name.ends_with(".dsl") || name.ends_with(".dsl.dz") {
         import_dsl(path, sink)
-    } else if name == "index.json" {
-        import_yomitan(path, sink)
     } else {
         bail!("Formato de dicionário não reconhecido: {}", path.display())
     }
@@ -819,100 +817,101 @@ fn banks(dir: &Path, prefix: &str) -> Result<Vec<PathBuf>> {
     Ok(files.into_iter().map(|(_, p)| p).collect())
 }
 
-fn import_yomitan(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
+/// A Yomitan dictionary's index.json: its title, description and format version.
+pub(super) fn yomitan_index(path: &Path) -> Result<(String, String, u64, Value)> {
     let index = json_file(path, MAX_HEADER)?;
     let name = index.get("title").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).ok_or_else(|| anyhow!("Yomitan index.json sem title"))?.to_string();
     let version = index.get("format").or_else(|| index.get("version")).and_then(Value::as_u64).unwrap_or(0);
     ensure!(matches!(version, 1..=3), "Formato Yomitan não suportado: {version}");
-    let dir = path.parent().ok_or_else(|| anyhow!("index.json sem pasta"))?;
-    let term_banks = banks(dir, "term_bank_")?;
-    let kanji_banks = banks(dir, "kanji_bank_")?;
-    let meta_banks = banks(dir, "term_meta_bank_")?;
-    let kanji_meta_banks = banks(dir, "kanji_meta_bank_")?;
-    ensure!(!term_banks.is_empty() || !kanji_banks.is_empty() || !meta_banks.is_empty() || !kanji_meta_banks.is_empty(),
-        "Dicionário Yomitan sem bancos de termos, kanji, frequência ou acento");
-    let tags = yomitan_tags(dir, &index)?;
-    for bank_path in term_banks {
-        json_rows(&bank_path, |row| {
-            let row = row.as_array().ok_or_else(|| anyhow!("Termo Yomitan inválido"))?;
-            ensure!(row.len() >= if version == 1 { 5 } else { 8 }, "Termo Yomitan incompleto");
-            let word = value_str(row.first()).ok_or_else(|| anyhow!("Termo Yomitan sem palavra"))?;
-            let reading = value_str(row.get(1)).unwrap_or("");
-            ensure!(word.len() <= MAX_HEADWORD && reading.len() <= MAX_HEADWORD, "Palavra/leitura Yomitan excede 16 KiB");
-            for i in [2, 3, 7] { ensure!(value_str(row.get(i)).unwrap_or("").len() <= MAX_HEADWORD, "Tags Yomitan excedem 16 KiB"); }
-            let mut html = format!("<div class=\"yomitan-entry\"><div class=\"yomitan-headword\"><b>{}</b>", escape_html(word));
-            if !reading.is_empty() && reading != word { html.push_str(&format!(" <span class=\"yomitan-reading\">【{}】</span>", escape_html(reading))); }
-            html.push_str("</div>");
-            html.push_str(&tag_html(value_str(row.get(2)).unwrap_or(""), &tags));
-            if version > 1 { html.push_str(&tag_html(value_str(row.get(7)).unwrap_or(""), &tags)); }
-            if let Some(rules) = value_str(row.get(3)).filter(|s| !s.is_empty()) { html.push_str(&format!("<span class=\"yomitan-rules\">{}</span>", escape_html(rules))); }
-            html.push_str("<ol class=\"yomitan-glossary\">");
-            let glosses = if version == 1 { &row[5..] } else { row[5].as_array().ok_or_else(|| anyhow!("Glossário Yomitan inválido"))?.as_slice() };
-            for gloss in glosses {
-                html.push_str("<li>");
-                render_yomitan(gloss, &mut html, 0)?;
-                html.push_str("</li>");
-                ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
-            }
-            html.push_str("</ol></div>");
-            let aliases = if !reading.is_empty() && reading != word { vec![reading.to_string()] } else { Vec::new() };
-            add_entry(sink, word, &html, &aliases)?;
-            Ok(())
-        })?;
+    let description = index.get("description").and_then(Value::as_str).unwrap_or("").to_string();
+    Ok((name, description, version, index))
+}
+
+/// The bank files of a Yomitan dictionary folder, in bank order.
+pub(super) fn yomitan_banks(dir: &Path, prefix: &str) -> Result<Vec<PathBuf>> {
+    banks(dir, prefix)
+}
+
+pub(super) fn yomitan_tag_notes(dir: &Path, index: &Value) -> Result<HashMap<String, String>> {
+    yomitan_tags(dir, index)
+}
+
+/// The word and reading of a term row, without rendering it (for indexing).
+pub(super) fn yomitan_term_keys(row: &[Value]) -> Result<(String, String)> {
+    let word = value_str(row.first()).ok_or_else(|| anyhow!("Termo Yomitan sem palavra"))?;
+    let reading = value_str(row.get(1)).unwrap_or("");
+    ensure!(word.len() <= MAX_HEADWORD && reading.len() <= MAX_HEADWORD, "Palavra/leitura Yomitan excede 16 KiB");
+    Ok((word.to_string(), reading.to_string()))
+}
+
+/// One term row as HTML.
+pub(super) fn yomitan_term_html(row: &[Value], version: u64, tags: &HashMap<String, String>) -> Result<String> {
+    ensure!(row.len() >= if version == 1 { 5 } else { 8 }, "Termo Yomitan incompleto");
+    let (word, reading) = yomitan_term_keys(row)?;
+    for i in [2, 3, 7] { ensure!(value_str(row.get(i)).unwrap_or("").len() <= MAX_HEADWORD, "Tags Yomitan excedem 16 KiB"); }
+    let mut html = format!("<div class=\"yomitan-entry\"><div class=\"yomitan-headword\"><b>{}</b>", escape_html(&word));
+    if !reading.is_empty() && reading != word { html.push_str(&format!(" <span class=\"yomitan-reading\">【{}】</span>", escape_html(&reading))); }
+    html.push_str("</div>");
+    html.push_str(&tag_html(value_str(row.get(2)).unwrap_or(""), tags));
+    if version > 1 { html.push_str(&tag_html(value_str(row.get(7)).unwrap_or(""), tags)); }
+    if let Some(rules) = value_str(row.get(3)).filter(|s| !s.is_empty()) { html.push_str(&format!("<span class=\"yomitan-rules\">{}</span>", escape_html(rules))); }
+    html.push_str("<ol class=\"yomitan-glossary\">");
+    let glosses = if version == 1 { &row[5..] } else { row[5].as_array().ok_or_else(|| anyhow!("Glossário Yomitan inválido"))?.as_slice() };
+    for gloss in glosses {
+        html.push_str("<li>");
+        render_yomitan(gloss, &mut html, 0)?;
+        html.push_str("</li>");
+        ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
     }
-    for bank_path in kanji_banks {
-        json_rows(&bank_path, |row| {
-            let row = row.as_array().ok_or_else(|| anyhow!("Kanji Yomitan inválido"))?;
-            ensure!(row.len() >= if version == 1 { 4 } else { 6 }, "Kanji Yomitan incompleto");
-            let word = value_str(row.first()).ok_or_else(|| anyhow!("Kanji Yomitan sem caractere"))?;
-            ensure!(word.len() <= MAX_HEADWORD, "Kanji Yomitan muito longo");
-            for i in 1..=3 { ensure!(value_str(row.get(i)).unwrap_or("").len() <= MAX_HEADWORD, "Leitura/tag kanji muito longa"); }
-            let mut html = format!("<div class=\"yomitan-kanji\"><b>{}</b>", escape_html(word));
-            for (i, label) in [(1, "On"), (2, "Kun")] {
-                if let Some(readings) = value_str(row.get(i)).filter(|s| !s.is_empty()) { html.push_str(&format!("<div class=\"yomitan-reading\">{label}: {}</div>", escape_html(readings))); }
-            }
-            html.push_str(&tag_html(value_str(row.get(3)).unwrap_or(""), &tags));
-            html.push_str("<ul>");
-            let meanings = if version == 1 { &row[4..] } else { row[4].as_array().ok_or_else(|| anyhow!("Significados kanji inválidos"))?.as_slice() };
-            for meaning in meanings { html.push_str("<li>"); render_yomitan(meaning, &mut html, 0)?; html.push_str("</li>"); }
-            html.push_str("</ul>");
-            if version > 1 {
-                if let Some(stats) = row[5].as_object() {
-                    html.push_str("<dl class=\"yomitan-stats\">");
-                    for (k, v) in stats {
-                        let value = v.as_str().map(str::to_string).unwrap_or_else(|| if v.is_number() { v.to_string() } else { String::new() });
-                        html.push_str(&format!("<dt>{}</dt><dd>{}</dd>", escape_html(k), escape_html(&value)));
-                    }
-                    html.push_str("</dl>");
-                }
-            }
-            html.push_str("</div>");
-            add_entry(sink, word, &html, &[])?;
-            Ok(())
-        })?;
+    html.push_str("</ol></div>");
+    Ok(html)
+}
+
+/// One kanji row as HTML.
+pub(super) fn yomitan_kanji_html(row: &[Value], version: u64, tags: &HashMap<String, String>) -> Result<String> {
+    ensure!(row.len() >= if version == 1 { 4 } else { 6 }, "Kanji Yomitan incompleto");
+    let word = value_str(row.first()).ok_or_else(|| anyhow!("Kanji Yomitan sem caractere"))?;
+    ensure!(word.len() <= MAX_HEADWORD, "Kanji Yomitan muito longo");
+    for i in 1..=3 { ensure!(value_str(row.get(i)).unwrap_or("").len() <= MAX_HEADWORD, "Leitura/tag kanji muito longa"); }
+    let mut html = format!("<div class=\"yomitan-kanji\"><b>{}</b>", escape_html(word));
+    for (i, label) in [(1, "On"), (2, "Kun")] {
+        if let Some(readings) = value_str(row.get(i)).filter(|s| !s.is_empty()) { html.push_str(&format!("<div class=\"yomitan-reading\">{label}: {}</div>", escape_html(readings))); }
     }
-    // Frequency, pitch accent and IPA rows (term_meta_bank) and kanji frequencies, which
-    // Lookupper shows as Frequency and Pitch accent articles. They mostly come in dictionaries
-    // of their own, so each row is an article of its own word.
-    for (bank_path, kanji) in meta_banks.into_iter().map(|p| (p, false)).chain(kanji_meta_banks.into_iter().map(|p| (p, true))) {
-        json_rows(&bank_path, |row| {
-            let row = row.as_array().ok_or_else(|| anyhow!("Metadado Yomitan inválido"))?;
-            let (Some(word), Some(mode), Some(data)) = (value_str(row.first()), value_str(row.get(1)), row.get(2)) else {
-                bail!("Metadado Yomitan incompleto");
-            };
-            ensure!(word.len() <= MAX_HEADWORD, "Palavra Yomitan excede 16 KiB");
-            let Some((reading, body)) = yomitan_meta(mode, data, kanji) else { return Ok(()) };
-            let mut html = format!("<div class=\"yomitan-meta\"><div class=\"yomitan-headword\"><b>{}</b>", escape_html(word));
-            if !reading.is_empty() && reading != word { html.push_str(&format!(" <span class=\"yomitan-reading\">【{}】</span>", escape_html(&reading))); }
-            html.push_str("</div>");
-            html.push_str(&body);
-            html.push_str("</div>");
-            ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
-            let aliases = if !reading.is_empty() && reading != word { vec![reading] } else { Vec::new() };
-            add_entry(sink, word, &html, &aliases)
-        })?;
+    html.push_str(&tag_html(value_str(row.get(3)).unwrap_or(""), tags));
+    html.push_str("<ul>");
+    let meanings = if version == 1 { &row[4..] } else { row[4].as_array().ok_or_else(|| anyhow!("Significados kanji inválidos"))?.as_slice() };
+    for meaning in meanings { html.push_str("<li>"); render_yomitan(meaning, &mut html, 0)?; html.push_str("</li>"); }
+    html.push_str("</ul>");
+    if version > 1 {
+        if let Some(stats) = row[5].as_object() {
+            html.push_str("<dl class=\"yomitan-stats\">");
+            for (k, v) in stats {
+                let value = v.as_str().map(str::to_string).unwrap_or_else(|| if v.is_number() { v.to_string() } else { String::new() });
+                html.push_str(&format!("<dt>{}</dt><dd>{}</dd>", escape_html(k), escape_html(&value)));
+            }
+            html.push_str("</dl>");
+        }
     }
-    Ok(ImportInfo { name, format: "yomitan", description: index.get("description").and_then(Value::as_str).unwrap_or("").to_string() })
+    html.push_str("</div>");
+    Ok(html)
+}
+
+/// The word, reading and HTML of a term_meta_bank or kanji_meta_bank row (frequency, pitch
+/// accent, IPA), which Lookupper shows as Frequency and Pitch accent articles. `None` for modes
+/// it does not show.
+pub(super) fn yomitan_meta_html(row: &[Value], kanji: bool) -> Result<Option<(String, String, String)>> {
+    let (Some(word), Some(mode), Some(data)) = (value_str(row.first()), value_str(row.get(1)), row.get(2)) else {
+        bail!("Metadado Yomitan incompleto");
+    };
+    ensure!(word.len() <= MAX_HEADWORD, "Palavra Yomitan excede 16 KiB");
+    let Some((reading, body)) = yomitan_meta(mode, data, kanji) else { return Ok(None) };
+    let mut html = format!("<div class=\"yomitan-meta\"><div class=\"yomitan-headword\"><b>{}</b>", escape_html(word));
+    if !reading.is_empty() && reading != word { html.push_str(&format!(" <span class=\"yomitan-reading\">【{}】</span>", escape_html(&reading))); }
+    html.push_str("</div>");
+    html.push_str(&body);
+    html.push_str("</div>");
+    ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
+    Ok(Some((word.to_string(), reading, html)))
 }
 
 /// The reading and HTML of a term_meta_bank or kanji_meta_bank row; `None` for unknown modes.
@@ -1280,62 +1279,9 @@ mod tests {
     }
 
     #[test]
-    fn yomitan_structured_images_tags_reading_kanji_and_internal_links() {
-        let dir = TestDir::new();
-        fs::write(dir.0.join("index.json"), r#"{"title":"Study Yomitan","format":3,"revision":"1"}"#).unwrap();
-        fs::write(dir.0.join("tag_bank_1.json"), r#"[["n","partOfSpeech",0,"noun",0]]"#).unwrap();
-        let terms = serde_json::json!([["猫", "ねこ", "n", "", 1, [{"type":"structured-content","content":{"tag":"div","data":{"content":"glossary"},"content":["cat <unsafe>",{"tag":"ruby","content":["猫",{"tag":"rt","content":"ねこ"}]},{"tag":"a","href":"?query=%E7%8A%AC","content":"dog"},{"tag":"img","path":"images/cat.png","width":2,"sizeUnits":"em"}]}}], 1, ""]]);
-        fs::write(dir.0.join("term_bank_1.json"), terms.to_string()).unwrap();
-        fs::write(dir.0.join("kanji_bank_1.json"), r#"[["猫","ビョウ","ねこ","n",["cat"],{"strokes":"11"}]]"#).unwrap();
-        let mut sink = Sink::default();
-        let info = import(&dir.0.join("index.json"), &mut sink).unwrap();
-        assert_eq!(info.format, "yomitan"); assert_eq!(sink.0.len(), 2);
-        let (_, html, aliases) = &sink.0[0];
-        assert_eq!(aliases, &vec!["ねこ".to_string()]);
-        assert!(html.contains("cat &lt;unsafe&gt;"));
-        assert!(html.contains("data-sc-content=\"glossary\""));
-        assert!(html.contains("<ruby>猫<rt>ねこ</rt></ruby>"));
-        assert!(html.contains(&entry_link("犬")));
-        assert!(html.contains("src=\"images/cat.png\""));
-        assert!(html.contains("width:2em"));
-        assert!(html.contains("title=\"noun\""));
-        assert!(sink.0[1].1.contains("strokes</dt><dd>11"));
+    fn yomitan_helpers_and_resource_paths() {
         assert_eq!(data_attribute("wordClass"), "data-sc-word-class");
-    }
-
-    #[test]
-    fn yomitan_frequency_and_pitch_dictionaries_become_articles() {
-        let dir = TestDir::new();
-        fs::write(dir.0.join("index.json"), r#"{"title":"Pitch and frequency","format":3,"revision":"1"}"#).unwrap();
-        fs::write(dir.0.join("term_meta_bank_1.json"), r#"[
-            ["猫","pitch",{"reading":"ねこ","pitches":[{"position":1}]}],
-            ["橋","pitch",{"reading":"はし","pitches":[{"position":2}]}],
-            ["今日","freq",{"reading":"きょう","frequency":{"value":12,"displayValue":"12㋕"}}],
-            ["the","freq",5],
-            ["猫","mystery",{}]
-        ]"#).unwrap();
-        fs::write(dir.0.join("kanji_meta_bank_1.json"), r#"[["猫","freq",{"value":1702}]]"#).unwrap();
-        let mut sink = Sink::default();
-        import(&dir.0.join("index.json"), &mut sink).unwrap();
-        assert_eq!(sink.0.len(), 5, "unknown modes are skipped");
-        let (word, html, aliases) = &sink.0[0];
-        assert_eq!((word.as_str(), aliases.clone()), ("猫", vec!["ねこ".to_string()]));
-        assert!(html.contains("Acento") && html.contains("[1]"));
-        assert!(html.contains("<span style=\"border-top:1px solid currentColor;border-right:1px solid currentColor;\">ね</span>こ"), "{html}");
-        assert!(sink.0[1].1.contains("は<span style=\"border-top:1px solid currentColor;border-right:1px solid currentColor;\">し</span>"), "odaka drops after the last mora");
-        assert!(sink.0[2].1.contains("12㋕") && sink.0[2].2 == vec!["きょう".to_string()]);
-        assert!(sink.0[3].1.contains("Frequência</span> 5"));
-        assert!(sink.0[4].1.contains("1702"));
         assert_eq!(morae("きょうと"), vec!["きょ", "う", "と"]);
-    }
-
-    #[test]
-    fn yomitan_v1_and_resource_paths() {
-        let dir = TestDir::new();
-        fs::write(dir.0.join("index.json"), r#"{"title":"Old format","version":1,"revision":"1"}"#).unwrap();
-        fs::write(dir.0.join("term_bank_1.json"), r#"[["word","","","",0,"one","two"]]"#).unwrap();
-        let mut sink = Sink::default(); import(&dir.0.join("index.json"), &mut sink).unwrap();
-        assert!(sink.0[0].1.contains("<li>one</li><li>two</li>"));
         assert!(resource_path("../outside.png").is_none());
         assert!(resource_path("C:\\secret.png").is_none());
         assert!(yomitan_href("javascript:alert(1)").is_none());

@@ -1,4 +1,6 @@
-// Installed dictionaries: an MDict entry file plus its companion resource files.
+// Installed dictionaries, read in place as Lookupper reads them: an MDict from its .mdx and .mdd
+// files, a Yomitan dictionary from its banks with a `yomitan.lkidx` headword index beside them.
+// Formats not yet read in place are indexed into SQLite (dictionaries/store.rs).
 
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -9,10 +11,11 @@ use serde::Serialize;
 use parking_lot::Mutex;
 
 use crate::mdict::Mdict;
-use crate::dictionaries::{source, store::Store};
+use crate::dictionaries::{source, store::Store, yomitan::{self, Yomitan}};
 
 enum Reader {
     Mdict(Mdict),
+    Yomitan(Yomitan),
     Indexed(Store),
 }
 
@@ -46,20 +49,33 @@ impl Dictionary {
         if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
             return Err(anyhow!("invalid local dictionary identifier"));
         }
-        let path = source::prepare(path, cache, id)?;
+        // `path` is the folder Lookitan unpacked the dictionary into, or a main file used in place.
+        let installed = path.is_dir();
+        let path = source::main_file(path)?;
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
         let mut mdds = Vec::new();
         let mut warnings = Vec::new();
+        let is_index_json = path.file_name().map(|n| n.eq_ignore_ascii_case("index.json")).unwrap_or(false);
         let (reader, name, format, description) = if path.extension().map(|e| e.eq_ignore_ascii_case("mdx")).unwrap_or(false) {
-            let mdx = Mdict::open_cached(&path, &cache.join("mdict"))?;
+            let mdx = Mdict::open(&path)?;
             let name = mdx.title.clone();
             for p in companion_mdds(&path)? {
-                match Mdict::open_cached(&p, &cache.join("mdict")) {
+                match Mdict::open(&p) {
                     Ok(m) => mdds.push(m),
                     Err(e) => warnings.push(format!("{}: {e:#}", p.display())),
                 }
             }
             (Reader::Mdict(mdx), name, "MDict".to_string(), String::new())
+        } else if is_index_json && yomitan::supports(&dir) {
+            // The index goes beside the banks in Lookitan's own copy, and into the app's cache for
+            // a folder used in place.
+            let index_path = if installed { dir.join(yomitan::INDEX_FILE) } else {
+                std::fs::create_dir_all(cache.join("indexes"))?;
+                cache.join("indexes").join(format!("{id}.{}", yomitan::INDEX_FILE))
+            };
+            let y = Yomitan::open(&dir, &index_path, progress)?;
+            let (name, description) = (y.title().to_string(), y.description().to_string());
+            (Reader::Yomitan(y), name, yomitan::FORMAT.to_string(), description)
         } else {
             let store = Store::open(&path, &cache.join("indexes"), id, progress)?;
             let name = store.name.clone();
@@ -72,11 +88,15 @@ impl Dictionary {
     }
 
     pub fn len(&self) -> usize {
-        match &self.reader { Reader::Mdict(m) => m.len(), Reader::Indexed(s) => s.len() }
+        match &self.reader { Reader::Mdict(m) => m.len(), Reader::Yomitan(y) => y.len(), Reader::Indexed(s) => s.len() }
     }
 
     pub fn headword(&self, idx: u32) -> Option<String> {
-        match &self.reader { Reader::Mdict(m) => m.headword(idx).map(str::to_string), Reader::Indexed(s) => s.headword(idx) }
+        match &self.reader {
+            Reader::Mdict(m) => m.headword(idx).map(str::to_string),
+            Reader::Yomitan(y) => y.headword(idx),
+            Reader::Indexed(s) => s.headword(idx),
+        }
     }
 
     pub fn find(&self, word: &str) -> Vec<u32> {
@@ -84,6 +104,7 @@ impl Dictionary {
         if let Some((_, result)) = self.hits.lock().iter().find(|(k, _)| k == word) { return result.clone(); }
         let result = match &self.reader {
             Reader::Mdict(m) => m.find(word),
+            Reader::Yomitan(y) => y.find(word, crate::dictionaries::store::MAX_HITS),
             Reader::Indexed(s) => s.find(word).unwrap_or_else(|e| { log::warn!("dictionary lookup: {e:#}"); Vec::new() }),
         };
         let result: Vec<_> = result.into_iter().take(crate::dictionaries::store::MAX_HITS).collect();
@@ -103,12 +124,16 @@ impl Dictionary {
 
     /// Entry HTML, following `@@@LINK=` redirects.
     pub fn entry_html(&self, mut idx: u32) -> Result<String> {
+        if let Reader::Yomitan(y) = &self.reader {
+            return y.entry_html(idx);
+        }
         let mut visited = HashSet::new();
         for _ in 0..32 {
             if !visited.insert(idx) { return Err(anyhow!("dictionary redirect cycle")); }
             let text = match &self.reader {
                 Reader::Mdict(m) => m.record_text(idx)?,
                 Reader::Indexed(s) => s.record_text(idx)?,
+                Reader::Yomitan(_) => unreachable!("Yomitan entries are rendered above"),
             };
             let trimmed = text.trim();
             if let Some(target) = trimmed.strip_prefix("@@@LINK=") {

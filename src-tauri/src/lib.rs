@@ -75,6 +75,9 @@ struct Recognition {
 
 pub struct AppState {
     config_dir: PathBuf,
+    /// Installed dictionaries (`content/<id>/`) and their caches, in the local (not roaming)
+    /// data folder: like Lookupper's LocalState, it can hold several gigabytes.
+    dictionaries_dir: PathBuf,
     resource_dir: PathBuf,
     pub settings: RwLock<Settings>,
     pub dicts: RwLock<DictList>,
@@ -188,6 +191,8 @@ pub struct DictInfo {
     pub format: String,
     pub description: String,
     pub warnings: Vec<String>,
+    /// The dictionary is a copy Lookitan unpacked into its own folder (removing it deletes it).
+    pub installed: bool,
     pub error: Option<String>,
 }
 
@@ -269,6 +274,26 @@ fn lens_engine(state: &AppState) -> Result<Arc<LensOcr>> {
 // ---------------------------------------------------------------------------------------------
 // Dictionaries
 
+fn content_dir(state: &AppState) -> PathBuf {
+    state.dictionaries_dir.join("content")
+}
+
+/// Finishes what an earlier session left: an install that was interrupted, or a removed
+/// dictionary whose files were still open. Only folders marked as such are deleted, so a damaged
+/// settings file can never take installed dictionaries with it.
+fn remove_unused_copies(state: &AppState) {
+    let content = content_dir(state);
+    let Ok(entries) = std::fs::read_dir(&content) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let unfinished = entry.file_name().to_string_lossy().starts_with(".unpacking-");
+        if (unfinished || path.join(dictionaries::source::REMOVED_MARKER).is_file()) && dictionaries::source::is_installed_copy(&path, &content) {
+            log::info!("removing unused dictionary copy {}", path.display());
+            if let Err(e) = std::fs::remove_dir_all(&path) { log::warn!("remove {}: {e}", path.display()); }
+        }
+    }
+}
+
 fn load_dictionaries(state: &AppState) {
     let _loading = state.dictionary_gate.lock();
     let configs: Vec<DictionaryConfig> = state.settings.read().dictionaries.clone();
@@ -279,7 +304,7 @@ fn load_dictionaries(state: &AppState) {
             loaded.push(d.clone());
             continue;
         }
-        match Dictionary::open_cached(&c.id, std::path::Path::new(&c.path), &state.config_dir.join("dictionaries"), &|_| {}) {
+        match Dictionary::open_cached(&c.id, std::path::Path::new(&c.path), &state.dictionaries_dir, &|_| {}) {
             Ok(d) => loaded.push(Arc::new(d)),
             Err(e) => {
                 log::warn!("dictionary {}: {e:#}", c.path);
@@ -292,6 +317,7 @@ fn load_dictionaries(state: &AppState) {
 }
 
 fn dictionary_infos(state: &AppState) -> Vec<DictInfo> {
+    let content = content_dir(state);
     let settings = state.settings.read();
     let dicts = state.dicts.read();
     let errors = state.dict_errors.read();
@@ -312,6 +338,7 @@ fn dictionary_infos(state: &AppState) -> Vec<DictInfo> {
                 format: d.map(|d| d.format.clone()).unwrap_or_default(),
                 description: d.map(|d| d.description.clone()).unwrap_or_default(),
                 warnings: d.map(|d| d.warnings.clone()).unwrap_or_default(),
+                installed: dictionaries::source::is_installed_copy(std::path::Path::new(&c.path), &content),
                 error: errors.get(&c.id).cloned(),
             }
         })
@@ -1105,10 +1132,26 @@ async fn add_dictionary(app: AppHandle, path: String) -> std::result::Result<Vec
         if state.settings.read().dictionaries.iter().any(|d| d.id == id) {
             return Err("This dictionary is already installed.".to_string());
         }
-        let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "reading", "entries": 0}));
-        let dict = Dictionary::open_cached(&id, std::path::Path::new(&path), &state.config_dir.join("dictionaries"), &|entries| {
-            let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "indexing", "entries": entries}));
+        // Like Lookupper: an archive is unpacked into the app's own folder and read from there.
+        let content = content_dir(&state);
+        let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "unpacking", "bytes": 0}));
+        let installed = dictionaries::source::install(&source, &content, &id, &|bytes| {
+            let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "unpacking", "bytes": bytes}));
         }).map_err(|e| format!("{e:#}"))?;
+        let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "reading", "entries": 0}));
+        let opened = Dictionary::open_cached(&id, &installed, &state.dictionaries_dir, &|entries| {
+            let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "indexing", "entries": entries}));
+        });
+        let dict = match opened {
+            Ok(d) => d,
+            Err(e) => {
+                if dictionaries::source::is_installed_copy(&installed, &content) {
+                    let _ = std::fs::remove_dir_all(&installed);
+                }
+                return Err(format!("{e:#}"));
+            }
+        };
+        let path = installed.to_string_lossy().into_owned();
         let name = dict.name.clone();
         {
             let mut s = state.settings.write();
@@ -1131,10 +1174,24 @@ fn remove_dictionary(state: tauri::State<'_, AppState>, id: String) -> std::resu
         if s.dictionaries.iter().any(|d| d.id == id && d.kind != DictionaryKind::Mdict) {
             return Err("Built-in dictionaries can be turned off but not removed.".into());
         }
+        let removed: Vec<String> = s.dictionaries.iter().filter(|d| d.id == id).map(|d| d.path.clone()).collect();
         s.dictionaries.retain(|d| d.id != id);
         settings::save(&state.config_dir, &s).map_err(|e| format!("{e:#}"))?;
+        drop(s);
+        state.dicts.write().retain(|d| d.id != id);
+        // The unpacked copy is Lookitan's own and goes with the dictionary, as in Lookupper. A file
+        // used in place is the user's and stays. A copy still in use is removed at the next start.
+        let content = content_dir(&state);
+        for path in removed {
+            let path = std::path::Path::new(&path);
+            if dictionaries::source::is_installed_copy(path, &content) {
+                if let Err(e) = std::fs::remove_dir_all(path) {
+                    log::warn!("remove {}: {e}; retrying at the next start", path.display());
+                    let _ = std::fs::write(path.join(dictionaries::source::REMOVED_MARKER), b"");
+                }
+            }
+        }
     }
-    state.dicts.write().retain(|d| d.id != id);
     Ok(dictionary_infos(&state))
 }
 
@@ -1363,6 +1420,7 @@ pub fn run() {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
+            let dictionaries_dir = app.path().app_local_data_dir()?.join("dictionaries");
             let resource_dir = app.path().resource_dir()?;
             dictionaries::hunspell::set_root(resource_dir.join("hunspell"));
             let first_run = !settings::settings_path(&config_dir).exists();
@@ -1371,6 +1429,7 @@ pub fn run() {
             let mouse = settings.mouse_hotkey.clone();
             app.manage(AppState {
                 config_dir,
+                dictionaries_dir,
                 resource_dir,
                 settings: RwLock::new(settings),
                 dicts: RwLock::new(Vec::new()),
@@ -1421,6 +1480,7 @@ pub fn run() {
                 let handle = handle.clone();
                 std::thread::spawn(move || {
                     let state = handle.state::<AppState>();
+                    remove_unused_copies(&state);
                     load_dictionaries(&state);
                     let _ = handle.emit("dictionaries-changed", ());
                     let language = state.settings.read().ocr_language.clone();

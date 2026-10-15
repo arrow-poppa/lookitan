@@ -25,9 +25,6 @@ const MAX_BLOCKS: usize = 262_144;
 const CACHE_BYTES: usize = 4 * 1024 * 1024;
 const CACHE_BLOCKS: usize = 8;
 
-#[path = "mdict_index.rs"]
-mod index_cache;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Encoding { Utf8, Utf16, Gb18030, Big5 }
 
@@ -288,21 +285,9 @@ impl Mdict {
         Self::parse(path.to_path_buf(), mmap, is_mdd)
     }
 
-    /// Like `open`, with an app-owned persistent index. Invalid, stale or unwritable
-    /// caches never prevent opening the source dictionary; records remain in the MDX/MDD.
-    pub fn open_cached(path: &Path, cache_directory: &Path) -> Result<Self> {
-        let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-        // SAFETY: same read-only-file lifetime contract as `open`.
-        let mmap = unsafe { Mmap::map(&file)? };
-        let is_mdd = path.extension().map(|e| e.eq_ignore_ascii_case("mdd")).unwrap_or(false);
-        Self::parse_cached(path.to_path_buf(), mmap, is_mdd, Some(cache_directory))
-    }
-
+    /// Reads the key index out of the file itself on every open, as Lookupper does: an MDict has no
+    /// sidecar index.
     fn parse(path: PathBuf, mmap: Mmap, is_mdd: bool) -> Result<Self> {
-        Self::parse_cached(path, mmap, is_mdd, None)
-    }
-
-    fn parse_cached(path: PathBuf, mmap: Mmap, is_mdd: bool, cache_directory: Option<&Path>) -> Result<Self> {
         let mut cursor = Cursor { data: &mmap, pos: 0 };
         let header_size = bounded(cursor.u32()? as u64, MAX_HEADER_BYTES, "header")?;
         let header_bytes = cursor.take(header_size)?;
@@ -337,8 +322,6 @@ impl Mdict {
         let key_blocks_size = usize::try_from(cursor.num(wide)?).context("key blocks size overflow")?;
         if wide { cursor.take(4)?; }
         let key_index_bytes = cursor.take(key_index_size)?;
-        // Skip compressed keys on a warm open; their sidecar is loaded after the
-        // record table establishes the valid offset range.
         let key_blocks_bytes = cursor.take(key_blocks_size)?;
 
         let record_count = bounded(cursor.num(wide)?, MAX_BLOCKS, "record block count")?;
@@ -363,11 +346,7 @@ impl Mdict {
             record_size = record_size.checked_add(unpacked).ok_or_else(|| anyhow!("record offset overflow"))?;
         }
         if file_offset != cursor.pos { bail!("record blocks size mismatch"); }
-        let identity = cache_directory.and_then(|_| index_cache::Identity::source(&path, mmap.len(), header_bytes, entry_count).ok());
-        let cached = cache_directory.zip(identity.as_ref()).and_then(|(directory, identity)| index_cache::load(directory, identity, record_size));
-        let (keys, index, record_offsets) = if let Some(cached) = cached {
-            (cached.keys, cached.index, cached.offsets)
-        } else {
+        let (keys, index, record_offsets) = {
             let keys = read_keys(wide, encrypted, encoding, policy, key_block_count, entry_count, key_index_unpacked, key_index_bytes, key_blocks_bytes)?;
             if keys.iter().any(|key| key.record_offset > record_size) { bail!("key record offset out of range"); }
             let mut index = Vec::new();
@@ -379,9 +358,6 @@ impl Mdict {
             record_offsets.extend(keys.iter().map(|key| key.record_offset));
             record_offsets.sort_unstable();
             record_offsets.dedup();
-            if let Some((directory, identity)) = cache_directory.zip(identity.as_ref()) {
-                index_cache::save(directory, identity, &keys, &index, &record_offsets);
-            }
             (keys, index, record_offsets)
         };
         log::info!("loaded {} ({} keys, {} record blocks)", path.display(), keys.len(), record_blocks.len());

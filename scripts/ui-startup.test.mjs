@@ -118,7 +118,7 @@ async function dictionaryFixture(overrides = {}) {
     const settings = {definitionLanguage: 'en-US', translationLanguage: 'pt-BR', hideWordTranslation: false};
     let saves = 0;
     const ui = await load('src/main/dicts-tab.js', {document: view.document}, {
-        '@tauri-apps/plugin-dialog': {open: async () => null},
+        '@tauri-apps/plugin-dialog': {open: async () => null, ask: async () => true},
         [file('src/lib/api.js')]: {api: {listDictionaries: async () => [
             {id: 'ai-word', kind: 'ai-word', enabled: true}, {id: 'ai-context', kind: 'ai-context', enabled: true},
         ]}, escapeHtml: String},
