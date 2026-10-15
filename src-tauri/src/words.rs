@@ -54,12 +54,36 @@ pub struct WordBox {
     pub y1: f32,
 }
 
+/// Room left around the ink, as a share of its height, so a word's box is not tight on its
+/// letters: above and below, and to the sides.
+const INK_PAD_Y: f32 = 0.12;
+const INK_PAD_X: f32 = 0.08;
+
+/// The top and bottom of a line's text: its ink with a little room, never past the detected
+/// box; or the whole box when there is no ink.
+fn text_rows(line: &OcrLine) -> (f32, f32) {
+    match line.ink_y {
+        Some((a, b)) => {
+            let pad = (b - a) * INK_PAD_Y;
+            ((a - pad).max(line.y0), (b + pad).min(line.y1))
+        }
+        None => (line.y0, line.y1),
+    }
+}
+
+/// How far a word's box reaches past its letters at the sides.
+fn pad_x(line: &OcrLine) -> f32 {
+    line.ink_y.map_or(0.0, |(a, b)| (b - a) * INK_PAD_X)
+}
+
 /// Every word of every line as a rectangle. Runs of unspaced-script characters (CJK, Thai) form
 /// one rectangle; a click inside it still picks the longest dictionary match from the click point.
 pub fn word_boxes(lines: &[OcrLine]) -> Vec<WordBox> {
-    let mut out = Vec::new();
+    let mut out: Vec<WordBox> = Vec::new();
     for line in lines {
         let chars = &line.chars;
+        let first = out.len();
+        let pad = pad_x(line);
         let mut i = 0;
         while i < chars.len() {
             let c = chars[i].ch;
@@ -84,8 +108,22 @@ pub fn word_boxes(lines: &[OcrLine]) -> Vec<WordBox> {
             }
             let text: String = chars[start..end].iter().map(|c| c.ch).collect();
             if !text.trim().is_empty() {
-                let (y0, y1) = line.text_rows();
-                out.push(WordBox { text, x0: chars[start].x0, y0, x1: chars[end - 1].x1, y1 });
+                let (y0, y1) = text_rows(line);
+                out.push(WordBox {
+                    text,
+                    x0: (chars[start].x0 - pad).max(line.x0),
+                    y0,
+                    x1: (chars[end - 1].x1 + pad).min(line.x1),
+                    y1,
+                });
+            }
+        }
+        // Neighbours that the room made touch share the space between them.
+        for k in first + 1..out.len() {
+            if out[k - 1].x1 > out[k].x0 {
+                let mid = (out[k - 1].x1 + out[k].x0) / 2.0;
+                out[k - 1].x1 = mid;
+                out[k].x0 = mid;
             }
         }
     }
@@ -186,7 +224,8 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32) -> Option<Pick> {
     // is enough to find the sentence.
     let span = if unspaced { ci..ci + 1 } else { start..end };
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, line_idx, span);
-    let (y0, y1) = line.text_rows();
+    let (y0, y1) = text_rows(line);
+    let pad = pad_x(line);
     Some(Pick {
         word,
         candidates,
@@ -194,9 +233,9 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32) -> Option<Pick> {
         sentence_lines,
         context,
         context_at,
-        x0: chars[start].x0,
+        x0: (chars[start].x0 - pad).max(line.x0),
         y0,
-        x1: chars[end.saturating_sub(1).max(start)].x1,
+        x1: (chars[end.saturating_sub(1).max(start)].x1 + pad).min(line.x1),
         y1,
         line_y: (line.y0, line.y1),
     })
@@ -419,10 +458,25 @@ mod tests {
         let mut l = line("hello world", 100.0, 100.0);
         l.ink_y = Some((104.0, 116.0));
         let boxes = super::word_boxes(std::slice::from_ref(&l));
-        assert_eq!((boxes[1].y0, boxes[1].y1), (104.0, 116.0));
+        // 12% of the ink's 12 rows of room on each side.
+        assert!((boxes[1].y0 - 102.56).abs() < 0.01 && (boxes[1].y1 - 117.44).abs() < 0.01, "{:?}", boxes[1]);
         let p = pick(std::slice::from_ref(&l), 165.0, 101.0).unwrap();
-        assert_eq!((p.y0, p.y1), (104.0, 116.0));
+        assert!((p.y0 - 102.56).abs() < 0.01 && (p.y1 - 117.44).abs() < 0.01);
         assert!(p.is_under(165.0, 101.0), "the line's padding still counts as on the word");
+    }
+
+    #[test]
+    fn room_around_the_ink_stays_in_the_line_and_apart_from_the_next_word() {
+        let mut l = line("hello world", 100.0, 100.0);
+        l.ink_y = Some((100.0, 120.0));
+        let boxes = super::word_boxes(std::slice::from_ref(&l));
+        assert_eq!((boxes[0].y0, boxes[0].y1), (100.0, 120.0), "never past the detected box");
+        assert_eq!(boxes[0].x0, 100.0, "nor past the line's ends");
+        // The words' own edges are 150 and 160; the room (1.6) leaves the gap between them.
+        assert!((boxes[0].x1 - 151.6).abs() < 0.01 && (boxes[1].x0 - 158.4).abs() < 0.01, "{boxes:?}");
+        l.chars[4].x1 = 159.0; // a gap so narrow that the rooms would meet
+        let narrow = super::word_boxes(std::slice::from_ref(&l));
+        assert!(narrow[0].x1 <= narrow[1].x0 + 1e-3, "{narrow:?}");
     }
 
     #[test]

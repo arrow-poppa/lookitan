@@ -96,7 +96,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 - **Word edges (`ocr/ink.rs`), as in Lookupper's "word edges are snapped to the ink of the line":**
   - CTC gives each character only a step centre. `ink::measure` finds the crop's ink: pixels far from the median background, in the run of rows holding the most ink.
   - `ink::spans` moves each boundary between two characters to the widest blank gap between their centres, and the line's ends to its first and last ink. Spaces fill the gap between words.
-  - `OcrLine.ink_y` holds the ink rows; word boxes and the pick use them (`text_rows`).
+  - `OcrLine.ink_y` holds the ink rows; word boxes and the pick use them (`text_rows` in words.rs).
+  - Boxes keep a little room around the ink (`INK_PAD_Y` 12% of the ink height above and below, `INK_PAD_X` 8% at the sides), never past the detected line box, and neighbours that touch share the gap. Raise these two constants if the highlight still looks tight.
   - `Pick::is_under` still tests the detected line rows, and reaches 0.4 × line height past the ink on each side, so what counts as "on a word" did not shrink.
   - With little contrast, under 40 levels, the old halfway estimates stay. Google Lens lines have no ink.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
@@ -126,6 +127,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): the snapped word boxes got a little room around the ink, because they looked too small.
 - 2026-10-15 (Claude, `tests`): word edges and heights snap to the ink of the line (`ocr/ink.rs`).
 - 2026-10-15 (Claude): `claude/overlay-spotlight` was renamed `tests`, and every other branch except `main` was deleted (all were already contained in it). From now on every agent works on `tests`, and only the user merges it into `main`.
 - 2026-10-15 (Claude): the repository was recreated so that no commit shows a personal e-mail. The old one is now the private `arrow-poppa/lookitan-old`, with PRs #1–#3.

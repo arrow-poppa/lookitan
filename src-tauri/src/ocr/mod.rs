@@ -30,11 +30,6 @@ pub struct OcrLine {
 }
 
 impl OcrLine {
-    /// The top and bottom of the line's text: its ink, or its box.
-    pub fn text_rows(&self) -> (f32, f32) {
-        self.ink_y.unwrap_or((self.y0, self.y1))
-    }
-
     pub fn contains(&self, x: f32, y: f32, slack: f32) -> bool {
         x >= self.x0 - slack && x <= self.x1 + slack && y >= self.y0 - slack && y <= self.y1 + slack
     }
