@@ -28,6 +28,7 @@ pub fn fingerprint(source: &Path) -> Result<String> {
             let e = e?;
             let name = e.file_name().to_string_lossy().to_lowercase();
             if e.file_type()?.is_file() && (name.starts_with("term_bank_") || name.starts_with("kanji_bank_")
+                || name.starts_with("term_meta_bank_") || name.starts_with("kanji_meta_bank_")
                 || name.starts_with("tag_bank_") || name.starts_with("data.") || name.starts_with("index.")
                 || (name.starts_with("gcide_") && name.ends_with(".xml"))
                 || name.ends_with(".exc")

@@ -15,7 +15,7 @@ Quando um ZIP contém vários dicionários independentes, extraia-o e adicione c
 | Formato | Arquivo principal | Conteúdo lido |
 | --- | --- | --- |
 | MDict 1.x/2.x | `.mdx` | HTML, cabeçalho de estilos, aliases, `.mdd`/`.N.mdd`, LZO/zlib/sem compressão |
-| Yomitan | `.zip` ou `index.json` | Bancos de termos e kanji, leituras, tags, definições estruturadas e recursos |
+| Yomitan | `.zip` ou `index.json` | Bancos de termos e kanji, frequência, acento tonal, IPA, leituras, tags, definições estruturadas e recursos |
 | ABBYY DSL | `.dsl` ou `.dsl.dz` | UTF-8/UTF-16/codepages declaradas, aliases e marcação comum |
 | StarDict | `.ifo` | `.idx`/`.idx.gz`, `.dict`/`.dict.dz`, `.syn`, tipos de conteúdo e pasta `res/` |
 | Aard2/Slob | `.slob` | HTML e recursos em bins sem compressão/zlib/bzip2/RAW LZMA2 |
@@ -27,7 +27,9 @@ Quando um ZIP contém vários dicionários independentes, extraia-o e adicione c
 | WordNet | `data.noun` ou `index.noun` | Arquivos `data.*`, sinônimos e exceções `.exc` da mesma pasta |
 
 O nome `.json` em Kaikki significa JSONL, um objeto por linha, não um único array gigante.
-Dicionários Yomitan que contêm apenas frequência ou pitch não são fontes de definições.
+Os bancos `term_meta_bank`/`kanji_meta_bank` (frequência, acento tonal e IPA), que o Lookupper
+mostra como *Frequency* e *Pitch accent*, viram um artigo por linha; assim dicionários só de
+frequência ou só de acento também podem ser adicionados.
 
 ## Busca, memória e recursos
 

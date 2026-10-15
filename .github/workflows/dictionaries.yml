@@ -25,6 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # hunspell-sys generates its bindings with bindgen, which needs libclang.
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: scripts/dictionary-harness

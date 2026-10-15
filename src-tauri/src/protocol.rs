@@ -15,7 +15,7 @@ body.lkt-entry{padding:6px 10px;font:14px/1.45 system-ui,-apple-system,'Segoe UI
 img{max-width:100%;height:auto;}\
 .reading,.pronunciation{color:#888} .tags{font-size:.85em;opacity:.7}\
 dl{margin:.5em 0}dd{margin-left:1em}table{max-width:100%}pre{white-space:pre-wrap}\
-.dsl-example{font-style:italic}.dsl-translation{color:#629d65}details{margin:.4em 0}";
+.dsl-example{font-style:italic}.dsl-translation{color:#629d65}details{margin:.4em 0}.yomitan-tag{display:inline-block;padding:0 .35em;margin-right:.25em;border-radius:3px;font-size:.78em;background:rgba(128,128,128,.22)}.yomitan-reading{color:#888}.yomitan-frequency,.yomitan-pitch,.yomitan-ipa{margin:.15em 0}";
 
 fn normalize_resource_urls(html: &str, id: &str) -> String {
     use std::sync::LazyLock;

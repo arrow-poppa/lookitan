@@ -827,7 +827,10 @@ fn import_yomitan(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> 
     let dir = path.parent().ok_or_else(|| anyhow!("index.json sem pasta"))?;
     let term_banks = banks(dir, "term_bank_")?;
     let kanji_banks = banks(dir, "kanji_bank_")?;
-    ensure!(!term_banks.is_empty() || !kanji_banks.is_empty(), "Dicionário Yomitan sem bancos de termos ou kanji (metadados isolados não contêm definições)");
+    let meta_banks = banks(dir, "term_meta_bank_")?;
+    let kanji_meta_banks = banks(dir, "kanji_meta_bank_")?;
+    ensure!(!term_banks.is_empty() || !kanji_banks.is_empty() || !meta_banks.is_empty() || !kanji_meta_banks.is_empty(),
+        "Dicionário Yomitan sem bancos de termos, kanji, frequência ou acento");
     let tags = yomitan_tags(dir, &index)?;
     for bank_path in term_banks {
         json_rows(&bank_path, |row| {
@@ -876,7 +879,10 @@ fn import_yomitan(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> 
             if version > 1 {
                 if let Some(stats) = row[5].as_object() {
                     html.push_str("<dl class=\"yomitan-stats\">");
-                    for (k, v) in stats { html.push_str(&format!("<dt>{}</dt><dd>{}</dd>", escape_html(k), escape_html(v.as_str().unwrap_or("")))); }
+                    for (k, v) in stats {
+                        let value = v.as_str().map(str::to_string).unwrap_or_else(|| if v.is_number() { v.to_string() } else { String::new() });
+                        html.push_str(&format!("<dt>{}</dt><dd>{}</dd>", escape_html(k), escape_html(&value)));
+                    }
                     html.push_str("</dl>");
                 }
             }
@@ -885,7 +891,110 @@ fn import_yomitan(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> 
             Ok(())
         })?;
     }
+    // Frequency, pitch accent and IPA rows (term_meta_bank) and kanji frequencies, which
+    // Lookupper shows as Frequency and Pitch accent articles. They mostly come in dictionaries
+    // of their own, so each row is an article of its own word.
+    for (bank_path, kanji) in meta_banks.into_iter().map(|p| (p, false)).chain(kanji_meta_banks.into_iter().map(|p| (p, true))) {
+        json_rows(&bank_path, |row| {
+            let row = row.as_array().ok_or_else(|| anyhow!("Metadado Yomitan inválido"))?;
+            let (Some(word), Some(mode), Some(data)) = (value_str(row.first()), value_str(row.get(1)), row.get(2)) else {
+                bail!("Metadado Yomitan incompleto");
+            };
+            ensure!(word.len() <= MAX_HEADWORD, "Palavra Yomitan excede 16 KiB");
+            let Some((reading, body)) = yomitan_meta(mode, data, kanji) else { return Ok(()) };
+            let mut html = format!("<div class=\"yomitan-meta\"><div class=\"yomitan-headword\"><b>{}</b>", escape_html(word));
+            if !reading.is_empty() && reading != word { html.push_str(&format!(" <span class=\"yomitan-reading\">【{}】</span>", escape_html(&reading))); }
+            html.push_str("</div>");
+            html.push_str(&body);
+            html.push_str("</div>");
+            ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
+            let aliases = if !reading.is_empty() && reading != word { vec![reading] } else { Vec::new() };
+            add_entry(sink, word, &html, &aliases)
+        })?;
+    }
     Ok(ImportInfo { name, format: "yomitan", description: index.get("description").and_then(Value::as_str).unwrap_or("").to_string() })
+}
+
+/// The reading and HTML of a term_meta_bank or kanji_meta_bank row; `None` for unknown modes.
+fn yomitan_meta(mode: &str, data: &Value, kanji: bool) -> Option<(String, String)> {
+    let reading = if kanji { "" } else { data.get("reading").and_then(Value::as_str).unwrap_or("") };
+    let html = match mode {
+        "freq" => {
+            let value = if kanji || data.get("reading").is_none() { data } else { data.get("frequency")? };
+            format!("<div class=\"yomitan-frequency\"><span class=\"yomitan-tag\">Frequência</span> {}</div>", escape_html(&frequency_text(value)?))
+        }
+        "pitch" if !kanji => {
+            let mut html = String::new();
+            for pitch in data.get("pitches")?.as_array()?.iter().take(MAX_VARIANTS) {
+                let accent = pitch_html(reading, pitch.get("position")?)?;
+                html.push_str(&format!("<div class=\"yomitan-pitch\"><span class=\"yomitan-tag\">Acento</span> {accent}"));
+                if let Some(tags) = pitch.get("tags").and_then(Value::as_array) {
+                    for tag in tags.iter().filter_map(Value::as_str) { html.push_str(&format!(" <span class=\"yomitan-tag\">{}</span>", escape_html(tag))); }
+                }
+                html.push_str("</div>");
+            }
+            html
+        }
+        "ipa" if !kanji => {
+            let mut html = String::new();
+            for item in data.get("transcriptions")?.as_array()?.iter().take(MAX_VARIANTS) {
+                let ipa = item.get("ipa").and_then(Value::as_str)?;
+                html.push_str(&format!("<div class=\"yomitan-ipa\"><span class=\"yomitan-tag\">IPA</span> {}</div>", escape_html(ipa)));
+            }
+            html
+        }
+        _ => return None,
+    };
+    (!html.is_empty()).then(|| (reading.to_string(), html))
+}
+
+/// A frequency as Yomitan shows it: `displayValue` when given, otherwise the value.
+fn frequency_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => Some(s.clone()),
+        Value::Object(o) => o.get("displayValue").and_then(Value::as_str).map(str::to_string)
+            .or_else(|| o.get("value").and_then(frequency_text)),
+        _ => None,
+    }
+}
+
+/// Splits kana into morae: a small kana joins the one before it.
+fn morae(reading: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in reading.chars() {
+        if "ゃゅょぁぃぅぇぉゎャュョァィゥェォヮ".contains(c) && !out.is_empty() {
+            out.last_mut().unwrap().push(c);
+        } else {
+            out.push(c.to_string());
+        }
+    }
+    out
+}
+
+/// The reading drawn with a line over its high morae and a mark at the downstep, followed by the
+/// downstep number. `position` is the downstep mora (0 = heiban) or a pattern of H and L.
+fn pitch_html(reading: &str, position: &Value) -> Option<String> {
+    let morae = morae(reading);
+    let high: Vec<bool> = if let Some(n) = position.as_u64() {
+        let n = n as usize;
+        (0..morae.len()).map(|i| if n == 0 { i > 0 } else if n == 1 { i == 0 } else { i > 0 && i < n }).collect()
+    } else {
+        position.as_str()?.chars().take(morae.len()).map(|c| c == 'H' || c == 'h').collect()
+    };
+    let mut html = String::from("<span class=\"yomitan-pitch-reading\">");
+    for (i, mora) in morae.iter().enumerate() {
+        let up = high.get(i).copied().unwrap_or(false);
+        let drop = up && !high.get(i + 1).copied().unwrap_or(position.as_u64() == Some(0));
+        let mut style = String::new();
+        if up { style.push_str("border-top:1px solid currentColor;"); }
+        if drop { style.push_str("border-right:1px solid currentColor;"); }
+        if style.is_empty() { html.push_str(&escape_html(mora)); }
+        else { html.push_str(&format!("<span style=\"{style}\">{}</span>", escape_html(mora))); }
+    }
+    html.push_str("</span>");
+    if let Some(n) = position.as_u64() { html.push_str(&format!(" [{n}]")); }
+    Some(html)
 }
 
 fn value_str(value: Option<&Value>) -> Option<&str> { value.and_then(Value::as_str) }
@@ -943,7 +1052,7 @@ fn render_yomitan(value: &Value, html: &mut String, depth: usize) -> Result<()> 
             if let Some(data) = obj.get("data").and_then(Value::as_object) {
                 for (key, v) in data {
                     if key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !key.is_empty() {
-                        if let Some(v) = v.as_str().filter(|s| s.len() <= MAX_HEADWORD) { html.push_str(&format!(" data-sc-{}=\"{}\"", key.to_ascii_lowercase(), escape_html(v))); }
+                        if let Some(v) = v.as_str().filter(|s| s.len() <= MAX_HEADWORD) { html.push_str(&format!(" {}=\"{}\"", data_attribute(key), escape_html(v))); }
                     }
                 }
             }
@@ -952,7 +1061,7 @@ fn render_yomitan(value: &Value, html: &mut String, depth: usize) -> Result<()> 
                 for (key, v) in style {
                     let allowed = matches!(key.as_str(), "fontStyle" | "fontWeight" | "fontSize" | "color" | "background" | "backgroundColor" | "textDecorationLine" | "textDecorationStyle" | "textDecorationColor" | "borderColor" | "borderStyle" | "borderRadius" | "borderWidth" | "clipPath" | "verticalAlign" | "textAlign" | "textEmphasis" | "textShadow" | "margin" | "marginTop" | "marginLeft" | "marginRight" | "marginBottom" | "padding" | "paddingTop" | "paddingLeft" | "paddingRight" | "paddingBottom" | "wordBreak" | "whiteSpace" | "cursor" | "listStyleType");
                     if !allowed { continue; }
-                    let value = if let Some(s) = v.as_str() { s.to_string() } else if let Some(a) = v.as_array() { a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ") } else if v.is_number() { if key.starts_with("margin") || key.starts_with("padding") { format!("{v}px") } else { v.to_string() } } else { continue };
+                    let value = if let Some(s) = v.as_str() { s.to_string() } else if let Some(a) = v.as_array() { a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ") } else if v.is_number() { if key.starts_with("margin") || key.starts_with("padding") { format!("{v}em") } else { v.to_string() } } else { continue };
                     if safe_css_value(&value) {
                         let kebab: String = key.chars().flat_map(|c| if c.is_ascii_uppercase() { vec!['-', c.to_ascii_lowercase()] } else { vec![c] }).collect();
                         css.push_str(&format!("{kebab}:{value};"));
@@ -969,6 +1078,17 @@ fn render_yomitan(value: &Value, html: &mut String, depth: usize) -> Result<()> 
     }
     ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
     Ok(())
+}
+
+/// The attribute Yomitan gives a structured-content `data` key: `dataset["sc" + Key]`, so
+/// `content` becomes `data-sc-content` and `wordClass` becomes `data-sc-word-class`.
+fn data_attribute(key: &str) -> String {
+    let mut name = String::from("data-sc-");
+    for (i, c) in key.chars().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 { name.push('-'); }
+        name.push(c.to_ascii_lowercase());
+    }
+    name
 }
 
 fn percent_decode(value: &str) -> String {
@@ -1006,7 +1126,7 @@ fn yomitan_image(value: &Value) -> String {
     if let Some(data) = value.get("data").and_then(Value::as_object) {
         for (key, val) in data {
             if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                if let Some(val) = val.as_str().filter(|s| s.len() <= MAX_HEADWORD) { html.push_str(&format!(" data-sc-{}=\"{}\"", key.to_ascii_lowercase(), escape_html(val))); }
+                if let Some(val) = val.as_str().filter(|s| s.len() <= MAX_HEADWORD) { html.push_str(&format!(" {}=\"{}\"", data_attribute(key), escape_html(val))); }
             }
         }
     }
@@ -1180,6 +1300,33 @@ mod tests {
         assert!(html.contains("width:2em"));
         assert!(html.contains("title=\"noun\""));
         assert!(sink.0[1].1.contains("strokes</dt><dd>11"));
+        assert_eq!(data_attribute("wordClass"), "data-sc-word-class");
+    }
+
+    #[test]
+    fn yomitan_frequency_and_pitch_dictionaries_become_articles() {
+        let dir = TestDir::new();
+        fs::write(dir.0.join("index.json"), r#"{"title":"Pitch and frequency","format":3,"revision":"1"}"#).unwrap();
+        fs::write(dir.0.join("term_meta_bank_1.json"), r#"[
+            ["猫","pitch",{"reading":"ねこ","pitches":[{"position":1}]}],
+            ["橋","pitch",{"reading":"はし","pitches":[{"position":2}]}],
+            ["今日","freq",{"reading":"きょう","frequency":{"value":12,"displayValue":"12㋕"}}],
+            ["the","freq",5],
+            ["猫","mystery",{}]
+        ]"#).unwrap();
+        fs::write(dir.0.join("kanji_meta_bank_1.json"), r#"[["猫","freq",{"value":1702}]]"#).unwrap();
+        let mut sink = Sink::default();
+        import(&dir.0.join("index.json"), &mut sink).unwrap();
+        assert_eq!(sink.0.len(), 5, "unknown modes are skipped");
+        let (word, html, aliases) = &sink.0[0];
+        assert_eq!((word.as_str(), aliases.clone()), ("猫", vec!["ねこ".to_string()]));
+        assert!(html.contains("Acento") && html.contains("[1]"));
+        assert!(html.contains("<span style=\"border-top:1px solid currentColor;border-right:1px solid currentColor;\">ね</span>こ"), "{html}");
+        assert!(sink.0[1].1.contains("は<span style=\"border-top:1px solid currentColor;border-right:1px solid currentColor;\">し</span>"), "odaka drops after the last mora");
+        assert!(sink.0[2].1.contains("12㋕") && sink.0[2].2 == vec!["きょう".to_string()]);
+        assert!(sink.0[3].1.contains("Frequência</span> 5"));
+        assert!(sink.0[4].1.contains("1702"));
+        assert_eq!(morae("きょうと"), vec!["きょ", "う", "と"]);
     }
 
     #[test]
