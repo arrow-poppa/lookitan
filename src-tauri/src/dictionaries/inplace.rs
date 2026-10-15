@@ -5,6 +5,9 @@
 //! - DSL and StarDict (`.dz` files stay compressed: dictzip.rs reads one chunk).
 //! - CC-CEDICT and Kaikki JSONL (one article per line), WordNet data files (one per synset line).
 //! - Aard2/Slob (one per reference; resources such as images are indexed too, under `HIDDEN`).
+//! - Lookupper's own choices of format: jmdict-simplified and kanjidic2 JSON (jsondict.rs),
+//!   WN-LMF XML (wnlmf.rs), Gutenberg's Webster text (webster_text.rs) and GCIDE's CIDE.* files
+//!   (cide.rs), recognized the way Lookupper recognizes them.
 //! - XML: JMdict, JMnedict, KANJIDIC2, Webster and GCIDE_XML (one per entry element). The index
 //!   also keeps the file's prologue (declaration, DOCTYPE, root start tag), so an entry is parsed
 //!   again with the entities its DTD declares.
@@ -27,7 +30,7 @@ use super::dictzip;
 use super::lexicons::{self, dictionary_name, filename, gcide_parts, import_cedict, import_kaikki, import_xml, wordnet_exceptions,
     wordnet_files, wordnet_line, GCIDE_END};
 use super::lkidx::{self, Builder, Index, Location, Stamp, HIDDEN};
-use super::slob;
+use super::{cide, jsondict, slob, webster_text, wnlmf};
 use super::ImportSink;
 
 pub const DSL: &str = "dsl";
@@ -51,7 +54,15 @@ fn ends_with_any(name: &str, suffixes: &[&str]) -> bool {
 /// The in-place format of a main file, if any.
 pub fn format_of(path: &Path) -> Option<&'static str> {
     let name = filename(path);
-    if ends_with_any(&name, &[".dsl", ".dsl.dz"]) {
+    if cide::detect(path) {
+        Some(cide::FORMAT)
+    } else if name.ends_with(".json") && jsondict::detect(path).is_some() {
+        jsondict::detect(path)
+    } else if name.ends_with(".xml") && wnlmf::detect(path) {
+        Some(wnlmf::FORMAT)
+    } else if name.ends_with(".txt") && webster_text::detect(path) {
+        Some(webster_text::FORMAT)
+    } else if ends_with_any(&name, &[".dsl", ".dsl.dz"]) {
         Some(DSL)
     } else if name.ends_with(".ifo") {
         Some(STARDICT)
@@ -80,6 +91,11 @@ enum Kind {
     Xml,
     /// Articles and resources are read from the .slob by reference number.
     Slob { path: PathBuf },
+    JmdictJson { tags: HashMap<String, String> },
+    KanjidicJson,
+    WnLmf,
+    WebsterText,
+    Cide,
 }
 
 /// Where articles are read from.
@@ -305,6 +321,34 @@ impl InPlace {
                 })?;
                 Ok(Self { index, kind: Kind::StarDict { sequence: info.sequence }, data: Data::Zip(dictzip::Source::open(&dict)?), prolog: None, format })
             }
+            cide::FORMAT => {
+                let files = cide::files(main);
+                let names: Vec<PathBuf> = files.iter().map(|p| name_of(p)).collect();
+                let stamp = Stamp::of(&root, &names)?;
+                let index = lkidx::open_or_build(index_path, cide::FORMAT, &stamp, || cide::build(&files, progress))?;
+                Ok(Self { index, kind: Kind::Cide, data: Data::Files(files), prolog: None, format })
+            }
+            jsondict::JMDICT | jsondict::KANJIDIC | wnlmf::FORMAT | webster_text::FORMAT => {
+                let stamp = Stamp::of(&root, &[name_of(main)])?;
+                let index = lkidx::open_or_build(index_path, format, &stamp, || match format {
+                    wnlmf::FORMAT => wnlmf::build(main, progress),
+                    webster_text::FORMAT => webster_text::build(main, progress),
+                    _ => jsondict::build(main, format, progress),
+                })?;
+                let data = Data::Files(vec![main.to_path_buf()]);
+                let kind = match format {
+                    wnlmf::FORMAT => Kind::WnLmf,
+                    webster_text::FORMAT => Kind::WebsterText,
+                    jsondict::KANJIDIC => Kind::KanjidicJson,
+                    _ => {
+                        // The tags table is a hidden entry, read once.
+                        let tags = index.find(&format!("{HIDDEN}tags"), 1).first().and_then(|&id| index.location(id))
+                            .and_then(|l| data.read(l).ok()).map(|bytes| jsondict::tags(&bytes)).unwrap_or_default();
+                        Kind::JmdictJson { tags }
+                    }
+                };
+                Ok(Self { index, kind, data, prolog: None, format })
+            }
             SLOB => {
                 let stamp = Stamp::of(&root, &[name_of(main)])?;
                 let index = lkidx::open_or_build(index_path, SLOB, &stamp, || {
@@ -425,10 +469,27 @@ impl InPlace {
             return slob::article(path, location.offset as u32);
         }
         let bytes = self.data.read(location)?;
+        match &self.kind {
+            Kind::JmdictJson { tags } => return jsondict::word_html(&bytes, tags),
+            Kind::KanjidicJson => return jsondict::character_html(&bytes),
+            Kind::WebsterText => return Ok(webster_text::article_html(&bytes)),
+            Kind::Cide => return Ok(cide::article_html(&bytes)),
+            Kind::WnLmf => {
+                let entry = wnlmf::parse_entry(&bytes)?;
+                let read = |key: &str| -> Option<Vec<u8>> {
+                    let id = *self.index.find(key, 1).first()?;
+                    self.data.read(self.index.location(id)?).ok()
+                };
+                return Ok(wnlmf::entry_html(&entry,
+                    |synset| read(&wnlmf::synset_key(synset)).and_then(|b| wnlmf::parse_synset(&b).ok()),
+                    |member| self.index.find(&wnlmf::entry_key(member), 1).first().and_then(|&e| self.index.title(e)).map(str::to_string)));
+            }
+            _ => {}
+        }
         let mut html = Html::default();
         match &self.kind {
             Kind::StarDict { sequence } => return stardict_article(&bytes, sequence),
-            Kind::Slob { .. } => unreachable!("read above"),
+            Kind::Slob { .. } | Kind::JmdictJson { .. } | Kind::KanjidicJson | Kind::WnLmf | Kind::WebsterText | Kind::Cide => unreachable!("read above"),
             Kind::Dsl { decoding } => { dsl_entries(DslLines::over(bytes, *decoding), String::new(), &mut html)?; }
             Kind::Cedict => import_cedict(reader(bytes), &mut html)?,
             Kind::Kaikki => import_kaikki(reader(bytes), &mut html)?,

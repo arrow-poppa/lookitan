@@ -25,6 +25,15 @@ Quando um ZIP contém vários dicionários independentes, extraia-o e adicione c
 | KANJIDIC2 | `.xml`, `.xml.gz` ou `.xml.bz2` | Caracteres, leituras e significados |
 | Webster/GCIDE XML | `.xml` ou `gcide.xml` | Verbetes e fragmentos locais `gcide_a.xml`…`gcide_z.xml` |
 | WordNet | `data.noun` ou `index.noun` | Arquivos `data.*`, sinônimos e exceções `.exc` da mesma pasta |
+| jmdict-simplified (Lookupper) | `.json` com `"languages"` e `"dictDate"` no início | JMdict e JMnedict: grafias, leituras, sentidos, tags e referências |
+| kanjidic2 JSON (Lookupper) | `.json` com `"characters"` e `"dictDate"` no início | Leituras on/kun/nanori, significados, traços, série, JLPT |
+| WN-LMF (Lookupper) | `.xml` com `<LexicalResource` no início | Open English WordNet etc.: lemas, formas, definições, exemplos e sinônimos |
+| Webster em texto (Lookupper) | `.txt` do Project Gutenberg (ebook 29765) | Verbetes do Webster 1913, um por cabeçalho em maiúsculas |
+| GCIDE (Lookupper) | `CIDE.A` … `CIDE.Z` | Marcação SGML do GCIDE, entidades `<x/` e escapes `\'xx` |
+
+Os formatos marcados "(Lookupper)" são as variantes que o Lookupper lê, reconhecidas como ele
+reconhece (o mesmo teste nos primeiros bytes do arquivo). As demais leituras de JMdict,
+KANJIDIC2, WordNet e Webster/GCIDE em XML são extras do Lookitan.
 
 O nome `.json` em Kaikki significa JSONL, um objeto por linha, não um único array gigante.
 Os bancos `term_meta_bank`/`kanji_meta_bank` (frequência, acento tonal e IPA), que o Lookupper

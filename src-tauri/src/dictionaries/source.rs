@@ -7,7 +7,8 @@ use anyhow::{anyhow, bail, Context, Result};
 
 fn is_main(path: &Path) -> bool {
     let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-    name == "index.json" || name == "data.noun" || name == "index.noun"
+    name == "index.json" || name == "data.noun" || name == "index.noun" || name == "cide.a"
+        || (name.ends_with(".json") && super::jsondict::detect(path).is_some())
         || [".mdx", ".ifo", ".dsl", ".dsl.dz", ".slob", ".xml", ".xml.gz", ".xml.bz2", ".jsonl", ".jsonl.gz", ".jsonl.bz2", ".u8"]
             .iter().any(|s| name.ends_with(s))
         || ((name.ends_with(".txt") || name.ends_with(".txt.gz")) && !name.starts_with("readme") && !name.starts_with("license"))
@@ -38,7 +39,10 @@ fn discover(root: &Path) -> Result<PathBuf> {
     // an MDict archive is not a CC-CEDICT dictionary).
     let distinct: Vec<_> = found.iter().filter(|p| {
         let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-        [".mdx", ".dsl", ".dsl.dz", ".slob"].iter().any(|s| name.ends_with(s))
+        [".mdx", ".dsl", ".dsl.dz", ".slob"].iter().any(|s| name.ends_with(s)) || name == "cide.a"
+            || (name.ends_with(".json") && super::jsondict::detect(p).is_some())
+            || (name.ends_with(".xml") && super::wnlmf::detect(p))
+            || (name.ends_with(".txt") && super::webster_text::detect(p))
     }).collect();
     if distinct.len() == 1 { return Ok(distinct[0].to_path_buf()); }
     let gcide: Vec<_> = found.iter().filter(|p| p.file_name().map(|n| n == "gcide.xml").unwrap_or(false)).collect();

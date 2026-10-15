@@ -1,14 +1,18 @@
 // Independent dictionary readers. The installed Lookupper provides behavioral references;
 // its implementation and its private index format are not dependencies of this engine.
+pub mod cide;
 pub mod containers;
 pub mod dictzip;
 pub mod hunspell;
 pub mod inplace;
+pub mod jsondict;
 pub mod lkidx;
 pub mod lexicons;
 pub mod morphology;
 pub mod slob;
 pub mod source;
+pub mod webster_text;
+pub mod wnlmf;
 pub mod yomitan;
 
 #[cfg(test)]

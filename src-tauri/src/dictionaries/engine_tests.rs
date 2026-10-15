@@ -158,6 +158,34 @@ fn simultaneous_imports_publish_one_usable_index_without_renaming_a_live_winner(
 }
 
 #[test]
+fn lookupper_style_archives_are_recognized_like_lookupper_does() {
+    let directory = Directory::new();
+    let content = directory.0.join("content");
+    let cache = directory.0.join("cache");
+    // GCIDE's distribution: CIDE.A–Z beside text files that are not dictionaries.
+    let gcide = directory.0.join("gcide-0.53.zip");
+    archive(&gcide, &[
+        ("gcide-0.53/CIDE.A", b"<p><ent>Aback</ent><br/\n<hw>A*back\"</hw> <def>Toward the back.</def></p>\n"),
+        ("gcide-0.53/CIDE.B", b"<p><ent>Bee</ent><br/\n<hw>Bee</hw> <def>An insect.</def></p>\n"),
+        ("gcide-0.53/webfont.txt", b"WEBSTER FONTS"), ("gcide-0.53/README", b"read me"),
+    ]);
+    let installed = source::install(&gcide, &content, "gcide", &|_| {}).unwrap();
+    let dictionary = Dictionary::open_cached("gcide", &installed, &cache, &|_| {}).unwrap();
+    assert_eq!((dictionary.format.as_str(), dictionary.len()), ("gcide", 2));
+    assert!(dictionary.entry_html(dictionary.find("bee")[0]).unwrap().contains("An insect."));
+    assert!(installed.join("gcide-0.53/CIDE.A.lkidx").is_file(), "the index sits beside the CIDE files");
+
+    // jmdict-simplified's release: one .json named by version.
+    let jmdict = directory.0.join("jmdict-eng.zip");
+    archive(&jmdict, &[("jmdict-eng-3.6.2.json", br#"{"version":"3.6.2","languages":["eng"],"dictDate":"2026-10-12","tags":{"n":"noun (common)"},"words":[{"id":"1","kanji":[{"common":true,"text":"\u732b","tags":[]}],"kana":[{"common":true,"text":"\u306d\u3053","tags":[],"appliesToKanji":["*"]}],"sense":[{"partOfSpeech":["n"],"appliesToKanji":["*"],"appliesToKana":["*"],"related":[],"antonym":[],"field":[],"dialect":[],"misc":[],"info":[],"languageSource":[],"gloss":[{"lang":"eng","gender":null,"type":null,"text":"cat"}]}]}]}"#)]);
+    let installed = source::install(&jmdict, &content, "jmdict", &|_| {}).unwrap();
+    let dictionary = Dictionary::open_cached("jmdict", &installed, &cache, &|_| {}).unwrap();
+    assert_eq!(dictionary.format, "jmdict-simplified-json");
+    let html = dictionary.entry_html(dictionary.find("ねこ")[0]).unwrap();
+    assert!(html.contains("noun (common)") && html.contains("cat"), "{html}");
+}
+
+#[test]
 fn a_damaged_lkidx_is_rebuilt_and_a_dsl_is_read_where_it_is() {
     let directory = Directory::new();
     let source = directory.0.join("words.dsl");
