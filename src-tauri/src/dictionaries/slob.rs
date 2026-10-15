@@ -38,13 +38,10 @@ pub fn import(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
             cached = Some((reference.bin, source.bin(reference.bin)?));
         }
         let bin = &cached.as_ref().context("Cache Slob vazio")?.1;
-        let content = bin.item(reference.item)?;
-        let text = decode(content, content_encoding(&mime)?)?;
-        let html = if basic == "text/plain" {
-            format!("<h2>{}</h2><pre>{}</pre>", escape_html(&reference.key), escape_html(&text))
-        } else { text };
+        let html = article_html(&reference, &mime, bin)?;
         // Distinct references may intentionally select fragments of the same page.
         // Keep the complete HTML rather than trimming a potentially invalid subtree.
+        sink.span(0, u64::from(index), 0);
         sink.add(&reference.key, &html, &[])?;
         count += 1;
     }
@@ -57,12 +54,22 @@ pub fn import(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
     })
 }
 
-/// Resolve a dictionary resource by its exact Slob key. Only the selected storage
-/// bin is decompressed. No filesystem path is constructed from the resource key.
-/// Keys use Unicode collation in Slob, so UTF-8 binary search would be incorrect;
-/// this portable fallback scans the references without loading their entire index.
-pub fn resource(path: &Path, relative: &str) -> Option<Vec<u8>> {
-    resource_result(path, relative).ok().flatten()
+fn article_html(reference: &Reference, mime: &str, bin: &Bin) -> Result<String> {
+    let basic = mime.split(';').next().unwrap_or("").trim();
+    let content = bin.item(reference.item)?;
+    let text = decode(content, content_encoding(mime)?)?;
+    Ok(if basic == "text/plain" {
+        format!("<h2>{}</h2><pre>{}</pre>", escape_html(&reference.key), escape_html(&text))
+    } else { text })
+}
+
+/// The article of reference `index`, read from its bin.
+pub fn article(path: &Path, index: u32) -> Result<String> {
+    let mut source = Slob::open(path)?;
+    let reference = source.reference(index)?;
+    let mime = source.mime(&reference)?.to_owned();
+    let bin = source.bin(reference.bin)?;
+    article_html(&reference, &mime, &bin)
 }
 
 /// Resolve a resource previously indexed by `ImportSink::add_resource`, without
@@ -72,20 +79,6 @@ pub fn resource_at(path: &Path, reference: u32) -> Option<Vec<u8>> {
     let reference = source.reference(reference).ok()?;
     let bin = source.bin(reference.bin).ok()?;
     Some(bin.item(reference.item).ok()?.to_vec())
-}
-
-fn resource_result(path: &Path, relative: &str) -> Result<Option<Vec<u8>>> {
-    let mut source = Slob::open(path)?;
-    let key = relative.split('#').next().unwrap_or(relative);
-    let key = key.split('?').next().unwrap_or(key);
-    for index in 0..source.refs.count {
-        let reference = source.reference(index)?;
-        if reference.key == key || reference.key.trim_start_matches('/') == key.trim_start_matches('/') {
-            let bin = source.bin(reference.bin)?;
-            return Ok(Some(bin.item(reference.item)?.to_vec()));
-        }
-    }
-    Ok(None)
 }
 
 #[derive(Clone, Copy)]
@@ -394,10 +387,8 @@ mod tests {
             assert_eq!(sink.0.len(), 2);
             assert_eq!(sink.0[0].0, "cat"); assert_eq!(sink.0[1].0, "cats");
             assert!(sink.0[0].1.contains("small feline"));
-            assert_eq!(resource(&file.0, "/style.css?v=1"), Some(b"p{color:red}".to_vec()));
             assert_eq!(resource_at(&file.0, 2), Some(b"p{color:red}".to_vec()));
             assert_eq!(resource_at(&file.0, 3), None);
-            assert_eq!(resource(&file.0, "missing.css"), None);
         }
     }
 

@@ -1,7 +1,7 @@
 //! Streaming readers for published, openly documented dictionary interchange formats.
 //! No network access, external entity loading, or executable dictionary markup is used.
 
-use super::{entry_link, escape_html, ImportInfo, ImportSink};
+use super::{entry_link, escape_html, ImportSink};
 use anyhow::{ensure, Context, Result};
 use quick_xml::{events::Event, Reader};
 use serde_json::Value;
@@ -12,7 +12,7 @@ use std::{
     path::Path,
 };
 
-const MAX_RECORD: usize = 8 * 1024 * 1024;
+pub(super) const MAX_RECORD: usize = 8 * 1024 * 1024;
 const MAX_DTD: usize = 1024 * 1024;
 const MAX_DEPTH: usize = 96;
 
@@ -24,32 +24,11 @@ pub fn supports(path: &Path) -> bool {
             .iter().any(|suffix| filename.ends_with(suffix))
 }
 
-pub fn import(path: &Path, sink: &mut dyn ImportSink) -> Result<ImportInfo> {
-    let filename = filename(path);
-    let (format, description) = if path.is_dir() || is_wordnet_file(&filename) {
-        import_wordnet(path, sink)?;
-        ("wordnet", "WordNet: definições e sinônimos por synset")
-    } else if filename.ends_with(".jsonl") || filename.ends_with(".jsonl.gz") || filename.ends_with(".jsonl.bz2") || filename.ends_with(".json") {
-        import_kaikki(open(path)?, sink)?;
-        ("kaikki", "Wiktionary/Kaikki JSONL: definições, formas, exemplos e pronúncias")
-    } else if filename.ends_with(".xml") || filename.ends_with(".xml.gz") || filename.ends_with(".xml.bz2") {
-        let detected = import_xml(gcide_input(path)?.unwrap_or(open(path)?), sink)?;
-        return Ok(ImportInfo {
-            name: dictionary_name(path), format: detected,
-            description: "XML importado por entrada; JMdict, JMnedict, KANJIDIC2 ou Webster/GCIDE".into(),
-        });
-    } else {
-        import_cedict(open(path)?, sink)?;
-        ("cedict", "CC-CEDICT: chinês tradicional/simplificado, pinyin e definições")
-    };
-    Ok(ImportInfo { name: dictionary_name(path), format, description: description.into() })
-}
-
-fn filename(path: &Path) -> String {
+pub(super) fn filename(path: &Path) -> String {
     path.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase()
 }
 
-fn dictionary_name(path: &Path) -> String {
+pub(super) fn dictionary_name(path: &Path) -> String {
     let mut name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
     for suffix in [".bz2", ".gz", ".xml", ".jsonl", ".json", ".txt", ".u8"] {
         if name.to_ascii_lowercase().ends_with(suffix) { name.truncate(name.len() - suffix.len()); }
@@ -57,7 +36,7 @@ fn dictionary_name(path: &Path) -> String {
     if name.is_empty() { "Dicionário".into() } else { name }
 }
 
-fn open(path: &Path) -> Result<Box<dyn BufRead>> {
+pub(super) fn open(path: &Path) -> Result<Box<dyn BufRead>> {
     let file = File::open(path).with_context(|| format!("Não foi possível abrir {}", path.display()))?;
     let filename = filename(path);
     let stream: Box<dyn Read> = if filename.ends_with(".gz") {
@@ -71,7 +50,21 @@ fn open(path: &Path) -> Result<Box<dyn BufRead>> {
 /// GCIDE_XML's published root uses external entities for its 26 local fragments.
 /// We deliberately do NOT resolve XML external entities. Instead this known format
 /// is assembled from a fixed allowlist of sibling basenames, confined to its folder.
-fn gcide_input(path: &Path) -> Result<Option<Box<dyn BufRead>>> {
+pub(super) fn gcide_input(path: &Path) -> Result<Option<Box<dyn BufRead>>> {
+    let Some((prefix, fragments)) = gcide_parts(path)? else { return Ok(None) };
+    let mut stream: Box<dyn Read> = Box::new(Cursor::new(prefix));
+    for fragment in fragments {
+        stream = Box::new(stream.chain(File::open(fragment)?));
+    }
+    stream = Box::new(stream.chain(Cursor::new(GCIDE_END)));
+    Ok(Some(Box::new(BufReader::new(stream))))
+}
+
+pub(super) const GCIDE_END: &[u8] = b"</dictionary>";
+
+/// The pieces GCIDE_XML is read as: the root's DOCTYPE with a `<dictionary>` start tag, then the
+/// 26 letter files; `GCIDE_END` closes it. `None` when `path` is not a GCIDE_XML file.
+pub(super) fn gcide_parts(path: &Path) -> Result<Option<(Vec<u8>, Vec<std::path::PathBuf>)>> {
     let file = filename(path);
     if file != "gcide.xml" && !(file.starts_with("gcide_") && file.ends_with(".xml")) { return Ok(None); }
     let directory = path.parent().context("GCIDE sem diretório")?.canonicalize()?;
@@ -95,24 +88,23 @@ fn gcide_input(path: &Path) -> Result<Option<Box<dyn BufRead>>> {
         }
     }
     prefix.push_str("<dictionary>");
-    let mut stream: Box<dyn Read> = Box::new(Cursor::new(prefix.into_bytes()));
+    let mut fragments = Vec::new();
     for letter in b'a'..=b'z' {
         let fragment = directory.join(format!("gcide_{}.xml", char::from(letter)));
         // A root without all of its letter files is an incomplete dictionary, not
         // a successfully imported zero/partial-entry dictionary.
-        let fragment = confined(&fragment).with_context(|| format!("Fragmento GCIDE ausente: {}", fragment.display()))?;
-        stream = Box::new(stream.chain(File::open(fragment)?));
+        fragments.push(confined(&fragment).with_context(|| format!("Fragmento GCIDE ausente: {}", fragment.display()))?);
     }
-    stream = Box::new(stream.chain(Cursor::new(b"</dictionary>")));
-    Ok(Some(Box::new(BufReader::new(stream))))
+    Ok(Some((prefix.into_bytes(), fragments)))
 }
 
-/// `read_line` with a hard limit, including for compressed input.
-fn line(reader: &mut dyn BufRead, out: &mut String) -> Result<bool> {
+/// `read_line` with a hard limit, including for compressed input. Returns the bytes read (0 at
+/// the end), so line readers know where each record is.
+fn line(reader: &mut dyn BufRead, out: &mut String) -> Result<usize> {
     out.clear();
     let count = reader.take((MAX_RECORD + 1) as u64).read_line(out)?;
     ensure!(count <= MAX_RECORD, "Registro excede o limite de 8 MiB");
-    Ok(count != 0)
+    Ok(count)
 }
 
 fn unique(values: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -134,14 +126,20 @@ fn list(values: &[String]) -> String {
     html
 }
 
-fn import_cedict(mut reader: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<()> {
+pub(super) fn import_cedict(mut reader: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<()> {
     let mut text = String::new();
     let mut count = 0;
     let mut row = 0;
-    while line(&mut *reader, &mut text)? {
+    let mut at = 0u64;
+    loop {
+        let read = line(&mut *reader, &mut text)?;
+        if read == 0 { break; }
+        let start = at;
+        at += read as u64;
         row += 1;
         let text = text.trim().trim_start_matches('\u{feff}');
         if text.is_empty() || text.starts_with('#') { continue; }
+        sink.span(0, start, read as u64);
         let (words, rest) = text.split_once('[').with_context(|| format!("Linha {row}: esperado CC-CEDICT com [pinyin] /definição/"))?;
         let (pinyin, rest) = rest.split_once(']').context("CC-CEDICT: pinyin sem fechamento ]")?;
         // V2 marks revised readings with double brackets; V1 and V2 coexist in downloads.
@@ -169,14 +167,20 @@ fn strings(value: Option<&Value>) -> Vec<String> {
         .filter_map(Value::as_str).map(str::to_owned).collect()
 }
 
-fn import_kaikki(mut reader: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<()> {
+pub(super) fn import_kaikki(mut reader: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<()> {
     let mut text = String::new();
     let mut count = 0;
     let mut row = 0;
-    while line(&mut *reader, &mut text)? {
+    let mut at = 0u64;
+    loop {
+        let read = line(&mut *reader, &mut text)?;
+        if read == 0 { break; }
+        let start = at;
+        at += read as u64;
         row += 1;
         let text = text.trim().trim_start_matches('\u{feff}');
         if text.is_empty() { continue; }
+        sink.span(0, start, read as u64);
         ensure!(!text.starts_with('['), "Kaikki requer JSONL (um objeto por linha), não um array JSON");
         let entry: Value = serde_json::from_str(text).with_context(|| format!("JSONL inválido na linha {row}"))?;
         let word = entry.get("word").and_then(Value::as_str).filter(|w| !w.trim().is_empty())
@@ -353,8 +357,10 @@ impl BufRead for XmlInput {
     }
 }
 
-fn import_xml(input: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<&'static str> {
+pub(super) fn import_xml(input: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<&'static str> {
     let mut reader = Reader::from_reader(XmlInput { input, remaining: MAX_RECORD });
+    // Where the entry being read started, for `sink.span`.
+    let mut entry_start = 0u64;
     let mut buffer = Vec::new();
     let mut entities = HashMap::new();
     let mut stack: Vec<Node> = Vec::new();
@@ -365,6 +371,7 @@ fn import_xml(input: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<&'st
     let mut webster: Option<WebsterArticle> = None;
     loop {
         reader.get_mut().remaining = MAX_RECORD;
+        let before = reader.buffer_position();
         let event = reader.read_event_into(&mut buffer).context("XML inválido (é necessário XML UTF-8 bem formado)")?;
         let token_size = event.len();
         ensure!(token_size <= MAX_RECORD, "Token XML excede o limite de 8 MiB");
@@ -375,6 +382,7 @@ fn import_xml(input: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<&'st
                 let name = String::from_utf8(tag.name().as_ref().to_vec()).context("Nome XML não UTF-8")?.to_ascii_lowercase();
                 if depth == 0 {
                     format = match name.as_str() { "jmdict" => "jmdict", "jmnedict" => "jmnedict", "kanjidic2" => "kanjidic2", _ => "webster" };
+                    if !empty { sink.prolog(reader.buffer_position()); }
                 }
                 let entry = match format {
                     "kanjidic2" => name == "character",
@@ -382,7 +390,7 @@ fn import_xml(input: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<&'st
                     _ => name == "entry",
                 };
                 if !stack.is_empty() || entry {
-                    if stack.is_empty() { article_bytes = 0; }
+                    if stack.is_empty() { article_bytes = 0; entry_start = before; }
                     // Include node/container overhead, so tiny tags cannot grow an
                     // article tree far beyond the record budget.
                     article_bytes += token_size + 192;
@@ -396,7 +404,10 @@ fn import_xml(input: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<&'st
                     }
                     if empty {
                         if let Some(parent) = stack.last_mut() { parent.parts.push(Part::Child(node)); }
-                        else { finish_xml(&node, format, sink, &mut webster, &mut count)?; }
+                        else {
+                            let span = (entry_start, reader.buffer_position());
+                            finish_xml(&node, format, span, sink, &mut webster, &mut count)?;
+                        }
                     } else { stack.push(node); }
                 }
                 if !empty { depth += 1; }
@@ -406,7 +417,10 @@ fn import_xml(input: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<&'st
                 depth = depth.checked_sub(1).context("Fechamento XML inesperado")?;
                 if let Some(node) = stack.pop() {
                     if let Some(parent) = stack.last_mut() { parent.parts.push(Part::Child(node)); }
-                    else { finish_xml(&node, format, sink, &mut webster, &mut count)?; }
+                    else {
+                        let span = (entry_start, reader.buffer_position());
+                        finish_xml(&node, format, span, sink, &mut webster, &mut count)?;
+                    }
                 }
             }
             Event::Text(text) => {
@@ -444,11 +458,11 @@ fn import_xml(input: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<&'st
     Ok(format)
 }
 
-fn finish_xml(node: &Node, format: &str, sink: &mut dyn ImportSink, pending: &mut Option<WebsterArticle>, count: &mut usize) -> Result<()> {
+fn finish_xml(node: &Node, format: &str, span: (u64, u64), sink: &mut dyn ImportSink, pending: &mut Option<WebsterArticle>, count: &mut usize) -> Result<()> {
     match format {
-        "jmdict" | "jmnedict" => { render_japanese(node, sink)?; *count += 1; }
-        "kanjidic2" => { render_kanji(node, sink)?; *count += 1; }
-        _ => collect_webster(node, pending, sink, count)?,
+        "jmdict" | "jmnedict" => { sink.span(0, span.0, span.1 - span.0); render_japanese(node, sink)?; *count += 1; }
+        "kanjidic2" => { sink.span(0, span.0, span.1 - span.0); render_kanji(node, sink)?; *count += 1; }
+        _ => collect_webster(node, span, pending, sink, count)?,
     }
     Ok(())
 }
@@ -524,17 +538,20 @@ fn render_kanji(node: &Node, sink: &mut dyn ImportSink) -> Result<()> {
     sink.add(&word, &html, &[])
 }
 
-struct WebsterArticle { word: String, aliases: Vec<String>, html: String }
+/// A Webster/GCIDE article: its paragraphs run until the next headword, so its span runs from
+/// its first paragraph to its last.
+struct WebsterArticle { word: String, aliases: Vec<String>, html: String, span: (u64, u64) }
 
 fn flush_webster(pending: &mut Option<WebsterArticle>, sink: &mut dyn ImportSink, count: &mut usize) -> Result<()> {
     if let Some(entry) = pending.take() {
+        sink.span(0, entry.span.0, entry.span.1 - entry.span.0);
         sink.add(&entry.word, &entry.html, &entry.aliases)?;
         *count += 1;
     }
     Ok(())
 }
 
-fn collect_webster(node: &Node, pending: &mut Option<WebsterArticle>, sink: &mut dyn ImportSink, count: &mut usize) -> Result<()> {
+fn collect_webster(node: &Node, span: (u64, u64), pending: &mut Option<WebsterArticle>, sink: &mut dyn ImportSink, count: &mut usize) -> Result<()> {
     let mut words = Vec::new();
     node.all("hw", &mut words);
     if words.is_empty() { node.all("headword", &mut words); }
@@ -543,11 +560,12 @@ fn collect_webster(node: &Node, pending: &mut Option<WebsterArticle>, sink: &mut
     let words = unique(canonical.into_iter().chain(words.into_iter().map(|w| w.replace(['*', '"', '`'], ""))));
     if let Some(word) = words.first() {
         flush_webster(pending, sink, count)?;
-        *pending = Some(WebsterArticle { word: word.clone(), aliases: words.clone(), html: heading(word) });
+        *pending = Some(WebsterArticle { word: word.clone(), aliases: words.clone(), html: heading(word), span });
     } else if node.name == "entry" {
         anyhow::bail!("XML não reconhecido como Webster/GCIDE: entry sem hw/headword");
     }
     if let Some(entry) = pending {
+        entry.span.1 = span.1;
         entry.html.push_str(&paragraph(&node.text()));
         ensure!(entry.html.len() <= MAX_RECORD, "Artigo Webster/GCIDE excede 8 MiB");
     }
@@ -558,76 +576,68 @@ fn is_wordnet_file(filename: &str) -> bool {
     ["data.noun", "data.verb", "data.adj", "data.adv", "index.noun", "index.verb", "index.adj", "index.adv"].contains(&filename)
 }
 
-fn import_wordnet(path: &Path, sink: &mut dyn ImportSink) -> Result<()> {
+/// The WordNet data files beside `path`, with their part of speech, in a fixed order (the order
+/// the in-place reader numbers them in).
+pub(super) fn wordnet_files(path: &Path) -> Result<Vec<(&'static str, std::path::PathBuf)>> {
     let directory = if path.is_dir() { path } else { path.parent().context("WordNet sem diretório")? };
-    let mut count = 0;
-    for pos in ["noun", "verb", "adj", "adv"] {
-        let data = directory.join(format!("data.{pos}"));
-        if !data.is_file() { continue; }
-        let exceptions = wordnet_exceptions(&directory.join(format!("{pos}.exc")))?;
-        let mut reader = open(&data)?;
-        let mut text = String::new();
-        let mut row = 0;
-        while line(&mut *reader, &mut text)? {
-            row += 1;
-            // The distribution's copyright/license header is prefixed by spaces.
-            if text.starts_with(char::is_whitespace) || text.trim().is_empty() { continue; }
-            let (record, gloss) = text.split_once('|').with_context(|| format!("{}:{row}: synset sem gloss", data.display()))?;
-            let mut fields = record.split_whitespace();
-            let offset = fields.next().context("WordNet: offset ausente")?;
-            ensure!(offset.len() == 8 && offset.bytes().all(|c| c.is_ascii_digit()), "{}:{row}: offset inválido", data.display());
-            let _lex_file = fields.next().context("WordNet: lex_filenum ausente")?;
-            let kind = fields.next().context("WordNet: ss_type ausente")?;
-            ensure!(["n", "v", "a", "s", "r"].contains(&kind), "WordNet: ss_type inválido");
-            let words = usize::from_str_radix(fields.next().context("WordNet: w_cnt ausente")?, 16)?;
-            ensure!(words > 0 && words <= 4096, "WordNet: contagem de palavras inválida");
-            let mut aliases = Vec::new();
-            for _ in 0..words {
-                let word = fields.next().context("WordNet: synset truncado")?;
-                let _lex_id = fields.next().context("WordNet: lex_id ausente")?;
-                // Adjective syntactic markers are metadata, not part of the lemma.
-                let word = ["(ip)", "(p)", "(a)"].iter().find_map(|m| word.strip_suffix(m)).unwrap_or(word);
-                aliases.push(word.replace('_', " "));
-            }
-            let pointer_count = fields.next().context("WordNet: p_cnt ausente")?.parse::<usize>()?;
-            ensure!(pointer_count <= 65536, "WordNet: p_cnt inválido");
-            for _ in 0..pointer_count {
-                for _ in 0..4 { fields.next().context("WordNet: relação de synset truncada")?; }
-            }
-            if kind == "v" {
-                let frame_count = fields.next().context("WordNet: f_cnt ausente")?.parse::<usize>()?;
-                ensure!(frame_count <= 256, "WordNet: f_cnt inválido");
-                for _ in 0..frame_count {
-                    ensure!(fields.next() == Some("+"), "WordNet: frame verbal sem marcador +");
-                    fields.next().context("WordNet: frame_num ausente")?;
-                    fields.next().context("WordNet: word_num ausente")?;
-                }
-            }
-            ensure!(fields.next().is_none(), "WordNet: campos inesperados no synset");
-            let mut aliases = unique(aliases);
-            let word = aliases.first().context("WordNet: synset sem lema")?;
-            let mut html = heading(word);
-            html.push_str(&format!("<p>{pos} · {}</p>", aliases.iter().map(|w| link(w)).collect::<Vec<_>>().join(", ")));
-            html.push_str(&paragraph(gloss.trim()));
-            let irregular = aliases.iter().filter_map(|lemma| exceptions.get(lemma)).flatten().cloned().collect::<Vec<_>>();
-            aliases.extend(irregular);
-            let aliases = unique(aliases);
-            let word = aliases.first().context("WordNet: synset sem lema")?;
-            sink.add(word, &html, &aliases)?;
-            count += 1;
+    Ok(["noun", "verb", "adj", "adv"].into_iter().map(|pos| (pos, directory.join(format!("data.{pos}")))).filter(|(_, p)| p.is_file()).collect())
+}
+
+/// One synset line of a WordNet data file as an entry; `exceptions` add irregular forms.
+pub(super) fn wordnet_line(text: &str, pos: &str, exceptions: &HashMap<String, Vec<String>>, place: &str, sink: &mut dyn ImportSink) -> Result<()> {
+    let row = place;
+    let (record, gloss) = text.split_once('|').with_context(|| format!("{row}: synset sem gloss"))?;
+    let mut fields = record.split_whitespace();
+    let offset = fields.next().context("WordNet: offset ausente")?;
+    ensure!(offset.len() == 8 && offset.bytes().all(|c| c.is_ascii_digit()), "{row}: offset inválido");
+    let _lex_file = fields.next().context("WordNet: lex_filenum ausente")?;
+    let kind = fields.next().context("WordNet: ss_type ausente")?;
+    ensure!(["n", "v", "a", "s", "r"].contains(&kind), "WordNet: ss_type inválido");
+    let words = usize::from_str_radix(fields.next().context("WordNet: w_cnt ausente")?, 16)?;
+    ensure!(words > 0 && words <= 4096, "WordNet: contagem de palavras inválida");
+    let mut aliases = Vec::new();
+    for _ in 0..words {
+        let word = fields.next().context("WordNet: synset truncado")?;
+        let _lex_id = fields.next().context("WordNet: lex_id ausente")?;
+        // Adjective syntactic markers are metadata, not part of the lemma.
+        let word = ["(ip)", "(p)", "(a)"].iter().find_map(|m| word.strip_suffix(m)).unwrap_or(word);
+        aliases.push(word.replace('_', " "));
+    }
+    let pointer_count = fields.next().context("WordNet: p_cnt ausente")?.parse::<usize>()?;
+    ensure!(pointer_count <= 65536, "WordNet: p_cnt inválido");
+    for _ in 0..pointer_count {
+        for _ in 0..4 { fields.next().context("WordNet: relação de synset truncada")?; }
+    }
+    if kind == "v" {
+        let frame_count = fields.next().context("WordNet: f_cnt ausente")?.parse::<usize>()?;
+        ensure!(frame_count <= 256, "WordNet: f_cnt inválido");
+        for _ in 0..frame_count {
+            ensure!(fields.next() == Some("+"), "WordNet: frame verbal sem marcador +");
+            fields.next().context("WordNet: frame_num ausente")?;
+            fields.next().context("WordNet: word_num ausente")?;
         }
     }
-    ensure!(count > 0, "WordNet: não encontrei synsets nos arquivos data.noun/data.verb/data.adj/data.adv ao lado do arquivo selecionado");
+    ensure!(fields.next().is_none(), "WordNet: campos inesperados no synset");
+    let mut aliases = unique(aliases);
+    let word = aliases.first().context("WordNet: synset sem lema")?;
+    let mut html = heading(word);
+    html.push_str(&format!("<p>{pos} · {}</p>", aliases.iter().map(|w| link(w)).collect::<Vec<_>>().join(", ")));
+    html.push_str(&paragraph(gloss.trim()));
+    let irregular = aliases.iter().filter_map(|lemma| exceptions.get(lemma)).flatten().cloned().collect::<Vec<_>>();
+    aliases.extend(irregular);
+    let aliases = unique(aliases);
+    let word = aliases.first().context("WordNet: synset sem lema")?;
+    sink.add(word, &html, &aliases)?;
     Ok(())
 }
 
-fn wordnet_exceptions(path: &Path) -> Result<HashMap<String, Vec<String>>> {
+pub(super) fn wordnet_exceptions(path: &Path) -> Result<HashMap<String, Vec<String>>> {
     let mut result: HashMap<String, Vec<String>> = HashMap::new();
     if !path.is_file() { return Ok(result); }
     let mut reader = open(path)?;
     let mut text = String::new();
     let mut bytes = 0;
-    while line(&mut *reader, &mut text)? {
+    while line(&mut *reader, &mut text)? > 0 {
         bytes += text.len() + 128;
         ensure!(bytes <= MAX_RECORD, "Tabela de exceções WordNet excede 8 MiB");
         let mut fields = text.split_whitespace();
@@ -750,22 +760,6 @@ mod tests {
     }
     impl Drop for TempDirectory {
         fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
-    }
-
-    #[test]
-    fn wordnet_loads_synonyms_irregular_forms_and_verb_frames() {
-        let directory = TempDirectory::new("wordnet");
-        std::fs::write(directory.0.join("data.noun"), "  Copyright header\n00000001 05 n 02 cat 0 feline 0 000 | a small feline\n").unwrap();
-        std::fs::write(directory.0.join("noun.exc"), "kitties cat\n").unwrap();
-        std::fs::write(directory.0.join("data.verb"), "00000002 29 v 01 run 0 000 01 + 01 00 | move quickly\n").unwrap();
-        let mut sink = Memory::default();
-        import_wordnet(&directory.0.join("index.noun"), &mut sink).unwrap();
-        assert_eq!(sink.0.len(), 2);
-        assert_eq!(sink.0[0].0, "cat");
-        assert!(sink.0[0].2.contains(&"feline".into()));
-        assert!(sink.0[0].2.contains(&"kitties".into()));
-        assert!(sink.0[0].1.contains("a small feline"));
-        assert_eq!(sink.0[1].0, "run");
     }
 
     #[test]

@@ -39,7 +39,6 @@ encoding_rs = "0.8"
 ripemd = "0.1"
 lzokay = "2.0"
 unicode-normalization = "0.1"
-rusqlite = { version = "0.37", features = ["bundled"] }
 zip = { version = "4", default-features = false, features = ["deflate"] }
 quick-xml = "0.38"
 bzip2 = "0.6"

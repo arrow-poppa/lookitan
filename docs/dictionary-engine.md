@@ -37,16 +37,19 @@ frequência ou só de acento também podem ser adicionados.
   encontrada em cada dicionário vence; homógrafos dessa forma são preservados, até 128 resultados.
 - Os artigos seguem a ordem configurada, inclusive quando fontes locais e IA estão intercaladas.
   A exportação para o Anki agrupa todos os homógrafos da fonte, sem duplicar o mesmo artigo.
-- Os leitores importados emitem um artigo por vez em SQLite. A consulta usa um índice de palavras
-  e não materializa o dicionário inteiro. O cache SQLite de cada conexão é limitado a 512 KiB.
-- MDict mantém os arquivos mapeados e descomprime somente os blocos usados. Seu cache de blocos
-  tem limite de 4 MiB por arquivo, com até oito blocos. Artigos e mídia que atravessam blocos são
-  concatenados corretamente. Os índices `.lki` persistem apenas chaves/offsets/ordem.
-- Índices incompletos, corrompidos ou cuja fonte mudou são reconstruídos. A identidade usa
-  caminho, tamanho e mtime; MDict também valida o cabeçalho e o checksum do sidecar. Ela não
-  equivale a um hash criptográfico de todos os bytes do dicionário original a cada inicialização.
-- Índices SQLite e ZIPs extraídos ficam em `dictionaries/` na pasta de dados do aplicativo.
-  Os originais não são alterados. Remover uma fonte da lista não apaga seu arquivo original.
+- Como no Lookupper, não há banco de dados. Um ZIP importado é extraído para
+  `dictionaries/content/<id>/` na pasta de dados local do app, e os arquivos são lidos de lá,
+  sem conversão; remover o dicionário apaga essa cópia. Um arquivo escolhido diretamente é lido
+  onde está.
+- MDict lê o próprio índice de chaves do `.mdx` a cada abertura, sem arquivo extra, e descomprime
+  só os blocos usados (cache de até 4 MiB por arquivo).
+- Os outros formatos guardam ao lado dos arquivos um índice de palavras, `<arquivo>.lkidx`
+  (`yomitan.lkidx` no Yomitan), no layout do HeadwordIndex do Lookupper: palavras normalizadas em
+  ordem, offsets e ids, mais onde está cada verbete no arquivo original. O índice é mapeado na
+  memória; na consulta, só o verbete é lido do original e convertido em HTML. Arquivos `.dz` são
+  lidos por bloco; gzip/bzip2 sem blocos são descompactados uma vez para o cache.
+- Índices incompletos, corrompidos ou cuja fonte mudou (tamanho ou data de cada arquivo) são
+  reconstruídos. Os originais nunca são alterados.
 - Recursos soltos aceitam subpastas, separadores Windows e nomes com caixa diferente no Linux.
   Caminhos que escapam da pasta do dicionário são recusados; o mesmo vale para ZIPs com traversal
   ou links simbólicos. A extração é limitada a 32 GiB e 200 mil membros.
@@ -103,7 +106,7 @@ SHA-256 de `Lookupper.exe`: `16af03f18ddc75547683895c2d59bc25d053a311626710b51aa
 | Strings auxiliares, não Evidence REA | Nomes `IDictionaryReader`, `DictionaryEngine`, `HeadwordIndex`, `TryLoadIndex`, `SaveIndex` e leitores por formato sustentam a arquitetura proposta; não comprovam seus algoritmos |
 
 O engine é validado com arquivos sintéticos completos, um Slob gerado pelo Writer público
-de referência e testes de integração dos leitores com SQLite/ZIP/recursos. Eles rodam em
+de referência e testes de integração dos leitores com índices .lkidx/ZIP/recursos. Eles rodam em
 Windows e Linux no workflow `dictionary-engine`. O harness compila os módulos reais do app
 sem carregar Tauri/OCR, e o workflow principal ainda compila o aplicativo completo.
 Os testes JavaScript exercitam ordem das fontes, todos os homógrafos no Anki e áudio/links.

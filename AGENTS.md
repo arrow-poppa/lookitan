@@ -47,7 +47,7 @@ src-tauri/src/
   lib.rs         AppState, run_scan (capture → OCR → pick → overlay and pop-up), Tauri commands, setup
   settings.rs    Settings (camelCase JSON), built-in AI dictionaries, migrate()
   mdict.rs       MDict .mdx/.mdd reader; mdict_index.rs persists keys; dict.rs coordinates readers/resources
-  dictionaries/ independent format readers, SQLite indexes, archive/resource paths and language-aware morphology
+  dictionaries/ format readers read in place with .lkidx headword indexes, archive install/resource paths, morphology
   ocr/paddle.rs  PP-OCRv6 det+rec through ONNX Runtime (DirectML on Windows, WebGPU on Linux, CPU fallback)
   ocr/lens.rs    optional Google Lens cloud OCR (protobuf to lensfrontend-pa.googleapis.com/v1/crupload)
   ocr/cache.rs   per-frame cache of boxes and recognized lines
@@ -69,12 +69,13 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   **Storage follows Lookupper's model (user's decision, 2026-10-15): no database.** Importing a ZIP
   unpacks it into `<local data>/dictionaries/content/<id>/` (`source::install`), and the files are
   read from there unchanged; removing the dictionary deletes that copy. A main file chosen directly
-  is read in place. MDict reads its own key index on every open (no sidecar). Other formats keep a
-  headword index beside their files, `<main>.lkidx` (`dictionaries/lkidx.rs`, Lookupper's
-  HeadwordIndex layout plus each entry's offset/length in the source), and render the entry from
-  the source bytes at lookup time; Yomitan's is `yomitan.lkidx` (`dictionaries/yomitan.rs`).
-  Formats not yet moved to `.lkidx` still go through the SQLite `store.rs`; it goes once all are
-  ported. Lookupper's formats: mdict, yomitan, stardict, slob, dsl, cc-cedict, gcide,
+  is read in place. MDict reads its own key index on every open (no sidecar). Every other format
+  keeps a headword index beside its files, `<main>.lkidx` (`dictionaries/lkidx.rs`: Lookupper's
+  HeadwordIndex layout plus each entry's offset/length in the source; in the app cache for a file
+  used in place), and renders the entry from the source bytes at lookup time: Yomitan
+  (`yomitan.lkidx`, `dictionaries/yomitan.rs`) and the rest in `dictionaries/inplace.rs`, which
+  re-runs the format's reader over the entry's span. `.dz` is read by chunk (`dictzip.rs`); plain
+  gzip/bzip2 lexicon files are unpacked once into the cache. There is no SQLite any more. Lookupper's formats: mdict, yomitan, stardict, slob, dsl, cc-cedict, gcide,
   webster-text, wordnet-lmf-xml, jmdict-simplified-json, kanjidic2-json, kaikki-jsonl; Codex's
   other readers stay as extras. All
   source/AI sections follow one configured popup order. Anki retains all homographs per source.
@@ -160,6 +161,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): every format read in place with `.lkidx` (DSL, StarDict, CC-CEDICT, Kaikki, WordNet, XML, Slob); SQLite store and rusqlite removed.
 - 2026-10-15 (Claude, `tests`): dictionaries stored the Lookupper way: ZIPs unpacked into `content/<id>/` and read in place, `.lkidx` headword index (Yomitan first), no MDict sidecar; other formats still on SQLite until ported.
 - 2026-10-15 (Claude, `tests`): Hunspell dictionary forms (`dictionaries/hunspell.rs`, hunspell-rs bundled) for de/en/es/fr/pt/ru with Lookupper's same wooorm/dictionaries releases, fetched by `fetch-assets.py`; tried after the on-screen spelling and before the rule guesses.
 - 2026-10-15 (Codex, `tests`): independent multi-format dictionary engine and persistent SQLite/MDict indexes, safe ZIP/resources, MDict block/alias/style fixes, bounded language-aware JA/EN/PT candidates, popup source order and complete homograph Anki export. Format/evidence limits in `docs/dictionary-engine.md`; actual reader tests run on Actions through `scripts/dictionary-harness`.

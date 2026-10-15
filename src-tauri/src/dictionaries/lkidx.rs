@@ -5,6 +5,7 @@
 //! Layout (little-endian):
 //!   magic `LKIDX` + version u8 + 2 reserved bytes
 //!   format id, title, description            (u32 length + UTF-8 each)
+//!   u32 count of hidden entries (an XML prologue, a Slob resource), left out of `len`
 //!   source stamp: u32 file count, then per file: path relative to the dictionary folder
 //!                 (u32 length + UTF-8), u64 size, u64 modification time in nanoseconds
 //!   entries: u32 count, then per entry 24 bytes: u64 offset, u32 length, u16 file, u16 kind,
@@ -26,7 +27,7 @@ use memmap2::Mmap;
 use super::folded;
 
 const MAGIC: &[u8; 5] = b"LKIDX";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 const ENTRY_BYTES: usize = 24;
 /// Upper bounds that keep a damaged index from allocating without limit.
 const MAX_ENTRIES: usize = 50_000_000;
@@ -66,11 +67,16 @@ pub struct Builder {
     entries: Vec<(Location, u32, u32)>,
     titles: String,
     keys: Vec<(String, u32)>,
+    hidden: u32,
 }
+
+/// Titles of entries that are not articles start with this character (`HIDDEN` + a Slob resource
+/// key); an empty title has no headword at all.
+pub const HIDDEN: char = '\u{1}';
 
 impl Builder {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), titles: String::new(), keys: Vec::new() }
+        Self { entries: Vec::new(), titles: String::new(), keys: Vec::new(), hidden: 0 }
     }
 
     pub fn len(&self) -> usize {
@@ -81,6 +87,7 @@ impl Builder {
     pub fn add(&mut self, title: &str, location: Location, aliases: &[&str]) -> Result<u32> {
         ensure!(self.entries.len() < MAX_ENTRIES, "dictionary has too many entries");
         let id = self.entries.len() as u32;
+        if title.is_empty() || title.starts_with(HIDDEN) { self.hidden += 1; }
         let start = self.titles.len() as u32;
         self.titles.push_str(title);
         self.entries.push((location, start, title.len() as u32));
@@ -106,6 +113,7 @@ impl Builder {
             for text in [format, title, description] {
                 put_str(&mut w, text)?;
             }
+            w.write_all(&self.hidden.to_le_bytes())?;
             w.write_all(&(stamp.0.len() as u32).to_le_bytes())?;
             for (name, size, modified) in &stamp.0 {
                 put_str(&mut w, name)?;
@@ -195,6 +203,7 @@ pub struct Index {
     pub description: String,
     pub stamp: Stamp,
     entries: usize,
+    hidden: usize,
     entries_at: usize,
     titles_at: usize,
     words_count: usize,
@@ -217,6 +226,7 @@ impl Index {
         ensure!(c.take(5)? == MAGIC && c.take(3)?[0] == VERSION, "not a Lookitan dictionary index");
         let (found_format, title, description) = (c.str()?.to_string(), c.str()?.to_string(), c.str()?.to_string());
         ensure!(found_format == format, "dictionary index is for another format");
+        let hidden = c.u32()? as usize;
         let files = c.u32()? as usize;
         ensure!(files <= u16::MAX as usize + 1, "dictionary index is damaged");
         let mut stamped = Vec::with_capacity(files);
@@ -241,7 +251,8 @@ impl Index {
         c.take((words_count + 1) * 4)?;
         let ids_at = c.at;
         c.take(words_count * 4)?;
-        let index = Self { map, format: found_format, title, description, stamp: found_stamp, entries, entries_at,
+        ensure!(hidden <= entries, "dictionary index is damaged");
+        let index = Self { map, format: found_format, title, description, stamp: found_stamp, entries, hidden, entries_at,
             titles_at, words_count, words_at, offsets_at, ids_at };
         // The arrays must describe the buffers they point into.
         let mut previous = 0;
@@ -261,8 +272,9 @@ impl Index {
         Ok(index)
     }
 
+    /// The number of articles (entries a headword names).
     pub fn len(&self) -> usize {
-        self.entries
+        self.entries - self.hidden
     }
 
     fn word(&self, i: usize) -> &[u8] {

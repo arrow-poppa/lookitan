@@ -9,7 +9,6 @@ pub mod lexicons;
 pub mod morphology;
 pub mod slob;
 pub mod source;
-pub mod store;
 pub mod yomitan;
 
 #[cfg(test)]
@@ -30,6 +29,9 @@ pub trait ImportSink {
     /// The entries added next come from `length` bytes at `offset` of source file `file` (offsets
     /// in the decompressed stream). Readers that report spans are read in place (inplace.rs).
     fn span(&mut self, _file: u16, _offset: u64, _length: u64) {}
+    /// An XML reader's prologue (declaration, DOCTYPE and root start tag) is the first `length`
+    /// bytes of the stream; an entry is read again by parsing the prologue plus its span.
+    fn prolog(&mut self, _length: u64) {}
 }
 
 pub fn escape_html(text: &str) -> String {

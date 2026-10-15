@@ -1,47 +1,9 @@
-use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, File};
-use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
-
-pub fn stamp_id(stamp: &str) -> String {
-    let mut hash = DefaultHasher::new();
-    stamp.hash(&mut hash);
-    format!("{:016x}", hash.finish())
-}
-
-fn file_stamp(path: &Path) -> Result<String> {
-    let m = fs::metadata(path)?;
-    let changed = m.modified()?.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    Ok(format!("{}\t{}\t{}", path.to_string_lossy(), m.len(), changed))
-}
-
-/// Include companion indices and banks, not only index.json/.ifo. Resource edits do not require
-/// reindexing articles; resource reads continue to use the original files on every cache miss.
-pub fn fingerprint(source: &Path) -> Result<String> {
-    let mut stamps = vec![file_stamp(source)?];
-    if let Some(parent) = source.parent() {
-        for e in fs::read_dir(parent)? {
-            let e = e?;
-            let name = e.file_name().to_string_lossy().to_lowercase();
-            if e.file_type()?.is_file() && (name.starts_with("term_bank_") || name.starts_with("kanji_bank_")
-                || name.starts_with("term_meta_bank_") || name.starts_with("kanji_meta_bank_")
-                || name.starts_with("tag_bank_") || name.starts_with("data.") || name.starts_with("index.")
-                || (name.starts_with("gcide_") && name.ends_with(".xml"))
-                || name.ends_with(".exc")
-                || [".idx", ".idx.gz", ".dict", ".dict.dz", ".syn"].iter().any(|x| name.ends_with(x))) {
-                stamps.push(file_stamp(&e.path())?);
-            }
-            if stamps.len() > 200_000 { bail!("too many dictionary bank files"); }
-        }
-    }
-    stamps.sort();
-    stamps.dedup();
-    Ok(stamps.join("\n"))
-}
 
 fn is_main(path: &Path) -> bool {
     let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();

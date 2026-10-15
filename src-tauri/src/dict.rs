@@ -1,6 +1,6 @@
-// Installed dictionaries, read in place as Lookupper reads them: an MDict from its .mdx and .mdd
-// files, a Yomitan dictionary from its banks with a `yomitan.lkidx` headword index beside them.
-// Formats not yet read in place are indexed into SQLite (dictionaries/store.rs).
+// Installed dictionaries, read in place as Lookupper reads them, with no database: an MDict from
+// its .mdx and .mdd files, a Yomitan dictionary from its banks with `yomitan.lkidx` beside them,
+// and the other formats from their files with `<main file>.lkidx` beside them (inplace.rs).
 
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -11,13 +11,15 @@ use serde::Serialize;
 use parking_lot::Mutex;
 
 use crate::mdict::Mdict;
-use crate::dictionaries::{inplace::{self, InPlace}, source, store::Store, yomitan::{self, Yomitan}};
+use crate::dictionaries::{inplace::{self, InPlace}, source, yomitan::{self, Yomitan}};
+
+/// The most entries one lookup returns from one dictionary (homographs of one form).
+pub const MAX_HITS: usize = 128;
 
 enum Reader {
     Mdict(Mdict),
     Yomitan(Yomitan),
     InPlace(InPlace),
-    Indexed(Store),
 }
 
 /// Where a dictionary's `.lkidx` goes: beside its files in Lookitan's own copy (as Lookupper keeps
@@ -34,7 +36,6 @@ pub struct Dictionary {
     pub id: String,
     pub name: String,
     pub dir: PathBuf,
-    source_path: PathBuf,
     reader: Reader,
     pub format: String,
     pub description: String,
@@ -85,17 +86,13 @@ impl Dictionary {
             (Reader::Yomitan(y), name, yomitan::FORMAT.to_string(), description)
         } else if inplace::format_of(&path).is_some() {
             let beside = PathBuf::from(format!("{}.lkidx", path.display()));
-            let d = InPlace::open(&path, &index_path(installed, beside, cache, id)?, progress)?;
+            let d = InPlace::open(&path, &index_path(installed, beside, cache, id)?, cache, id, progress)?;
             let (name, description, format) = (d.title().to_string(), d.description().to_string(), d.format.to_string());
             (Reader::InPlace(d), name, format, description)
         } else {
-            let store = Store::open(&path, &cache.join("indexes"), id, progress)?;
-            let name = store.name.clone();
-            let format = store.format.clone();
-            let description = store.description.clone();
-            (Reader::Indexed(store), name, format, description)
+            return Err(anyhow!("'{}' is in no format this engine reads.", path.display()));
         };
-        Ok(Self { id: id.to_string(), name, dir, source_path: path, reader, format, description, warnings, mdds,
+        Ok(Self { id: id.to_string(), name, dir, reader, format, description, warnings, mdds,
             hits: Mutex::new(VecDeque::new()) })
     }
 
@@ -104,7 +101,6 @@ impl Dictionary {
             Reader::Mdict(m) => m.len(),
             Reader::Yomitan(y) => y.len(),
             Reader::InPlace(d) => d.len(),
-            Reader::Indexed(s) => s.len(),
         }
     }
 
@@ -113,7 +109,6 @@ impl Dictionary {
             Reader::Mdict(m) => m.headword(idx).map(str::to_string),
             Reader::Yomitan(y) => y.headword(idx),
             Reader::InPlace(d) => d.headword(idx),
-            Reader::Indexed(s) => s.headword(idx),
         }
     }
 
@@ -122,11 +117,10 @@ impl Dictionary {
         if let Some((_, result)) = self.hits.lock().iter().find(|(k, _)| k == word) { return result.clone(); }
         let result = match &self.reader {
             Reader::Mdict(m) => m.find(word),
-            Reader::Yomitan(y) => y.find(word, crate::dictionaries::store::MAX_HITS),
-            Reader::InPlace(d) => d.find(word, crate::dictionaries::store::MAX_HITS),
-            Reader::Indexed(s) => s.find(word).unwrap_or_else(|e| { log::warn!("dictionary lookup: {e:#}"); Vec::new() }),
+            Reader::Yomitan(y) => y.find(word, MAX_HITS),
+            Reader::InPlace(d) => d.find(word, MAX_HITS),
         };
-        let result: Vec<_> = result.into_iter().take(crate::dictionaries::store::MAX_HITS).collect();
+        let result: Vec<_> = result.into_iter().take(MAX_HITS).collect();
         let mut cache = self.hits.lock();
         if cache.len() >= 128 { cache.pop_front(); }
         cache.push_back((word.to_string(), result.clone()));
@@ -153,7 +147,6 @@ impl Dictionary {
             if !visited.insert(idx) { return Err(anyhow!("dictionary redirect cycle")); }
             let text = match &self.reader {
                 Reader::Mdict(m) => m.record_text(idx)?,
-                Reader::Indexed(s) => s.record_text(idx)?,
                 Reader::Yomitan(_) | Reader::InPlace(_) => unreachable!("rendered above"),
             };
             let trimmed = text.trim();
@@ -176,13 +169,10 @@ impl Dictionary {
         }
         source::resource(&self.dir, rel)
             .or_else(|| self.mdds.iter().find_map(|m| m.resource(rel)))
-            .or_else(|| if self.format == "slob" {
-                match &self.reader {
-                    Reader::Indexed(store) => store.resource_reference(rel)
-                        .and_then(|index| crate::dictionaries::slob::resource_at(&self.source_path, index)),
-                    _ => None,
-                }
-            } else { None })
+            .or_else(|| match &self.reader {
+                Reader::InPlace(d) => d.resource(rel),
+                _ => None,
+            })
             .or_else(|| if self.format == "stardict" { source::resource(&self.dir, &format!("res/{rel}")) } else { None })
     }
 }

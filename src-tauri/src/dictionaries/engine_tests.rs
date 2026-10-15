@@ -133,24 +133,6 @@ fn nested_resources_are_case_insensitive_and_stay_inside_the_dictionary_root() {
 }
 
 #[test]
-fn a_complete_metadata_marker_cannot_hide_missing_sqlite_tables() {
-    let directory = Directory::new();
-    let source = directory.0.join("source.u8");
-    let cache = directory.0.join("cache");
-    fs::write(&source, "字 字 [zi4] /character/\n").unwrap();
-    let dictionary = Dictionary::open_cached("broken", &source, &cache, &|_| {}).unwrap();
-    assert_eq!(dictionary.find("字").len(), 1);
-    drop(dictionary);
-    let database = fs::read_dir(cache.join("indexes")).unwrap().map(|entry| entry.unwrap().path())
-        .find(|path| path.extension().is_some_and(|extension| extension == "sqlite")).unwrap();
-    let connection = rusqlite::Connection::open(&database).unwrap();
-    connection.execute_batch("DROP TABLE headwords;").unwrap();
-    drop(connection);
-    let recovered = Dictionary::open_cached("broken", &source, &cache, &|_| {}).unwrap();
-    assert_eq!(recovered.find("字").len(), 1, "damaged complete indexes must rebuild");
-}
-
-#[test]
 fn simultaneous_imports_publish_one_usable_index_without_renaming_a_live_winner() {
     let directory = Directory::new();
     let source = directory.0.join("source.dsl");
