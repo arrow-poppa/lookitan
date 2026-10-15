@@ -220,6 +220,23 @@ test('settings render and GPU toggle work while OCR status is pending', async ()
     assert.equal(view.document.getElementById('ocr-language'), languageControl, 'status must not replace the edited controls');
 });
 
+test('the video card choice stays hidden until its toggle is on', async () => {
+    const fixture = await settingsFixture();
+    const {root, settings} = fixture;
+    const row = (title) => descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
+    assert.equal(row('Placa usada no OCR'), undefined, 'off by default: the system picks the card');
+    const choose = descendants(row('Escolher a placa de vídeo')).find((node) => node.tagName === 'input');
+    choose.checked = true;
+    choose.dispatch('change');
+    assert.equal(settings.chooseGpu, true);
+    const card = descendants(row('Placa usada no OCR')).find((node) => node.tagName === 'select');
+    assert.equal(card.value, 'highPerformance');
+    card.value = 'lowPower';
+    card.dispatch('change');
+    assert.equal(settings.gpuPreference, 'lowPower');
+    await fixture.finish();
+});
+
 test('custom capture dimensions save on change and presets restore the original while OCR is pending', async () => {
     const fixture = await settingsFixture({ocrScope: 'region'});
     const {view, settings} = fixture;

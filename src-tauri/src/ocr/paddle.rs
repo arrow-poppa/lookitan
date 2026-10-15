@@ -18,6 +18,7 @@ use ort::value::Tensor;
 use parking_lot::Mutex;
 
 use super::{OcrChar, OcrLine};
+use crate::settings::GpuPreference;
 
 macro_rules! ortx {
     ($e:expr) => {
@@ -437,42 +438,57 @@ fn cpu_session(path: &Path) -> Result<Session> {
     Ok(s)
 }
 
+// `choice` is the card the user picked (Configurações › OCR); `None` keeps the API's default.
 #[cfg(windows)]
-fn gpu_session(path: &Path) -> Result<Session> {
+fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
+    use ort::ep::directml::PerformancePreference;
     use ort::ep::DirectML;
     let b = ortx!(Session::builder());
     let b = ortx!(b.with_optimization_level(GraphOptimizationLevel::Level1));
     let b = ortx!(b.with_memory_pattern(false));
     let b = ortx!(b.with_parallel_execution(false));
-    let mut b = ortx!(b.with_execution_providers([DirectML::default().with_device_id(0).build().error_on_failure()]));
+    // A device id overrides the preference, so it is set only when the user chose nothing.
+    let ep = match choice {
+        None => DirectML::default().with_device_id(0),
+        Some(GpuPreference::HighPerformance) => DirectML::default().with_performance_preference(PerformancePreference::HighPerformance),
+        Some(GpuPreference::LowPower) => DirectML::default().with_performance_preference(PerformancePreference::MinimumPower),
+    };
+    let mut b = ortx!(b.with_execution_providers([ep.build().error_on_failure()]));
     let s = ortx!(b.commit_from_file(path));
     Ok(s)
 }
 
 // Linux has no DirectML; the bundled ONNX Runtime build carries the WebGPU provider, which runs on
 // Vulkan through Dawn (Mesa RADV, ANV, NVIDIA).
+// The WebGPU `deviceId` is ONNX Runtime's context id, not an adapter: the card is picked by Dawn
+// from the power preference (high performance when unset). The context is shared by every session
+// and released with the last one, so a new preference applies when the engine is rebuilt.
 #[cfg(target_os = "linux")]
-fn gpu_session(path: &Path) -> Result<Session> {
+fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
     use ort::ep::webgpu::DawnBackendType;
-    use ort::ep::WebGPU;
+    use ort::ep::{ArbitrarilyConfigurableExecutionProvider, WebGPU};
     let b = ortx!(Session::builder());
     let b = ortx!(b.with_optimization_level(GraphOptimizationLevel::Level1));
-    let mut b = ortx!(b.with_execution_providers([WebGPU::default()
-        .with_dawn_backend_type(DawnBackendType::Vulkan)
-        .with_device_id(0)
-        .build()
-        .error_on_failure()]));
+    let mut ep = WebGPU::default().with_dawn_backend_type(DawnBackendType::Vulkan).with_device_id(0);
+    if let Some(choice) = choice {
+        let value = match choice {
+            GpuPreference::HighPerformance => "high-performance",
+            GpuPreference::LowPower => "low-power",
+        };
+        ep = ep.with_arbitrary_config("ep.webgpuexecutionprovider.powerPreference", value);
+    }
+    let mut b = ortx!(b.with_execution_providers([ep.build().error_on_failure()]));
     let s = ortx!(b.commit_from_file(path));
     Ok(s)
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-fn gpu_session(_path: &Path) -> Result<Session> {
+fn gpu_session(_path: &Path, _choice: Option<GpuPreference>) -> Result<Session> {
     bail!("GPU inference is only available on Windows (DirectML) and Linux (WebGPU)")
 }
 
 impl PaddleOcr {
-    pub fn new(models_dir: &Path, rec_stem: &str, want_gpu: bool) -> Result<Self> {
+    pub fn new(models_dir: &Path, rec_stem: &str, want_gpu: bool, gpu_choice: Option<GpuPreference>) -> Result<Self> {
         let det_small = models_dir.join("det_small.onnx");
         let det_tiny = models_dir.join("det_tiny.onnx");
         let rec_path = models_dir.join(format!("{rec_stem}.onnx"));
@@ -482,7 +498,7 @@ impl PaddleOcr {
         }
 
         let (det, det_model, det_on_gpu) = if want_gpu {
-            match gpu_session(&det_small) {
+            match gpu_session(&det_small, gpu_choice) {
                 Ok(s) => (s, "det_small", true),
                 Err(e) => {
                     log::warn!("Ocr.GpuFallback.Detection: {e:#}");
@@ -493,7 +509,7 @@ impl PaddleOcr {
             (cpu_session(&det_tiny)?, "det_tiny", false)
         };
         let (rec, rec_on_gpu) = if det_on_gpu {
-            match gpu_session(&rec_path) {
+            match gpu_session(&rec_path, gpu_choice) {
                 Ok(s) => (s, true),
                 Err(e) => {
                     log::warn!("Ocr.GpuFallback.Recognition: {e:#}");

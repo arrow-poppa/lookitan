@@ -63,6 +63,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 - **OCR:**
   - The detector tries det_small on the GPU first. If GPU inference fails, it releases the GPU session and retries on the CPU with det_tiny. Foreground and overlay OCR share that CPU session.
   - GPU first on both platforms (DirectML on Windows, WebGPU/Vulkan on Linux); the user runs Lookitan on Windows and on Fedora KDE. After a GPU failure the stage stays on the CPU until restart. A "retry the GPU on the next input" variant was tried in 5ab8870 and reverted at the user's request as less safe; do not reintroduce it without asking.
+  - GPU card: off by default (`chooseGpu`), DirectML takes adapter 0 and Linux takes Dawn's default (high performance). With "Escolher a placa de vídeo" on, `gpuPreference` (`highPerformance`/`lowPower`) goes to DirectML's performance preference or to the WebGPU EP's `powerPreference`. The WebGPU `deviceId` is ONNX Runtime's context id, not an adapter index. The Linux packages depend on the Vulkan loader (`vulkan-loader`, `libvulkan1`).
   - The models are the same PP-OCRv6/PP-OCRv5 weights as Lookupper, from the official PaddlePaddle exports. Lookupper's copies are a different ONNX conversion (det at opset 11 instead of 14).
   - `DET_MAX_SIDE` is 1280, and whole-screen OCR runs in overlapping bands.
   - Recognition has two phases: the lines near the pointer first, one run per line, then the rest in the background for the overlay.
@@ -109,6 +110,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-15 (Claude, branch `claude/project-thread-x83872`): optional video card choice for OCR (Configurações › OCR › "Escolher a placa de vídeo", off by default) for machines with two cards; dedicated or integrated, on Windows and Linux. The `.rpm` and `.deb` now require the Vulkan loader, without which WebGPU fell back to the CPU silently.
 
 - 2026-10-15 (Claude, branch `claude/project-thread-o09n7y` from `claude/overlay-spotlight`): the screen flashed at every lookup on Linux. The overlay and the pop-up are now hidden only after they paint an empty frame (`hide_blank`, `webview_blank`), and the KDE overlay no longer leaves fullscreen between lookups on the same monitor. Windows unchanged.
 

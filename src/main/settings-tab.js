@@ -312,6 +312,13 @@ function render(root) {
         usesLens ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'O Lookitan não vem com chave embutida.', wide: true, control: lensKey}) : null,
         captureRegionRows(),
         cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: isWindows ? 'DirectML, com volta automática para a CPU.' : 'WebGPU via Vulkan (experimental), com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}),
+        cardRow({icon: 'settings', title: 'Escolher a placa de vídeo', desc: 'Para computadores com duas placas, como Intel junto com NVIDIA. Desligado, o sistema escolhe.',
+            control: toggle(!!s.chooseGpu, (v) => { s.chooseGpu = v; save(); rerender(); })}),
+        s.chooseGpu ? cardRow({icon: 'settings', title: 'Placa usada no OCR', desc: 'Vale a partir da próxima leitura.', wide: true,
+            control: select([
+                {value: 'highPerformance', label: 'Dedicada (mais rápida)'},
+                {value: 'lowPower', label: 'Integrada (gasta menos energia)'},
+            ], s.gpuPreference || 'highPerformance', (v) => { s.gpuPreference = v; save(); })}) : null,
         el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('alert')}),
             el('div', {class: 'txt'}, el('div', {class: 't'}, 'Estado do motor'), el('div', {class: 'd', id: 'engine-status'}, engineStatusText()))),
     ));
