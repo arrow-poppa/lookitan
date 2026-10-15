@@ -214,7 +214,7 @@ pub fn builtin_dictionaries() -> Vec<DictionaryConfig> {
 }
 
 /// Settings saved by older versions have no built-in AI dictionaries; add them at the top.
-fn migrate(mut s: Settings) -> Settings {
+pub fn migrate(mut s: Settings) -> Settings {
     // The scope is no longer a setting: lookups read around the pointer, and a shortcut pressed
     // away from text reads the whole screen.
     s.ocr_scope = OcrScope::Region;

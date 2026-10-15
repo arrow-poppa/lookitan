@@ -982,19 +982,46 @@ fn save_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: Se
     // Dictionary files are managed by their own commands; keep the stored list.
     let mut next = settings;
     next.dictionaries = previous.dictionaries.clone();
+    apply_settings(&app, &state, previous, next)
+}
+
+/// Replaces every setting with those of a settings file (see src/lib/settings-file.js, which
+/// has already put this computer's API keys back). Dictionaries whose file is not on this
+/// computer are left out, and the ones installed here but not in the file are kept. Returns the
+/// names of the dictionaries left out.
+#[tauri::command]
+fn import_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: Settings) -> std::result::Result<Vec<String>, String> {
+    let previous = state.settings.read().clone();
+    let mut next = settings::migrate(settings);
+    let mut missing = Vec::new();
+    next.dictionaries.retain(|d| {
+        let here = d.kind != DictionaryKind::Mdict || std::path::Path::new(&d.path).is_file();
+        if !here { missing.push(if d.name.is_empty() { d.path.clone() } else { d.name.clone() }); }
+        here
+    });
+    for d in &previous.dictionaries {
+        if !next.dictionaries.iter().any(|n| n.id == d.id) { next.dictionaries.push(d.clone()); }
+    }
+    apply_settings(&app, &state, previous, next)?;
+    load_dictionaries(&state);
+    let _ = app.emit("dictionaries-changed", ());
+    Ok(missing)
+}
+
+fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: Settings) -> std::result::Result<(), String> {
     settings::save(&state.config_dir, &next).map_err(|e| format!("{e:#}"))?;
     let engine_changed = previous.ocr_language != next.ocr_language || previous.use_gpu != next.use_gpu
         || previous.gpu_choice() != next.gpu_choice();
     *state.settings.write() = next.clone();
     if engine_changed {
-        warm_engine_in_background(&app);
+        warm_engine_in_background(app);
     }
     if previous.autostart != next.autostart {
-        apply_autostart(&app, next.autostart);
+        apply_autostart(app, next.autostart);
     }
-    apply_mouse_hotkey(&app, &next.mouse_hotkey);
+    apply_mouse_hotkey(app, &next.mouse_hotkey);
     if previous.hotkey != next.hotkey {
-        apply_hotkey(&app, &next.hotkey)?;
+        apply_hotkey(app, &next.hotkey)?;
     }
     let _ = app.emit("settings-changed", ());
     Ok(())
@@ -1248,6 +1275,12 @@ fn write_text_file(path: String, content: String) -> std::result::Result<(), Str
     std::fs::write(&path, content).map_err(|e| format!("{path}: {e}"))
 }
 
+/// Reads a file chosen by the user in the open dialog (a settings file to import).
+#[tauri::command]
+fn read_text_file(path: String) -> std::result::Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))
+}
+
 #[tauri::command]
 fn word_image(state: tauri::State<'_, AppState>, name: String) -> Option<String> {
     state.cards.media(&name).map(|b| base64::engine::general_purpose::STANDARD.encode(b))
@@ -1413,6 +1446,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            import_settings,
             engine_status,
             ocr_languages,
             list_dictionaries,
@@ -1435,7 +1469,8 @@ pub fn run() {
             save_word,
             delete_word,
             word_image,
-            write_text_file
+            write_text_file,
+            read_text_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lookitan");

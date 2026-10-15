@@ -4,6 +4,7 @@ import {getVersion} from '@tauri-apps/api/app';
 import {api, escapeHtml} from '../lib/api.js';
 import {icon} from '../lib/icons.js';
 import {renderAnkiSection} from './anki-panel.js';
+import {transferRow} from './settings-transfer.js';
 import {store, save} from './store.js';
 import {cardRow, collapser, el, heading, segmented, select, textInput, toggle} from './ui.js';
 
@@ -334,6 +335,7 @@ function render(root) {
     void getVersion().then((v) => { version.textContent = `Versão ${v}`; });
     root.append(heading('Aplicativo'), el('div', {class: 'group'},
         cardRow({icon: 'power', title: 'Iniciar o Lookitan com o sistema', control: toggle(s.autostart, (v) => { s.autostart = v; save(); })}),
+        transferRow(),
         el('div', {class: 'card-row'}, el('img', {src: '/app-icon.svg', style: 'width:24px;height:24px'}),
             el('div', {class: 'txt'}, el('div', {class: 't'}, 'Lookitan'), version),
             el('div', {class: 'ctl'}, el('span', {class: 'note', html: escapeHtml('GPL-3.0 · BYOK de yomitan-byok-ai · KWin via MaruPop · PP-OCR (Apache-2.0)')}))),

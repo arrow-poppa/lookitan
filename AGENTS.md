@@ -88,6 +88,9 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Chromium's occlusion tracker stops drawing a browser window that other windows seem to cover fully, which made a video under the whole-screen overlay go black. `gfx::IsWindowVisibleAndFullyOpaque` ignores tool windows.
   - tao rewrites the extended style on state changes. A `SetWindowSubclass` handler for `WM_STYLECHANGING` keeps the bit.
   - Linux has no such tracker; the user checked that videos stay visible there.
+- **Settings files (Configurações › Aplicativo › Exportar e importar):** `src/lib/settings-file.js` writes every setting, including the `ai` and `anki` options, without any key named `apiKey` or `lensApiKey`.
+  - On import, `keepSecrets` puts this computer's keys back wherever the file has none, so a plain copy of `settings.json` also imports.
+  - `import_settings` (lib.rs) migrates the settings and drops MDict dictionaries whose file is not on this computer, returning their names. It keeps the dictionaries installed here that the file lacks, then applies the settings like `save_settings`. The main window then reloads.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
@@ -115,6 +118,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, branch `claude/overlay-spotlight`): settings export and import without the API keys (`settings-file.js`, `settings-transfer.js`, `import_settings` and `read_text_file` in lib.rs).
 - 2026-10-15 (Claude, branch `claude/overlay-spotlight`): on Windows, the overlay and the pop-up are kept tool windows (`keep_tool_window`, which adds the `Win32_UI_Shell` feature), so the browser no longer goes black under a lookup (Chromium occlusion tracking). No change on Linux.
 - 2026-10-15 (Claude, branch `claude/project-thread-x83872`): optional video card choice for OCR (Configurações › OCR › "Escolher a placa de vídeo", off by default) for machines with two cards; dedicated or integrated, on Windows and Linux. The `.rpm` and `.deb` now require the Vulkan loader, without which WebGPU fell back to the CPU silently.
 
