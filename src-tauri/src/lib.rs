@@ -379,11 +379,11 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     }
     let scan = state.scan_seq.fetch_add(1, Ordering::SeqCst) + 1;
     // A new lookup replaces the previous overlay (and resumes a frozen app).
-    let overlay_hidden = close_overlay(app);
+    let overlay_hide = close_overlay(app);
     let popup_visible = app.get_webview_window("popup").is_some_and(|p| p.is_visible().unwrap_or(false));
-    let popup_hidden = hide_blank(app, "popup");
+    let popup_hide = hide_blank(app, "popup");
     // Both must be off the screen before the capture.
-    for hidden in [overlay_hidden, popup_hidden].into_iter().flatten() { let _ = hidden.join(); }
+    for hidden in [overlay_hide, popup_hide].into_iter().flatten() { let _ = hidden.join(); }
     // Give the compositor one frame to remove our popup from the next captured bitmap.
     if popup_visible { std::thread::sleep(std::time::Duration::from_millis(20)); }
 
