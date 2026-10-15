@@ -8,16 +8,12 @@
         #frame { position: fixed; left: 0; top: 0; object-fit: fill; display: none; }
         #shade { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.01); transition: background 160ms; }
         /* Clickable words, as in Lookupper: invisible until used. The word under the pointer and
-           the words already looked up get a faint yellow; the word being looked up a strong one. */
-        .w {
-            position: fixed;
-            border-radius: 2px;
-            background: transparent;
-            cursor: pointer;
-            transition: background 60ms;
-        }
-        .w:hover, .w.seen { background: rgba(255, 221, 0, 0.26); }
-        .w.sel, .w.sel:hover { background: rgba(255, 221, 0, 0.5); }
+           the words already looked up get a faint yellow; the word being looked up a strong one.
+           .w is the clickable area, wider than the word; .ink inside it is the word's drawn box. */
+        .w { position: fixed; background: transparent; cursor: pointer; }
+        .w > .ink { position: absolute; border-radius: 2px; pointer-events: none; transition: background 60ms; }
+        .w:hover > .ink, .w.seen > .ink { background: rgba(255, 221, 0, 0.26); }
+        .w.sel > .ink, .w.sel:hover > .ink { background: rgba(255, 221, 0, 0.5); }
         #hint.spotlight { display: none; }
         /* Between lookups, and while a whole-screen lookup is still being read: nothing visible.
            The near-transparent shade stays, so the window still takes the clicks and the wheel. */
@@ -33,13 +29,13 @@
         #frame.spotlight { filter: blur(2.5px) brightness(0.85); }
         /* Live screen (no freeze): the same slight dim, with holes where the words are. */
         #dim { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; pointer-events: none; display: none; }
-        #words.spotlight .w, #words.spotlight .w:hover, #words.spotlight .w.seen, #words.spotlight .w.sel {
+        #words.spotlight .w > .ink, #words.spotlight .w:hover > .ink, #words.spotlight .w.seen > .ink, #words.spotlight .w.sel > .ink {
             background-color: transparent;
             background-repeat: no-repeat;
         }
-        #words.spotlight .w::after { content: ""; position: absolute; inset: 0; border-radius: inherit; transition: background 60ms; }
-        #words.spotlight .w:hover::after, #words.spotlight .w.seen::after { background: rgba(255, 221, 0, 0.26); }
-        #words.spotlight .w.sel::after { background: rgba(255, 221, 0, 0.5); }
+        #words.spotlight .ink::after { content: ""; position: absolute; inset: 0; border-radius: inherit; transition: background 60ms; }
+        #words.spotlight .w:hover > .ink::after, #words.spotlight .w.seen > .ink::after { background: rgba(255, 221, 0, 0.26); }
+        #words.spotlight .w.sel > .ink::after { background: rgba(255, 221, 0, 0.5); }
         #hint {
             position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
             font: 12.5px system-ui, "Segoe UI", sans-serif; color: #fff;

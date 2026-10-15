@@ -39,6 +39,11 @@ function position(el, r, scale) {
     el.style.height = `${Math.max(r.h * scale.y, 4)}px`;
 }
 
+/** A word's clickable area: wider than its drawn box, which hugs the ink (see words.rs). */
+function hitRect(w) {
+    return w.hit ? {x: w.hit[0], y: w.hit[1], w: w.hit[2], h: w.hit[3]} : w;
+}
+
 function containsCenter(w, s) {
     const cx = s.x + s.w / 2;
     const cy = s.y + s.h / 2;
@@ -107,6 +112,8 @@ function render() {
     drawBlock(scale);
     const frag = document.createDocumentFragment();
     for (const w of current.words) {
+        // The element takes the pointer over the whole hit area; its child draws the word.
+        const hit = hitRect(w);
         const el = document.createElement('div');
         el.className = 'w';
         if (selected && containsCenter(w, selected)) {
@@ -114,8 +121,12 @@ function render() {
         } else if (seen.some((s) => containsCenter(w, s))) {
             el.classList.add('seen');
         }
-        position(el, w, scale);
-        if (blurred) { cutOut(el, w, current.frameRect, scale); }
+        position(el, hit, scale);
+        const ink = document.createElement('div');
+        ink.className = 'ink';
+        position(ink, {...w, x: w.x - hit.x, y: w.y - hit.y}, scale);
+        if (blurred) { cutOut(ink, w, current.frameRect, scale); }
+        el.appendChild(ink);
         el.title = w.text;
         frag.appendChild(el);
     }

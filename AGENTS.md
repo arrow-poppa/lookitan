@@ -98,6 +98,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - `ink::spans` moves each boundary between two characters to the widest blank gap between their centres, and the line's ends to its first and last ink. Spaces fill the gap between words.
   - `OcrLine.ink_y` holds the ink rows; word boxes and the pick use them (`text_rows` in words.rs).
   - Boxes keep a little room around the ink (`INK_PAD_Y` 12% of the ink height above and below, `INK_PAD_X` 8% at the sides), never past the detected line box, and neighbours that touch share the gap. Raise these two constants if the highlight still looks tight.
+  - Drawn box and hit area are separate, so the tight box does not make words hard to hit. `WordBox.hit` (`OverlayWord.hit`, `[x, y, w, h]`) spans the line's whole detected height and reaches halfway to the neighbouring words, or 0.25 × line height past a line's ends. In the overlay, `.w` is that area and takes the clicks and the hover, and its `.ink` child (`pointer-events: none`) draws the highlight and the cut-out. The pointer mode never used these boxes.
   - `Pick::is_under` still tests the detected line rows, and reaches 0.4 × line height past the ink on each side, so what counts as "on a word" did not shrink.
   - With little contrast, under 40 levels, the old halfway estimates stay. Google Lens lines have no ink.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
@@ -127,6 +128,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-15 (Claude, `tests`): overlay words take the pointer over a wider hit area than their drawn box, because the ink-tight boxes had become hard to hover and click.
 - 2026-10-15 (Claude, `tests`): the snapped word boxes got a little room around the ink, because they looked too small.
 - 2026-10-15 (Claude, `tests`): word edges and heights snap to the ink of the line (`ocr/ink.rs`).
 - 2026-10-15 (Claude): `claude/overlay-spotlight` was renamed `tests`, and every other branch except `main` was deleted (all were already contained in it). From now on every agent works on `tests`, and only the user merges it into `main`.

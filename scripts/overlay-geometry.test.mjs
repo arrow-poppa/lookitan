@@ -146,7 +146,7 @@ test('with the frame loaded, a whole-screen lookup blurs it lightly and keeps wo
     view.emit({id: 1, words: [{text: 'word', x: 10, y: 20, w: 50, h: 18}], frameUrl: '/c/1/frame.png', frameRect,
         spotlight: true, viewportWidth: 1920, viewportHeight: 1080});
     assert(view.root.classList.contains('spotlight'));
-    const word = view.root.children[0];
+    const word = view.root.children[0].children[0];
     assert.equal(word.style.backgroundImage, 'url("lkt://localhost/c/1/frame.png")');
     assert.equal(word.style.backgroundSize, '1920px 1080px');
     assert.equal(word.style.backgroundPosition, '-10px -20px');
@@ -154,7 +154,19 @@ test('with the frame loaded, a whole-screen lookup blurs it lightly and keeps wo
     view.emit({id: 2, words: [{text: 'word', x: 10, y: 20, w: 50, h: 18}], frameUrl: '/c/2/frame.png', frameRect,
         spotlight: false, viewportWidth: 1920, viewportHeight: 1080});
     assert(!view.root.classList.contains('spotlight'));
-    assert.equal(view.root.children[0].style.backgroundImage, undefined);
+    assert.equal(view.root.children[0].children[0].style.backgroundImage, undefined);
+});
+
+test('a word takes clicks over its whole hit area while its highlight stays on the ink', async () => {
+    const view = await fixture();
+    view.emit({id: 1, words: [{text: 'word', x: 110, y: 104, w: 40, h: 12, hit: [104, 100, 52, 20]}],
+        viewportWidth: 1920, viewportHeight: 1080});
+    const area = view.root.children[0];
+    const ink = area.children[0];
+    assert.deepEqual([area.style.left, area.style.top, area.style.width, area.style.height], ['104px', '100px', '52px', '20px']);
+    assert.deepEqual([ink.style.left, ink.style.top, ink.style.width, ink.style.height], ['6px', '4px', '40px', '12px']);
+    view.handlers.mousedown({preventDefault() {}, target: area, clientX: 105, clientY: 101});
+    assert.equal(view.requests.at(-1).command, 'overlay_pick', 'a click beside the ink still looks the word up');
 });
 
 test('a live whole-screen lookup dims the screen slightly except under the words', async () => {

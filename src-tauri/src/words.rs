@@ -48,11 +48,18 @@ impl Pick {
 #[derive(Clone, Debug, Serialize)]
 pub struct WordBox {
     pub text: String,
+    /// The drawn box, close to the ink.
     pub x0: f32,
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
+    /// The area that takes the pointer, `(x0, y0, x1, y1)`: the line's whole detected height,
+    /// and sideways halfway to the neighbouring words, so the words of a line are easy to hit.
+    pub hit: (f32, f32, f32, f32),
 }
+
+/// How far the hit area reaches past the first and last word of a line, in line heights.
+const HIT_END: f32 = 0.25;
 
 /// Room left around the ink, as a share of its height, so a word's box is not tight on its
 /// letters: above and below, and to the sides.
@@ -115,6 +122,7 @@ pub fn word_boxes(lines: &[OcrLine]) -> Vec<WordBox> {
                     y0,
                     x1: (chars[end - 1].x1 + pad).min(line.x1),
                     y1,
+                    hit: (0.0, 0.0, 0.0, 0.0),
                 });
             }
         }
@@ -125,6 +133,12 @@ pub fn word_boxes(lines: &[OcrLine]) -> Vec<WordBox> {
                 out[k - 1].x1 = mid;
                 out[k].x0 = mid;
             }
+        }
+        let reach = (line.y1 - line.y0) * HIT_END;
+        for k in first..out.len() {
+            let left = if k > first { (out[k - 1].x1 + out[k].x0) / 2.0 } else { (out[k].x0 - reach).max(line.x0) };
+            let right = if k + 1 < out.len() { (out[k].x1 + out[k + 1].x0) / 2.0 } else { (out[k].x1 + reach).min(line.x1) };
+            out[k].hit = (left, line.y0, right, line.y1);
         }
     }
     out
@@ -477,6 +491,19 @@ mod tests {
         l.chars[4].x1 = 159.0; // a gap so narrow that the rooms would meet
         let narrow = super::word_boxes(std::slice::from_ref(&l));
         assert!(narrow[0].x1 <= narrow[1].x0 + 1e-3, "{narrow:?}");
+    }
+
+    #[test]
+    fn the_hit_area_covers_the_line_and_meets_the_next_word_halfway() {
+        let mut l = line("hello world", 100.0, 100.0);
+        l.ink_y = Some((104.0, 116.0));
+        let boxes = super::word_boxes(std::slice::from_ref(&l));
+        let (a, b) = (boxes[0].hit, boxes[1].hit);
+        assert_eq!((a.1, a.3), (100.0, 120.0), "the whole detected height");
+        assert_eq!(a.0, 100.0, "never past the line's start");
+        assert_eq!(a.2, b.0, "no gap between the two words' areas");
+        assert!(a.2 > boxes[0].x1 && a.2 < boxes[1].x0, "the areas meet inside the space");
+        assert_eq!(b.2, 210.0, "never past the line's end");
     }
 
     #[test]
