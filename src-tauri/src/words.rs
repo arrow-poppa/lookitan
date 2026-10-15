@@ -25,22 +25,18 @@ pub struct Pick {
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
-    /// The rows of the word's detected line box, which the pointer test uses.
-    #[serde(skip)]
-    pub line_y: (f32, f32),
 }
 
+/// How far past a word's drawn box the pointer still counts as on it, in capture pixels.
+const UNDER_SLACK: f32 = 2.0;
+
 impl Pick {
-    /// True when the pointer is on the picked word itself, not merely near its line. A shortcut
-    /// pressed away from text opens the whole-screen overlay instead of a pop-up.
+    /// True when the pointer is on the picked word itself: inside its drawn box, which already
+    /// leaves a little room around the ink. Pressed in the space between words or lines, the
+    /// shortcut is off any word: the automatic capture then outlines the block of text, and a
+    /// region capture opens the whole-screen overlay instead of a pop-up.
     pub fn is_under(&self, px: f32, py: f32) -> bool {
-        // The test covers the line's detected rows, not only its ink, and reaches about half a
-        // space past the ink on each side, as it did before word edges were snapped.
-        let (y0, y1) = self.line_y;
-        let h = y1 - y0;
-        let pad = (h * 0.25).max(4.0);
-        let side = (h * 0.4).max(4.0);
-        px >= self.x0 - side && px <= self.x1 + side && py >= y0 - pad && py <= y1 + pad
+        px >= self.x0 - UNDER_SLACK && px <= self.x1 + UNDER_SLACK && py >= self.y0 - UNDER_SLACK && py <= self.y1 + UNDER_SLACK
     }
 }
 
@@ -251,7 +247,6 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32) -> Option<Pick> {
         y0,
         x1: (chars[end.saturating_sub(1).max(start)].x1 + pad).min(line.x1),
         y1,
-        line_y: (line.y0, line.y1),
     })
 }
 
@@ -476,7 +471,16 @@ mod tests {
         assert!((boxes[1].y0 - 102.56).abs() < 0.01 && (boxes[1].y1 - 117.44).abs() < 0.01, "{:?}", boxes[1]);
         let p = pick(std::slice::from_ref(&l), 165.0, 101.0).unwrap();
         assert!((p.y0 - 102.56).abs() < 0.01 && (p.y1 - 117.44).abs() < 0.01);
-        assert!(p.is_under(165.0, 101.0), "the line's padding still counts as on the word");
+        assert!(p.is_under(165.0, 110.0));
+        assert!(!p.is_under(165.0, 100.0), "the detected box's padding above the ink is off the word");
+    }
+
+    #[test]
+    fn the_space_between_two_words_is_off_both() {
+        let lines = [line("hello world", 100.0, 100.0)];
+        let p = pick(&lines, 155.0, 110.0).unwrap();
+        assert_eq!(p.word, "hello", "the space still picks a word, for the overlay");
+        assert!(!p.is_under(155.0, 110.0), "but the shortcut there is off the word");
     }
 
     #[test]
