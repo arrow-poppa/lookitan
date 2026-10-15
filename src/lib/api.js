@@ -14,6 +14,7 @@ export const api = {
     lookupText: (text, sentence, context) => invoke('lookup_text', {text, sentence: sentence ?? null, context: context ?? null}),
     scanNow: () => invoke('scan_now'),
     hidePopup: () => invoke('hide_popup'),
+    webviewBlank: (token) => invoke('webview_blank', {token}),
     setPopupPinned: (pinned) => invoke('set_popup_pinned', {pinned}),
     openExternal: (url) => invoke('open_external', {url}),
     openSettings: () => invoke('open_settings'),

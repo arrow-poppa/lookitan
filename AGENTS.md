@@ -82,6 +82,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Pointer on the block but off its words: no pop-up. The overlay shows only that block's words and outlines the block (`Recognition.block`, `#block` in overlay.html), as Lookupper does.
   - Pointer on no line: the whole-screen overlay, on the same capture.
   - Choosing a fixed region turns it off (`captureAuto: false`).
+- **Hiding the overlay and the pop-up (Linux):** a hidden WebKitGTK window shows its last painted frame again when it reappears, which flashed the previous lookup over the screen at every OCR. `hide_blank` first sends `overlay-closed`/`popup-blank` with a token, waits (≤150 ms, on its own thread) for the page's `webview_blank` after two animation frames, then hides; `run_scan` joins it before the capture. A per-window counter (`Blanking::order`) keeps a late hide from taking down a newer lookup. On KDE the overlay stays fullscreen between lookups on the same monitor instead of leaving and re-entering fullscreen. Windows hides at once, as before.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
@@ -108,6 +109,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-15 (Claude, branch `claude/project-thread-o09n7y` from `claude/overlay-spotlight`): the screen flashed at every lookup on Linux. The overlay and the pop-up are now hidden only after they paint an empty frame (`hide_blank`, `webview_blank`), and the KDE overlay no longer leaves fullscreen between lookups on the same monitor. Windows unchanged.
 
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): automatic capture, as in Lookupper's pointer mode. It detects the whole monitor and recognizes only the block under the pointer (`block.rs`, `Reading`). Pressed off the block's words, it outlines the block and shows only its words. It is the default (`Settings.capture_auto`), and the capture selector has "Automático". Lookupper findings behind it: the capture is on demand, through a kept-open DXGI duplication that is drained with a 0 ms timeout (not a background loop). The box under the cursor is a rotated-box test with the short side widened 20% per side; with no such box, everything is recognized.
 - 2026-10-14 (Claude, branch `claude/overlay-spotlight`): Anki option "Contexto no card ({sentence})" (`anki.contextMode`): just the sentence, as before, or the whole paragraph sent to the AI. It applies to `{sentence}` and `{cloze-*}` in `buildNote`.

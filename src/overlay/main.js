@@ -131,11 +131,21 @@ function setVisible(visible) {
     if (visible) { document.body.classList.remove('idle'); } else { document.body.classList.add('idle'); }
 }
 
-void listen('overlay-closed', () => {
+/**
+ * Tells the backend once the empty state is on screen: on Linux the window is hidden only then,
+ * because a hidden WebKitGTK window shows its last painted frame again when it reappears.
+ */
+function confirmBlank(token) {
+    if (!token || typeof requestAnimationFrame !== 'function') { return; }
+    requestAnimationFrame(() => requestAnimationFrame(() => { void invoke('webview_blank', {token}); }));
+}
+
+void listen('overlay-closed', (event) => {
     setVisible(false);
     // Drop the old words, so a click before the next lookup arrives cannot pick one of them.
     current = null;
     root.replaceChildren();
+    confirmBlank(event?.payload?.token);
 });
 
 void listen('overlay', (event) => {

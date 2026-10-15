@@ -1,7 +1,7 @@
 // KWin reports logical desktop coordinates; XWayland/Windows report physical window coordinates.
 // Keep both monitor rectangles so capture, borders, clicks and popup placement use the same map.
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
     pub x: f64,
     pub y: f64,

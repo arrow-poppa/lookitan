@@ -36,7 +36,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
         return nodes.get(id);
     }, createElement: () => new Element(), addEventListener() {}};
-    const calls = {settings: 0, hides: 0, events: [], notes: [], listeners: new Map()};
+    const calls = {settings: 0, hides: 0, blanks: [], events: [], notes: [], listeners: new Map()};
     const lookup = {payload: {word: 'run', sentence: 'I run daily.', entries: []}, keys: new Set()};
     const options = {enable: false, checkForDuplicates: false};
     const settings = {hideWordTranslation: false, saveWordsAutomatically: false, ocrLanguage: 'en-US'};
@@ -45,7 +45,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
     const stubs = {
         '@tauri-apps/api/event': {listen: async (name, handler) => { calls.listeners.set(name, handler); return () => {}; }, emit: async (...args) => { calls.events.push(args); }},
         [file('src/lib/api.js')]: {
-            api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, entryHtml, listDictionaries: async () => dictionaries},
+            api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, webviewBlank: async (token) => { calls.blanks.push(token); }, entryHtml, listDictionaries: async () => dictionaries},
             entryUrl: () => '', escapeHtml: (value) => String(value).replace(/[&<>"']/g, (c) =>
                 ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]),
             loadAllSettings: async () => ({settings, ai, anki: options}), renderMarkdown: (text) => String(text),
@@ -63,7 +63,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
     };
     const context = createContext({document, window: {addEventListener() {}}, localStorage: {getItem: () => null, setItem() {}},
         AbortController, DOMException, crypto: {subtle: {digest: async (_algorithm, bytes) => createHash('sha256').update(bytes).digest()}},
-        TextEncoder, console, Intl, setTimeout, clearTimeout});
+        TextEncoder, console, Intl, setTimeout, clearTimeout, requestAnimationFrame: (callback) => callback()});
     const modules = new Map();
     async function get(id) {
         if (modules.has(id)) { return modules.get(id); }
@@ -444,4 +444,12 @@ test('Anki add failures show an actionable visible message', async () => {
     assert.equal(status.hidden, false);
     assert(status.textContent.includes('connection refused'));
     assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'add');
+});
+
+test('the pop-up empties itself before Linux hides it, and says so', async () => {
+    const view = await fixture();
+    view.calls.listeners.get('popup-blank')({payload: {token: 3}});
+    assert.deepEqual(view.calls.blanks, [3]);
+    view.calls.listeners.get('popup-blank')({payload: null});
+    assert.deepEqual(view.calls.blanks, [3]);
 });
