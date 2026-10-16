@@ -22,12 +22,12 @@ class Element {
     querySelectorAll() { return this.children.filter((child) => child.classList.contains('sel')); }
 }
 
-async function fixture() {
+async function fixture(userAgent = 'Mozilla/5.0 (X11; Linux x86_64)') {
     const root = new Element(), frame = new Element(), body = new Element(), others = {}, handlers = {}, requests = [], listeners = {};
     body.animations = [];
     body.animate = (keyframes, options) => { body.animations.push({keyframes, options}); };
     const window = {innerWidth: 1920, innerHeight: 1080, addEventListener: (name, callback) => { handlers[`window:${name}`] = callback; }};
-    const context = createContext({window, HTMLElement: Element, requestAnimationFrame: (callback) => callback(), document: {
+    const context = createContext({window, navigator: {userAgent}, HTMLElement: Element, requestAnimationFrame: (callback) => callback(), document: {
         body,
         getElementById: (id) => id === 'words' ? root : id === 'frame' ? frame : (others[id] ||= new Element()),
         createElement: () => new Element(), createDocumentFragment: () => new Element(),
@@ -191,8 +191,8 @@ test('a live whole-screen lookup dims the screen slightly except under the words
     assert.equal(view.dim.style.display, 'none');
 });
 
-test('a whole-screen lookup fades in, and a closed overlay never shows the previous lookup', async () => {
-    const view = await fixture();
+test('a Windows whole-screen lookup fades in, and a closed overlay never shows the previous lookup', async () => {
+    const view = await fixture('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
     const word = {text: 'target', x: 10, y: 20, w: 50, h: 18};
     view.emit({id: 1, words: [word], selected: word});
     assert.equal(view.body.animations.length, 0, 'a lookup with a pop-up does not fade the screen');
@@ -207,6 +207,22 @@ test('a whole-screen lookup fades in, and a closed overlay never shows the previ
     assert.deepEqual(JSON.parse(JSON.stringify(view.body.animations[0].keyframes)), [{opacity: 0}, {opacity: 1}]);
     view.emit({id: 2, words: [word], selected: word, spotlight: true});
     assert.equal(view.body.animations.length, 1, 'clicking a word does not fade again');
+});
+
+test('Linux whole-screen lookups appear without an opacity animation, including after reopening', async () => {
+    const view = await fixture();
+    const word = {text: 'target', x: 10, y: 20, w: 50, h: 18};
+    view.emit({id: 1, words: [word], spotlight: true});
+    assert.equal(view.body.animations.length, 0);
+    assert.equal(view.root.children.length, 1);
+    assert(!view.body.classList.contains('idle'));
+    view.close({token: 7});
+    assert(view.body.classList.contains('idle'));
+    assert.equal(view.root.children.length, 0);
+    view.emit({id: 2, words: [word], selected: word, spotlight: true});
+    assert(!view.body.classList.contains('idle'));
+    assert(view.root.children[0].classList.contains('sel'), 'the selected word still receives its highlight');
+    assert.equal(view.body.animations.length, 0, 'a repeated lookup must not restart the WebKitGTK fade');
 });
 
 test('an empty click asks the backend to dismiss (pop-up first when pinned) and Esc closes the overlay', async () => {
