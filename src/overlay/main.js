@@ -16,7 +16,7 @@ const block = document.getElementById('block');
 const BLOCK_PAD = 6;
 /** Same darkness as the frozen frame's brightness(0.85). */
 const DIM_ALPHA = 0.15;
-/** Fade-in for platforms other than Linux; WebKitGTK can flash when this animation ends. */
+/** A whole-screen lookup fades in, so the screen darkens smoothly. */
 const FADE_IN = {duration: 220, easing: 'ease-out'};
 let current = null;
 let selected = null;
@@ -163,9 +163,7 @@ void listen('overlay', (event) => {
     const p = event.payload;
     if (!current || current.id !== p.id) {
         setVisible(true);
-        if (p.spotlight && !navigator.userAgent.includes('Linux')) {
-            document.body?.animate?.([{opacity: 0}, {opacity: 1}], FADE_IN);
-        }
+        if (p.spotlight) { document.body?.animate?.([{opacity: 0}, {opacity: 1}], FADE_IN); }
         selected = null;
         seen = [];
         if (p.frameUrl) {
