@@ -283,9 +283,14 @@ export function parseGeneratedImages(format, json) {
 }
 
 /** Why an answer had no picture: the server's error, a safety block, or the model's own words. */
-function noPictureReason(format, json, status) {
+function noPictureReason(format, json, status, model = '') {
     const error = json?.error;
     const message = typeof error === 'string' ? error : error?.message;
+    // A text model asked for a picture: OpenRouter finds no endpoint for the image output, Gemini
+    // refuses the response modalities. Said plainly, with models that do make pictures.
+    if (message && /modalit/i.test(message)) {
+        return `o modelo${model ? ` "${model}"` : ''} não gera imagens, só texto. Use um modelo de imagem, como google/gemini-2.5-flash-image, google/gemini-3-pro-image-preview ou openai/gpt-5-image-mini (no OpenRouter). (${status ? `${status}: ` : ''}${message})`;
+    }
     if (message) { return `${status ? `${status}: ` : ''}${message}`; }
     if (format === 'gemini') {
         const block = json?.promptFeedback?.blockReason || json?.candidates?.[0]?.finishReason;
@@ -295,7 +300,7 @@ function noPictureReason(format, json, status) {
     }
     if (format === 'chat') {
         const said = json?.choices?.[0]?.message?.content;
-        if (typeof said === 'string' && said.trim()) { return said.trim().slice(0, 300); }
+        if (typeof said === 'string' && said.trim()) { return `o modelo respondeu só com texto (ele gera imagens?): ${said.trim().slice(0, 300)}`; }
     }
     return status ? `resposta ${status}` : 'nenhuma imagem na resposta';
 }
@@ -335,7 +340,7 @@ export async function generateImages(options, prompt, {signal, fetch: request, .
             let json = null;
             try { json = JSON.parse(text); } catch (_e) { /* not JSON: the status says enough */ }
             const pictures = response.ok ? parseGeneratedImages(r.format, json) : [];
-            if (pictures.length === 0) { throw new Error(`Imagem AI: ${noPictureReason(r.format, json, response.ok ? 0 : response.status)}`); }
+            if (pictures.length === 0) { throw new Error(`Imagem AI: ${noPictureReason(r.format, json, response.ok ? 0 : response.status, String(r.body?.model || ''))}`); }
             return pictures;
         } finally {
             timeout.done();
