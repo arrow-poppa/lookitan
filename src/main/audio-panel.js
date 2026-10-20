@@ -42,7 +42,8 @@ function edgeVoiceSelect(current, onChange) {
     const box = el('span', {class: 'edge-voice'}, el('span', {class: 'muted'}, 'Carregando as vozes…'));
     edgeVoices ||= invoke('edge_tts_voices');
     edgeVoices.then((voices) => {
-        const all = [...(voices || [])];
+        // Also the Microsoft field names, in case an older backend sends them.
+        const all = (voices || []).map((v) => ({id: v.id ?? v.ShortName, locale: v.locale ?? v.Locale ?? '', gender: v.gender ?? v.Gender ?? ''})).filter((v) => v.id);
         if (current && !all.some((v) => v.id === current)) { all.push({id: current, locale: current.split('-').slice(0, 2).join('-'), gender: ''}); }
         const gender = (g) => (g === 'Female' ? ' (feminina)' : g === 'Male' ? ' (masculina)' : '');
         const groups = new Map();
@@ -57,7 +58,7 @@ function edgeVoiceSelect(current, onChange) {
             return o;
         };
         list.append(option('', 'Automática (a padrão do idioma do OCR)'));
-        const named = [...groups.entries()].map(([locale, group]) => [localeName(locale), locale, group]).sort((x, y) => x[0].localeCompare(y[0], 'pt'));
+        const named = [...groups.entries()].map(([locale, group]) => [String(localeName(locale) || locale), locale, group]).sort((x, y) => x[0].localeCompare(y[0], 'pt'));
         for (const [name, locale, group] of named) {
             const optgroup = el('optgroup', {label: `${name} · ${locale}`});
             for (const v of group) { optgroup.append(option(v.id, `${edgeVoiceName(v.id)}${gender(v.gender)}`)); }
@@ -66,7 +67,7 @@ function edgeVoiceSelect(current, onChange) {
         list.value = current || '';
         list.addEventListener('change', () => onChange(list.value));
         box.replaceChildren(el('span', {class: 'muted'}, `${all.length} vozes`), list, previewButton(() => list.value));
-    }, (e) => {
+    }).catch((e) => {
         edgeVoices = null;
         box.replaceChildren(el('span', {class: 'error'}, `Não deu para carregar as vozes: ${String(e?.message || e)}`));
     });
@@ -201,23 +202,27 @@ function sourceRow(redraw, source, i) {
 /** Looks a word up in every source and plays the first recording, to check the setup. */
 function testRow() {
     const word = textInput('読む', () => {});
-    const out = el('span', {class: 'muted'});
+    const out = el('div', {class: 'd muted audio-result'});
     const run = el('button', {class: 'primary', html: `${icon('speaker', 'sm')}Testar`});
     run.addEventListener('click', async () => {
-        out.className = 'muted';
+        out.className = 'd audio-result muted';
         out.textContent = 'Procurando…';
         const term = word.value.trim();
         const io = {invoke};
         try {
-            const found = await findAudio(options(), {term, reading: '', language: String(store.settings.ocrLanguage || 'en').split('-')[0]}, io);
-            if (found.length === 0) { out.className = 'error'; out.textContent = 'Nenhum áudio encontrado.'; return; }
-            out.className = 'ok';
-            out.textContent = `${found.length} encontrado(s): ${found.slice(0, 4).map((f) => f.name).join(', ')}${found.length > 4 ? '…' : ''}`;
+            const locale = String(store.settings.ocrLanguage || 'en-US');
+            const found = await findAudio(options(), {term, reading: '', language: locale.split('-')[0], locale}, io);
+            if (found.length === 0) { out.className = 'd audio-result error'; out.textContent = 'Nenhum áudio encontrado.'; return; }
+            const names = `${found.length} encontrado(s): ${found.slice(0, 4).map((f) => f.name).join(', ')}${found.length > 4 ? '…' : ''}`;
             let file = null;
+            let played = null;
+            const failed = [];
             for (const entry of found.filter((f) => f.kind !== 'tts')) {
-                file = await audioFile(entry, io).catch(() => null);
-                if (file) { break; }
+                file = await audioFile(entry, io).catch((e) => { failed.push(`${entry.name}: ${e?.message || e}`); return null; });
+                if (file) { played = entry; break; }
             }
+            out.className = 'd audio-result ok';
+            out.textContent = [names, `Tocando: ${played ? played.name : 'Voz do sistema'}.`, failed.length ? `Falharam: ${failed.join('; ')}` : ''].filter(Boolean).join(' ');
             if (file) {
                 void playFile(file);
             } else if ('speechSynthesis' in window) {
@@ -226,13 +231,13 @@ function testRow() {
                 window.speechSynthesis.speak(u);
             }
         } catch (e) {
-            out.className = 'error';
+            out.className = 'd audio-result error';
             out.textContent = String(e?.message || e);
         }
     });
     return el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('speaker')}),
-        el('div', {class: 'txt'}, el('div', {class: 't'}, 'Testar as fontes'), el('div', {class: 'd'}, 'Procura a palavra em todas as fontes ligadas, na ordem da lista, e toca o primeiro áudio.')),
-        el('div', {class: 'ctl audio-test'}, word, run, out));
+        el('div', {class: 'txt'}, el('div', {class: 't'}, 'Testar as fontes'), el('div', {class: 'd'}, 'Procura a palavra em todas as fontes ligadas, na ordem da lista, e toca o primeiro áudio.'), out),
+        el('div', {class: 'ctl audio-test'}, word, run));
 }
 
 export function renderAudioSection(root, focusIndex = null) {

@@ -33,16 +33,17 @@ const PIECE_CHARS: usize = 600;
 /// Recordings kept in memory, so a word or sentence played again is not fetched again.
 const KEPT: usize = 24;
 
-/// One voice of the list, as the settings show it.
+/// One voice of the list, as the settings show it. Read with Microsoft's field names, sent to the
+/// front end as `id`, `locale`, `gender` and `name`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Voice {
-    #[serde(rename = "ShortName")]
+    #[serde(rename(deserialize = "ShortName"))]
     pub id: String,
-    #[serde(rename = "Locale")]
+    #[serde(rename(deserialize = "Locale"))]
     pub locale: String,
-    #[serde(rename = "Gender", default)]
+    #[serde(rename(deserialize = "Gender"), default)]
     pub gender: String,
-    #[serde(rename = "FriendlyName", default)]
+    #[serde(rename(deserialize = "FriendlyName"), default)]
     pub name: String,
 }
 
@@ -301,5 +302,14 @@ mod tests {
         assert_eq!(parts.len(), 3);
         assert!(parts.iter().all(|p| p.ends_with('。') && p.chars().count() <= PIECE_CHARS));
         assert_eq!(escape_xml("a<b & 'c'"), "a&lt;b &amp; &apos;c&apos;");
+    }
+
+    #[test]
+    fn voices_are_read_with_microsofts_names_and_sent_with_ours() {
+        let list: Vec<Voice> = serde_json::from_str(r#"[{"Name":"x","ShortName":"ja-JP-NanamiNeural","Gender":"Female","Locale":"ja-JP","FriendlyName":"Nanami"}]"#).unwrap();
+        let sent = serde_json::to_value(&list[0]).unwrap();
+        assert_eq!(sent["id"], "ja-JP-NanamiNeural");
+        assert_eq!(sent["locale"], "ja-JP");
+        assert_eq!(sent["gender"], "Female");
     }
 }

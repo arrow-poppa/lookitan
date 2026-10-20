@@ -123,6 +123,9 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .edge-voice select { max-width: 320px; }
 .audio-test { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .audio-test input { width: 120px; }
+.audio-result { margin-top: 4px; overflow-wrap: anywhere; }
+.audio-result.ok { color: var(--ok, #4cc38a); }
+.audio-result.error { color: var(--danger, #ff6b6b); }
 
 .audio-sources { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .audio-sources > li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 6px; background: var(--surface-2); }

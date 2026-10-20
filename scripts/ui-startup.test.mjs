@@ -743,3 +743,31 @@ test('settings saved before the context voice existed still open', async () => {
     assert.equal(fixture.settings.audio.context.type, 'tts');
     assert(fixture.root.textContent.includes('Voz para ler o contexto'));
 });
+
+test('the Edge voice list also loads when voices come with Microsoft field names', async () => {
+    const view = dom();
+    const root = view.add('audio-settings');
+    const settings = {ocrLanguage: 'ja-JP', audio: {sources: [{type: 'edge-tts'}]}};
+    const panel = await load('src/main/audio-panel.js', {document: view.document}, {
+        '@tauri-apps/api/core': {invoke: async (command) => (command === 'edge_tts_voices'
+            ? [{ShortName: 'ja-JP-NanamiNeural', Locale: 'ja-JP', Gender: 'Female'}] : [])},
+        '@tauri-apps/plugin-dialog': {open: async () => null},
+        [file('src/lib/api.js')]: {escapeHtml: String},
+        [file('src/lib/icons.js')]: {icon: () => ''},
+        [file('src/main/store.js')]: {store: {settings}, save: () => {}},
+    });
+    panel.renderAudioSection(root);
+    await flush();
+    assert(!root.textContent.includes('Carregando as vozes'), 'the list does not stay loading');
+    const list = descendants(root).find((node) => node.tagName === 'select' && node.attributes['aria-label'] === 'Voz do Edge');
+    assert(descendants(list).some((node) => node.attributes.value === 'ja-JP-NanamiNeural'));
+});
+
+test('the audio test result sits under its description, not beside the button', async () => {
+    const fixture = await audioPanelFixture({sources: [{type: 'tts'}]});
+    const result = descendants(fixture.root).find((node) => String(node.className).includes('audio-result'));
+    assert(result, 'a result line');
+    const row = fixture.root.children.at(-1);
+    const txt = row.children.find((node) => node.className === 'txt');
+    assert(txt.children.includes(result), 'inside the text column');
+});
