@@ -889,25 +889,54 @@ fn dismiss_popup(app: &AppHandle) {
     popup_hidden(app);
 }
 
-/// Where the pop-up goes for a word (all in physical pixels): centred on the word, just below it,
-/// as Lookupper's lookup TeachingTip (WinUI centres a tip on its target). It moves above the word
-/// when there is no room below, and sideways only as far as the monitor's edge needs.
-fn popup_position(word: (f64, f64, f64, f64), size: (f64, f64), monitor: Option<platform::geometry::Rect>, scale: f64) -> (f64, f64) {
+/// Where the pop-up goes for a word, and the point of it facing the word (where the open
+/// animation grows from, relative to the pop-up). All in physical pixels.
+#[derive(Debug, PartialEq)]
+struct PopupPlace {
+    x: f64,
+    y: f64,
+    origin: (f64, f64),
+}
+
+/// As Lookupper's lookup popup, a WinUI TeachingTip, which WinUI centres on its target and moves
+/// around it when it does not fit: below the word, centred on it; else above it; else beside it,
+/// on the left and then the right, centred on the word's height (small screens, where Lookupper
+/// shows it beside the word instead of over it). On a side it moves only as far as the monitor's
+/// edges need. With room nowhere, it takes the side with the most room.
+fn popup_position(word: (f64, f64, f64, f64), size: (f64, f64), monitor: Option<platform::geometry::Rect>, scale: f64) -> PopupPlace {
     let (x0, y0, x1, y1) = word;
     let (w, h) = size;
     let gap = 10.0 * scale;
     let edge = 8.0 * scale;
-    let mut x = (x0 + x1) / 2.0 - w / 2.0;
-    let mut y = y1 + gap;
-    if let Some(m) = monitor {
-        if y + h > m.y + m.height {
-            y = (y0 - h - gap).max(m.y);
-        }
-        let left = m.x + edge;
-        let right = (m.x + m.width - w - edge).max(left);
-        x = x.clamp(left, right);
+    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let Some(m) = monitor else {
+        return PopupPlace { x: cx - w / 2.0, y: y1 + gap, origin: (w / 2.0, 0.0) };
+    };
+    let (left, top, right, bottom) = (m.x + edge, m.y + edge, m.x + m.width - edge, m.y + m.height - edge);
+    let across = |x: f64| x.clamp(left, (right - w).max(left));
+    let down = |y: f64| y.clamp(top, (bottom - h).max(top));
+    // Room for the whole pop-up below, above, left and right of the word.
+    let below = bottom - (y1 + gap);
+    let above = (y0 - gap) - top;
+    let on_left = (x0 - gap) - left;
+    let on_right = right - (x1 + gap);
+    let place_below = || { let x = across(cx - w / 2.0); PopupPlace { x, y: y1 + gap, origin: ((cx - x).clamp(0.0, w), 0.0) } };
+    let place_above = || { let x = across(cx - w / 2.0); let y = y0 - gap - h; PopupPlace { x, y, origin: ((cx - x).clamp(0.0, w), h) } };
+    let place_left = || { let y = down(cy - h / 2.0); let x = (x0 - gap - w).max(m.x); PopupPlace { x, y, origin: (w, (cy - y).clamp(0.0, h)) } };
+    let place_right = || { let y = down(cy - h / 2.0); let x = (x1 + gap).min(m.x + m.width - w); PopupPlace { x, y, origin: (0.0, (cy - y).clamp(0.0, h)) } };
+    if below >= h { return place_below(); }
+    if above >= h { return place_above(); }
+    if on_left >= w { return place_left(); }
+    if on_right >= w { return place_right(); }
+    // Nowhere fits whole: the side with the most room, so the word stays as visible as it can.
+    let rooms = [(below / h, 0), (above / h, 1), (on_left / w, 2), (on_right / w, 3)];
+    let best = rooms.iter().fold(rooms[0], |a, &b| if b.0 > a.0 { b } else { a }).1;
+    match best {
+        0 => { let mut p = place_below(); p.y = down(p.y); p }
+        1 => { let mut p = place_above(); p.y = p.y.max(m.y); p }
+        2 => place_left(),
+        _ => place_right(),
     }
-    (x, y)
 }
 
 /// Sends the result to the popup and shows it next to the word (desktop coordinates).
@@ -929,11 +958,9 @@ fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64
             .map(|m| platform::geometry::Rect { x: m.position().x as f64, y: m.position().y as f64,
                 width: m.size().width as f64, height: m.size().height as f64 }));
         let scale = win.scale_factor().unwrap_or(1.0).max(0.5);
-        let (x, y) = popup_position((x0, y0, x1, y1), (w, h), bounds, scale);
-        let _ = win.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
-        let word_x = ((x0 + x1) / 2.0 - x).clamp(0.0, w);
-        let word_y = if y >= y1 { 0.0 } else { h };
-        origin = (word_x / scale, word_y / scale, false);
+        let place = popup_position((x0, y0, x1, y1), (w, h), bounds, scale);
+        let _ = win.set_position(PhysicalPosition::new(place.x.round() as i32, place.y.round() as i32));
+        origin = (place.origin.0 / scale, place.origin.1 / scale, false);
     }
     let (ox, oy, relative) = origin;
     let _ = app.emit_to("popup", "popup-open", serde_json::json!({ "x": ox, "y": oy, "relative": relative }));
@@ -1683,35 +1710,54 @@ pub fn run() {
 
 #[cfg(test)]
 mod popup_position_tests {
-    use super::popup_position;
+    use super::{popup_position, PopupPlace};
     use crate::platform::geometry::Rect;
 
     const SCREEN: Rect = Rect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+    const POPUP: (f64, f64) = (560.0, 520.0);
 
     #[test]
     fn the_popup_is_centred_on_the_word_just_below_it() {
-        let (x, y) = popup_position((900.0, 300.0, 1000.0, 320.0), (560.0, 520.0), Some(SCREEN), 1.0);
-        assert_eq!(x + 280.0, 950.0, "the word's centre is the popup's centre");
-        assert_eq!(y, 330.0);
+        let p = popup_position((900.0, 300.0, 1000.0, 320.0), POPUP, Some(SCREEN), 1.0);
+        assert_eq!(p, PopupPlace { x: 670.0, y: 330.0, origin: (280.0, 0.0) }, "the word's centre is the popup's centre");
     }
 
     #[test]
     fn near_an_edge_it_moves_only_as_far_as_the_screen_needs() {
-        let (x, _) = popup_position((10.0, 300.0, 60.0, 320.0), (560.0, 520.0), Some(SCREEN), 1.0);
-        assert_eq!(x, 8.0);
-        let (x, _) = popup_position((1880.0, 300.0, 1910.0, 320.0), (560.0, 520.0), Some(SCREEN), 1.0);
-        assert_eq!(x, 1920.0 - 560.0 - 8.0);
+        let p = popup_position((10.0, 300.0, 60.0, 320.0), POPUP, Some(SCREEN), 1.0);
+        assert_eq!((p.x, p.origin), (8.0, (27.0, 0.0)), "it still grows from the word");
+        let p = popup_position((1880.0, 300.0, 1910.0, 320.0), POPUP, Some(SCREEN), 1.0);
+        assert_eq!(p.x, 1920.0 - 560.0 - 8.0);
     }
 
     #[test]
     fn without_room_below_it_goes_above_the_word() {
-        let (_, y) = popup_position((900.0, 800.0, 1000.0, 820.0), (560.0, 520.0), Some(SCREEN), 1.0);
-        assert_eq!(y, 800.0 - 520.0 - 10.0);
+        let p = popup_position((900.0, 800.0, 1000.0, 820.0), POPUP, Some(SCREEN), 1.0);
+        assert_eq!((p.y, p.origin.1), (800.0 - 520.0 - 10.0, 520.0));
+    }
+
+    #[test]
+    fn on_a_small_screen_it_goes_beside_the_word_instead_of_over_it() {
+        // Room neither below nor above: Lookupper's tip goes to the word's left, centred on its height.
+        let small = Rect { x: 0.0, y: 0.0, width: 1366.0, height: 600.0 };
+        let p = popup_position((900.0, 280.0, 960.0, 300.0), POPUP, Some(small), 1.0);
+        assert_eq!(p, PopupPlace { x: 900.0 - 10.0 - 560.0, y: 30.0, origin: (560.0, 260.0) });
+        assert!(p.x + POPUP.0 <= 900.0, "the word stays visible");
+        // A word near the left edge: the right side.
+        let p = popup_position((100.0, 280.0, 160.0, 300.0), POPUP, Some(small), 1.0);
+        assert_eq!((p.x, p.origin.0), (170.0, 0.0));
+    }
+
+    #[test]
+    fn with_room_nowhere_it_takes_the_side_with_the_most_room() {
+        let tiny = Rect { x: 0.0, y: 0.0, width: 800.0, height: 500.0 };
+        let p = popup_position((380.0, 240.0, 420.0, 260.0), POPUP, Some(tiny), 1.0);
+        assert!(p.y >= 0.0 && p.x >= 0.0 && p.x + POPUP.0 <= 800.0 + 1.0, "{p:?} stays on the screen");
     }
 
     #[test]
     fn gaps_follow_the_display_scale() {
-        let (x, y) = popup_position((10.0, 300.0, 60.0, 320.0), (840.0, 780.0), Some(Rect { x: 0.0, y: 0.0, width: 2880.0, height: 1620.0 }), 1.5);
-        assert_eq!((x, y), (12.0, 335.0));
+        let p = popup_position((10.0, 300.0, 60.0, 320.0), (840.0, 780.0), Some(Rect { x: 0.0, y: 0.0, width: 2880.0, height: 1620.0 }), 1.5);
+        assert_eq!((p.x, p.y), (12.0, 335.0));
     }
 }
