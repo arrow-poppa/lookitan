@@ -491,7 +491,7 @@ function renderAiImageGen(root) {
     const number = (n) => ({value: String(n), label: n === 1 ? '1 imagem' : `${n} imagens`});
     root.append(
         el('h2', {}, AI_NAMES['ai-image-gen']),
-        el('p', {class: 'lead'}, 'Gera imagens da palavra no popup com um modelo de imagem e o seu prompt, por exemplo para entender o sentido de um verbo. Usa a sua chave (BYOK). Como na seção Imagens, clique numa imagem para ampliar e na marca do canto para mandá-la ao Anki (marcador {image}).'),
+        el('p', {class: 'lead'}, 'Gera imagens da palavra no popup com um modelo de imagem e o seu prompt, por exemplo para entender o sentido de um verbo. Usa a sua chave (BYOK). Como na seção Imagens, clique numa imagem para ampliar e na marca do canto para mandá-la ao Anki: vai para o marcador {ai-image} ou, se o tipo de nota não o usa, para o {image}.'),
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', desc: 'Desligado: as imagens só são geradas quando você clica em "Gerar imagem", como o botão Explicar. Cada imagem gerada é cobrada pelo provedor.',

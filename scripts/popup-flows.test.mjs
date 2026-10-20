@@ -780,8 +780,9 @@ test('"Imagens IA" makes its pictures on a click, adds more, and sends the check
     const lookup = view.popup.stateForTest();
     lookup.generated.selected.add(3);
     lookup.generated.selected.add(0);
-    assert.equal(JSON.stringify((await view.popup.checkedImageFiles(lookup)).map((f) => f.data)), JSON.stringify(['https://gen.example/1.png', 'https://gen.example/4.png']),
-        'the checked pictures go to {image}, in the strip\'s order');
+    assert.equal(JSON.stringify((await view.popup.checkedImageFiles(lookup.generated)).map((f) => f.data)), JSON.stringify(['https://gen.example/1.png', 'https://gen.example/4.png']),
+        'the checked pictures are sent in the strip\'s order');
+
 });
 
 test('"Imagens IA" shows pictures already made for the word at once, and the refresh button makes a new set', async () => {
