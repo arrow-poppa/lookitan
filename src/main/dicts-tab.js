@@ -9,7 +9,7 @@ import {CARD_PROMPT, CONTEXT_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} fro
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
-import {cardRow, el, languageOptions, select, textArea, textInput, toggle} from './ui.js';
+import {cardRow, dropIndex, el, languageOptions, select, sortableRow, textArea, textInput, toggle} from './ui.js';
 
 let dicts = [];
 let selectedId = null;
@@ -69,63 +69,12 @@ function alertDetail(text) {
     document.getElementById('dict-detail').prepend(el('p', {class: 'error'}, text));
 }
 
-/**
- * Where a dragged row lands: after every other row whose middle is above the pointer. `mids` are
- * the rows' vertical middles as laid out when the drag began, `from` the dragged row's index.
- */
-export function dropIndex(mids, y, from) {
-    let to = 0;
-    mids.forEach((mid, i) => { if (i !== from && y > mid) { to++; } });
-    return to;
-}
+export {dropIndex};
 
 async function moveDictionary(id, to) {
     if (to < 0 || to >= dicts.length || dicts.findIndex((d) => d.id === id) === to) { return; }
     dicts = await api.updateDictionary(id, {moveTo: to});
     renderList();
-}
-
-/**
- * Reordering by dragging a row. It uses pointer events, not HTML drag and drop. Tauri's native
- * file drop handler (on by default) keeps WebView2 on Windows from delivering HTML drag events, and
- * they are unreliable in WebKitGTK too; that is why the old draggable rows could not be moved.
- */
-function sortable(list, li, id) {
-    let drag = null;
-    li.addEventListener('pointerdown', (ev) => {
-        if (ev.button !== 0 || ev.target.closest?.('.switch')) { return; }
-        const rows = [...list.children];
-        drag = {pointer: ev.pointerId, y: ev.clientY, from: rows.indexOf(li), to: rows.indexOf(li), moving: false,
-            mids: rows.map((row) => { const r = row.getBoundingClientRect(); return r.top + r.height / 2; })};
-    });
-    li.addEventListener('pointermove', (ev) => {
-        if (!drag || ev.pointerId !== drag.pointer) { return; }
-        if (!drag.moving) {
-            if (Math.abs(ev.clientY - drag.y) < 5) { return; }
-            drag.moving = true;
-            li.setPointerCapture?.(ev.pointerId);
-            li.classList.add('dragging');
-        }
-        const to = dropIndex(drag.mids, ev.clientY, drag.from);
-        if (to === drag.to) { return; }
-        drag.to = to;
-        // The row moves among the others while it is dragged, and the numbers follow.
-        const others = [...list.children].filter((row) => row !== li);
-        list.insertBefore(li, others[to] || null);
-        [...list.children].forEach((row, i) => { const num = row.querySelector('.num'); if (num) { num.textContent = String(i + 1); } });
-    });
-    const end = (ev) => {
-        if (!drag || ev.pointerId !== drag.pointer) { return; }
-        const {moving, from, to} = drag;
-        drag = null;
-        if (!moving) { return; }
-        li.classList.remove('dragging');
-        dragEnded = true;
-        setTimeout(() => { dragEnded = false; }, 0);
-        if (ev.type === 'pointerup' && to !== from) { void moveDictionary(id, to).catch((e) => { alertDetail(String(e)); renderList(); }); } else { renderList(); }
-    };
-    li.addEventListener('pointerup', end);
-    li.addEventListener('pointercancel', end);
 }
 
 function renderList() {
@@ -153,7 +102,15 @@ function renderList() {
             focusId = d.id;
             void moveDictionary(d.id, i + (ev.key === 'ArrowUp' ? -1 : 1));
         });
-        sortable(list, li, d.id);
+        sortableRow(list, li, {
+            ignore: '.switch',
+            onDrop: (from, to) => {
+                dragEnded = true;
+                setTimeout(() => { dragEnded = false; }, 0);
+                if (to === from) { renderList(); return; }
+                void moveDictionary(d.id, to).catch((e) => { alertDetail(String(e)); renderList(); });
+            },
+        });
         list.append(li);
         if (d.id === focusId) { focusId = null; li.focus?.(); }
     });

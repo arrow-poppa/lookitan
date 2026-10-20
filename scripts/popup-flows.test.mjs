@@ -608,5 +608,5 @@ test('{audio} gets the word audio from a local database source, as an Anki sound
     const ctx = view.calls.notes.at(-1);
     const file = await ctx.audio();
     assert.deepEqual(JSON.parse(JSON.stringify(file)), {data: 'T2dnUw==', extension: 'ogg', mime: 'audio/ogg'});
-    assert.deepEqual(JSON.parse(JSON.stringify(view.calls.invokes[0])), ['audio_lookup', {path: 'C:/audio/android.db', term: '読む', reading: null}]);
+    assert.deepEqual(JSON.parse(JSON.stringify(view.calls.invokes[0])), ['audio_lookup', {path: 'C:/audio/android.db', term: '読む', reading: null, order: null}]);
 });

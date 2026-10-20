@@ -42,7 +42,7 @@ const LOOKUPS_KEPT: usize = 256;
 pub struct AudioDb {
     dir: PathBuf,
     conn: Mutex<Connection>,
-    lookups: Mutex<Vec<((String, Option<String>), Vec<AudioEntry>)>>,
+    lookups: Mutex<Vec<((String, Option<String>, Vec<String>), Vec<AudioEntry>)>>,
     /// The android.db variant, with the audio inside.
     blobs: bool,
 }
@@ -96,32 +96,51 @@ impl AudioDb {
         Ok(Self { dir: path.parent().map(Path::to_path_buf).unwrap_or_default(), conn: Mutex::new(conn), lookups: Mutex::new(Vec::new()), blobs })
     }
 
+    /// The sources inside the database (nhk16, forvo, …), in local-audio-yomichan's default order,
+    /// for the user to put in their own order (as Fushi lets them).
+    pub fn sources(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT DISTINCT source FROM entries")?;
+        let mut names = stmt.query_map([], |row| row.get::<_, String>(0))?.collect::<std::result::Result<Vec<_>, _>>()?;
+        names.sort_by_key(|n| (SOURCES.iter().position(|(id, _)| *id == n.as_str()).unwrap_or(SOURCES.len()), n.clone()));
+        Ok(names)
+    }
+
     /// The recordings of a word, best source first. Without a reading every reading matches; with
     /// one, rows for that reading and rows without any reading match, as local-audio-yomichan does.
-    pub fn lookup(&self, term: &str, reading: Option<&str>) -> Result<Vec<AudioEntry>> {
+    /// `order` lists the sources to use, best first; empty means all, in the default order.
+    pub fn lookup(&self, term: &str, reading: Option<&str>, order: &[String]) -> Result<Vec<AudioEntry>> {
         let term = term.trim();
         if term.is_empty() { return Ok(Vec::new()); }
         let reading = reading.map(str::trim).filter(|r| !r.is_empty());
-        let key = (term.to_string(), reading.map(str::to_string));
+        let key = (term.to_string(), reading.map(str::to_string), order.to_vec());
         if let Some(hit) = self.lookups.lock().iter().find(|(k, _)| *k == key) { return Ok(hit.1.clone()); }
-        let found = self.query(term, reading)?;
+        let found = self.query(term, reading, order)?;
         let mut kept = self.lookups.lock();
         kept.insert(0, (key, found.clone()));
         kept.truncate(LOOKUPS_KEPT);
         Ok(found)
     }
 
-    fn query(&self, term: &str, reading: Option<&str>) -> Result<Vec<AudioEntry>> {
-        let order = SOURCES.iter().enumerate()
-            .map(|(i, (id, _))| format!("WHEN '{id}' THEN {i}")).collect::<Vec<_>>().join(" ");
+    fn query(&self, term: &str, reading: Option<&str>, order: &[String]) -> Result<Vec<AudioEntry>> {
+        // The user's order (as ?3, ?4, … placeholders), or local-audio-yomichan's.
+        let (filter, rank, last) = if order.is_empty() {
+            let rank = SOURCES.iter().enumerate().map(|(i, (id, _))| format!("WHEN '{id}' THEN {i}")).collect::<Vec<_>>().join(" ");
+            (String::new(), rank, SOURCES.len())
+        } else {
+            let marks = (0..order.len()).map(|i| format!("?{}", i + 3)).collect::<Vec<_>>();
+            let rank = marks.iter().enumerate().map(|(i, m)| format!("WHEN {m} THEN {i}")).collect::<Vec<_>>().join(" ");
+            (format!(" AND source IN ({})", marks.join(", ")), rank, order.len())
+        };
         let sql = format!(
             "SELECT source, file, display FROM entries \
-             WHERE expression = ?1 AND (?2 IS NULL OR reading IS NULL OR reading = ?2) \
-             ORDER BY CASE source {order} ELSE {} END, reading LIMIT {MAX_ENTRIES}",
-            SOURCES.len());
+             WHERE expression = ?1 AND (?2 IS NULL OR reading IS NULL OR reading = ?2){filter} \
+             ORDER BY CASE source {rank} ELSE {last} END, reading LIMIT {MAX_ENTRIES}");
         let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached(&sql)?;
-        let rows = stmt.query_map(params![term, reading], |row| {
+        let mut values: Vec<&dyn rusqlite::ToSql> = vec![&term, &reading];
+        for name in order { values.push(name); }
+        let rows = stmt.query_map(values.as_slice(), |row| {
             let source: String = row.get(0)?;
             let display: Option<String> = row.get(2)?;
             Ok(AudioEntry { name: display_name(&source, display.as_deref()), source, file: row.get(1)? })
@@ -192,17 +211,20 @@ mod tests {
     fn recordings_come_in_local_audio_order_and_match_the_reading() {
         let dir = temp("order");
         let db = AudioDb::open(&sample(&dir, false)).unwrap();
-        let all = db.lookup("読む", None).unwrap();
+        let all = db.lookup("読む", None, &[]).unwrap();
         let sources: Vec<&str> = all.iter().map(|e| e.source.as_str()).collect();
         assert_eq!(sources, ["nhk16", "shinmeikai8", "forvo", "jpod", "custom"]);
         assert_eq!(all[0].name, "NHK16 ヨム [1]");
         assert_eq!(all[2].name, "Forvo (kyokotokyojapan)");
         assert_eq!(all[3].name, "JPod101");
         assert_eq!(all[4].name, "custom");
-        let yomu: Vec<String> = db.lookup("読む", Some("よむ")).unwrap().into_iter().map(|e| e.source).collect();
+        let yomu: Vec<String> = db.lookup("読む", Some("よむ"), &[]).unwrap().into_iter().map(|e| e.source).collect();
         assert_eq!(yomu, ["nhk16", "forvo", "jpod", "custom"], "another reading is left out, rows without one stay");
-        assert!(db.lookup("書く", None).unwrap().is_empty());
-        assert!(db.lookup("  ", None).unwrap().is_empty());
+        assert!(db.lookup("書く", None, &[]).unwrap().is_empty());
+        assert!(db.lookup("  ", None, &[]).unwrap().is_empty());
+        assert_eq!(db.sources().unwrap(), ["nhk16", "shinmeikai8", "forvo", "jpod", "custom"]);
+        let own: Vec<String> = db.lookup("読む", None, &["forvo".into(), "jpod".into()]).unwrap().into_iter().map(|e| e.source).collect();
+        assert_eq!(own, ["forvo", "jpod"], "the user's order, and only the sources they keep");
     }
 
     #[test]
@@ -222,10 +244,10 @@ mod tests {
     fn a_repeated_lookup_is_answered_from_memory() {
         let dir = temp("cache");
         let db = AudioDb::open(&sample(&dir, false)).unwrap();
-        let first = db.lookup("読む", Some("よむ")).unwrap();
-        assert_eq!(db.lookup("読む", Some("よむ")).unwrap(), first);
+        let first = db.lookup("読む", Some("よむ"), &[]).unwrap();
+        assert_eq!(db.lookup("読む", Some("よむ"), &[]).unwrap(), first);
         assert_eq!(db.lookups.lock().len(), 1);
-        db.lookup("読む", None).unwrap();
+        db.lookup("読む", None, &[]).unwrap();
         assert_eq!(db.lookups.lock().len(), 2, "another reading is another entry");
     }
 

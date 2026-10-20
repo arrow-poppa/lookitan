@@ -184,3 +184,55 @@ export function languageLabel(tag) {
 export function languageOptions() {
     return LANGUAGE_TAGS.map((t) => ({value: t, label: languageLabel(t)}));
 }
+
+/**
+ * Where a dragged row lands: after every other row whose middle is above the pointer. `mids` are
+ * the rows' vertical middles as laid out when the drag began, `from` the dragged row's index.
+ */
+export function dropIndex(mids, y, from) {
+    let to = 0;
+    mids.forEach((mid, i) => { if (i !== from && y > mid) { to++; } });
+    return to;
+}
+
+/**
+ * Lets a row of `list` be dragged to another place, as Yomitan's lists are. It uses pointer events,
+ * not HTML drag and drop: Tauri's native file drop handler (on by default) keeps WebView2 on Windows
+ * from delivering HTML drag events, and they are unreliable in WebKitGTK too. The row moves among
+ * the others while dragged and the `.num` labels follow; `onDrop(from, to)` gets the old and new
+ * index. A press on something matching `ignore` (a switch, a field) never starts a drag.
+ */
+export function sortableRow(list, row, {onDrop, ignore = '.switch'}) {
+    let drag = null;
+    row.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0 || ev.target.closest?.(ignore)) { return; }
+        const rows = [...list.children];
+        drag = {pointer: ev.pointerId, y: ev.clientY, from: rows.indexOf(row), to: rows.indexOf(row), moving: false,
+            mids: rows.map((r) => { const b = r.getBoundingClientRect(); return b.top + b.height / 2; })};
+    });
+    row.addEventListener('pointermove', (ev) => {
+        if (!drag || ev.pointerId !== drag.pointer) { return; }
+        if (!drag.moving) {
+            if (Math.abs(ev.clientY - drag.y) < 5) { return; }
+            drag.moving = true;
+            row.setPointerCapture?.(ev.pointerId);
+            row.classList.add('dragging');
+        }
+        const to = dropIndex(drag.mids, ev.clientY, drag.from);
+        if (to === drag.to) { return; }
+        drag.to = to;
+        const others = [...list.children].filter((r) => r !== row);
+        list.insertBefore(row, others[to] || null);
+        [...list.children].forEach((r, i) => { const num = r.querySelector('.num'); if (num) { num.textContent = String(i + 1); } });
+    });
+    const end = (ev) => {
+        if (!drag || ev.pointerId !== drag.pointer) { return; }
+        const {moving, from, to} = drag;
+        drag = null;
+        if (!moving) { return; }
+        row.classList.remove('dragging');
+        onDrop(from, ev.type === 'pointerup' ? to : from);
+    };
+    row.addEventListener('pointerup', end);
+    row.addEventListener('pointercancel', end);
+}

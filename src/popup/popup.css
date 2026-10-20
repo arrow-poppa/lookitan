@@ -140,6 +140,12 @@ details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px
 .audio-menu { position: absolute; z-index: 15; min-width: 180px; max-width: 320px; max-height: 260px; overflow-y: auto; padding: 4px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border-strong); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
 .audio-menu button { width: 100%; justify-content: flex-start; font-size: 13px; min-height: 30px; }
 .audio-menu .hint { margin: 6px 8px; }
+/* "Um botão para cada áudio": the recordings found, next to the speaker. */
+.hw { flex-wrap: wrap; }
+.audio-buttons { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.audio-buttons:empty { display: none; }
+.audio-chip { min-height: 24px; padding: 1px 8px; gap: 4px; font-size: 12px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); }
+.audio-chip:hover:not(:disabled) { color: var(--text); }
 
 .empty { padding: 30px 8px; text-align: center; color: var(--muted); }
 .empty strong { display: block; color: var(--text); margin-bottom: 4px; font-size: 15px; }

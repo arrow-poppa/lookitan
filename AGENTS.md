@@ -160,7 +160,10 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Manatan's public repo (checked 2026-10-20) has no audio .db of its own; its /audio endpoint returns online provider URLs, and "one-click local audio setup" is on its roadmap. This is the db people use with it and Yomitan.
   - `custom` is Yomitan's Custom URL (the template answers with the audio); `custom-json` is Custom URL (JSON) (answers `{type: "audioSourceList", audioSources: [{name, url}]}`). Templates take `{term}`, `{reading}` (the term when there is none, since Lookitan has no reading yet) and `{language}` (the OCR language's base tag). URLs are fetched through tauri-plugin-http and played from a Blob URL, so http sources work from both platforms' WebView origins. Only `audio/*` (or octet-stream) answers are kept.
   - `tts` is the system voice, the default and only source of new settings.
-  - Pop-up: the AI card's speaker plays the first recording that plays; a right click lists every recording found (`audio-menu`). "Tocar o áudio automaticamente" (`autoPlay`) plays on lookup. `{audio}` in Anki stores the recording last played, else the first readable one (never the system voice), as `[sound:lookitan_audio_<date>.<ext>]`. `suggestMarker` gives `{audio}` to fields named audio/sound.
+  - Configurações › Áudio is laid out like Yomitan's audio sources. Drag a row (`sortableRow` in ui.js, the same pointer-event helper as the Dicionários list) or press Alt+↑/↓ to change the priority. A local database also lists the sources inside the file (`audio_db_sources`, `subsources: [{name, enabled}]`), which can be reordered and switched off one by one, as Fushi (GPL-3.0) does. `mergeSubsources` keeps saved ones in place, adds new ones at the end and drops gone ones. `audio_lookup(order)` filters and ranks by that list; an empty list means all sources in the default order.
+  - The panel normalizes `settings.audio` once and edits it in place. Re-normalizing per row had detached the rows from the saved object, so changing a type or adding a source did nothing (fixed 2026-10-20).
+  - Fushi's lesson: never write to the user's .db. It created indexes in the original file; Lookitan only opens it read-only.
+  - Pop-up: the AI card's speaker plays the first recording that plays. `others` sets how the rest are shown: 'menu' (default), a right click on the speaker listing every recording found (`audio-menu`), or 'buttons', one small button per recording next to the speaker (`audio-buttons`). "Tocar o áudio automaticamente" (`autoPlay`) plays on lookup. `{audio}` in Anki stores the recording last played, else the first readable one (never the system voice), as `[sound:lookitan_audio_<date>.<ext>]`. `suggestMarker` gives `{audio}` to fields named audio/sound.
 - **AI cache:** same semantics as the fork. It has a 60 s TTL, joins in-flight requests and never caches partial or failed answers. `cancelPendingExcept` drops requests the pop-up no longer shows.
 - **Anki:** uses Yomitan's `anki` options shape and field markers, through AnkiConnect.
   - tauri-plugin-http always sends `Origin: http://tauri.localhost` (Windows) or `tauri://localhost` (Linux). AnkiConnect allows only `http://localhost`, 127.0.0.1 and browser-extension origins by default (that is why Yomitan works) and answers 403 to anything else.
@@ -181,6 +184,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-20 (Claude, `tests`): Configurações › Áudio reworked like Yomitan, with drag to reorder and a per-database source order like Fushi. The pop-up can show the other recordings as a menu or as buttons. Also fixed: changing a source type and "Adicionar" did nothing.
 
 - 2026-10-20 (Claude, `tests`): at most 3 local audio databases stay open (LRU), with yomitan-audio-fast's SQLite read settings and a 256-lookup memory cache per database.
 

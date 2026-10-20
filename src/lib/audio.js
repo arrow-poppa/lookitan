@@ -19,7 +19,20 @@ const TYPES = new Set(AUDIO_SOURCE_TYPES.map((t) => t.value));
 const REQUEST_TIMEOUT_MS = 10000;
 
 export function defaultAudioOptions() {
-    return {autoPlay: false, sources: [{type: 'tts', enabled: true, path: '', url: ''}]};
+    // others: how the pop-up shows the recordings after the first, 'menu' (right click on the
+    // speaker) or 'buttons' (one button each).
+    return {autoPlay: false, others: 'menu', sources: [{type: 'tts', enabled: true, path: '', url: '', subsources: []}]};
+}
+
+/**
+ * A local database's own sources (nhk16, forvo…) in the user's order, merged with those the file
+ * has: kept ones stay in place, new ones are added at the end (switched on), gone ones dropped.
+ */
+export function mergeSubsources(saved, inFile) {
+    const names = new Set(inFile);
+    const kept = (saved || []).filter((s) => names.has(s.name));
+    const known = new Set(kept.map((s) => s.name));
+    return [...kept, ...inFile.filter((n) => !known.has(n)).map((name) => ({name, enabled: true}))];
 }
 
 /** Stored audio options with defaults; unknown source types are dropped. */
@@ -28,8 +41,10 @@ export function normalizeAudioOptions(stored) {
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) { return base; }
     const sources = Array.isArray(stored.sources) ? stored.sources
         .filter((s) => s && TYPES.has(s.type))
-        .map((s) => ({type: s.type, enabled: s.enabled !== false, path: String(s.path || ''), url: String(s.url || '')})) : base.sources;
-    return {autoPlay: stored.autoPlay === true, sources};
+        .map((s) => ({type: s.type, enabled: s.enabled !== false, path: String(s.path || ''), url: String(s.url || ''),
+            subsources: Array.isArray(s.subsources) ? s.subsources.filter((x) => x && typeof x.name === 'string' && x.name)
+                .map((x) => ({name: x.name, enabled: x.enabled !== false})) : []})) : base.sources;
+    return {autoPlay: stored.autoPlay === true, others: stored.others === 'buttons' ? 'buttons' : 'menu', sources};
 }
 
 /** A Yomitan URL template with the word filled in (each value URL-encoded). */
@@ -63,7 +78,10 @@ export async function findAudio(options, word, io) {
         if (!source.enabled) { continue; }
         try {
             if (source.type === 'local-db' && source.path) {
-                const rows = await io.invoke('audio_lookup', {path: source.path, term: word.term, reading: word.reading || null});
+                // The file's own sources in the user's order; none chosen yet means all, default order.
+                const order = source.subsources.length ? source.subsources.filter((s) => s.enabled).map((s) => s.name) : null;
+                if (order && order.length === 0) { continue; }
+                const rows = await io.invoke('audio_lookup', {path: source.path, term: word.term, reading: word.reading || null, order});
                 for (const row of rows || []) { out.push({kind: 'db', name: row.name, path: source.path, source: row.source, file: row.file}); }
             } else if (source.type === 'custom' && source.url) {
                 const url = fillAudioUrl(source.url, word);

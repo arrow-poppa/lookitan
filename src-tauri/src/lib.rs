@@ -1409,10 +1409,21 @@ fn audio_db(state: &AppState, path: &str) -> std::result::Result<Arc<audio::Audi
 
 /// The recordings of a word in a local audio database (Configurações › Áudio), best first.
 #[tauri::command]
-async fn audio_lookup(app: AppHandle, path: String, term: String, reading: Option<String>) -> std::result::Result<Vec<audio::AudioEntry>, String> {
+async fn audio_lookup(app: AppHandle, path: String, term: String, reading: Option<String>, order: Option<Vec<String>>) -> std::result::Result<Vec<audio::AudioEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        audio_db(&state, &path)?.lookup(&term, reading.as_deref()).map_err(|e| format!("{e:#}"))
+        audio_db(&state, &path)?.lookup(&term, reading.as_deref(), &order.unwrap_or_default()).map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The sources inside a local audio database (nhk16, forvo, …), for Configurações › Áudio.
+#[tauri::command]
+async fn audio_db_sources(app: AppHandle, path: String) -> std::result::Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        audio_db(&state, &path)?.sources().map_err(|e| format!("{e:#}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1627,6 +1638,7 @@ pub fn run() {
             delete_word,
             word_image,
             audio_lookup,
+            audio_db_sources,
             audio_data,
             write_text_file,
             read_text_file

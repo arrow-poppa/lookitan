@@ -174,6 +174,25 @@ async function playWord(lookup, term) {
     }
 }
 
+/** How the recordings after the first are shown: 'menu' (right click) or 'buttons'. */
+function audioOthers() {
+    return normalizeAudioOptions(settings.audio).others;
+}
+
+/** "Um botão para cada áudio": a small button per recording found, next to the speaker. */
+async function audioButtons(target, lookup, term) {
+    if (!target) { return; }
+    const entries = (await recordings(lookup, term)).filter((e) => e.kind !== 'tts');
+    if (state !== lookup || !target.isConnected) { return; }
+    target.innerHTML = entries.map((e, i) => `<button class="ghost audio-chip" data-i="${i}" title="Ouvir: ${escapeHtml(e.name)}">${icon('speaker', 'sm')}${escapeHtml(e.name)}</button>`).join('');
+    for (const b of target.querySelectorAll('button')) {
+        b.addEventListener('click', async () => {
+            const entry = entries[Number(b.dataset.i)];
+            if (await playRecording(entry, term)) { lookup.audioPlayed = entry; }
+        });
+    }
+}
+
 /** Right click on the speaker: every recording found, to pick one (as Yomitan's audio menu). */
 async function audioMenu(button, lookup, term) {
     closeAudioMenu();
@@ -224,7 +243,7 @@ function renderCard(body, card, pending = false) {
     for (const l of card.labels) { chips.push(`<span class="chip">${escapeHtml(l)}</span>`); }
     const hide = settings.hideWordTranslation;
     body.innerHTML = `
-        <div class="hw"><span class="word">${escapeHtml(headword)}</span><button class="ghost icon speak" title="Ouvir (clique direito: escolher o áudio)">${icon('speaker')}</button></div>
+        <div class="hw"><span class="word">${escapeHtml(headword)}</span><button class="ghost icon speak" title="${audioOthers() === 'menu' ? 'Ouvir (clique direito: escolher o áudio)' : 'Ouvir'}">${icon('speaker')}</button><span class="audio-buttons"></span></div>
         ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
@@ -232,7 +251,11 @@ function renderCard(body, card, pending = false) {
         ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markContext(p)}</div></details>` : ''}`;
     const speaker = body.querySelector('.speak');
     speaker?.addEventListener('click', () => void playWord(state, headword));
-    speaker?.addEventListener('contextmenu', (ev) => { ev.preventDefault?.(); void audioMenu(speaker, state, headword); });
+    if (audioOthers() === 'menu') {
+        speaker?.addEventListener('contextmenu', (ev) => { ev.preventDefault?.(); void audioMenu(speaker, state, headword); });
+    } else if (!pending) {
+        void audioButtons(body.querySelector('.audio-buttons'), state, headword);
+    }
     body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => ev.currentTarget.classList.remove('hidden-tr'));
     body.querySelector('.explain-btn')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation')));
     body.querySelector('.explain-reset')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation'), true));

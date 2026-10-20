@@ -121,3 +121,19 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .audio-field { display: flex; gap: 8px; width: 100%; }
 .audio-test { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .audio-test input { width: 120px; }
+
+.audio-sources { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; user-select: none; }
+.audio-sources > li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 6px; background: var(--surface-2); touch-action: none; }
+.audio-sources > li.dragging { background: var(--surface-3); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); cursor: grabbing; z-index: 1; position: relative; }
+.audio-sources > li:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.audio-sources .grip { display: inline-flex; color: var(--faint); cursor: grab; padding-top: 8px; }
+.audio-sources > li > .num { padding-top: 7px; }
+.audio-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.audio-line { display: flex; align-items: center; gap: 10px; }
+.audio-line select { max-width: 280px; }
+.audio-line .switch { margin-left: auto; }
+.audio-subsources { margin-top: 4px; }
+.audio-sources.sub { margin-top: 6px; }
+.audio-sources.sub > li { align-items: center; padding: 6px 10px; background: var(--surface); }
+.audio-sources.sub .grip, .audio-sources.sub > li > .num { padding-top: 0; }
+.audio-sources.sub .name { flex: 1; }

@@ -142,7 +142,7 @@ test('word audio sources: Yomitan URL templates, the JSON list, order and defaul
         [{name: 'NHK16', url: 'http://127.0.0.1:5050/nhk16/a.ogg'}, {name: '', url: 'https://b/c.mp3'}]);
     assert.deepEqual(parseAudioList({type: 'other'}), []);
     assert.deepEqual(normalizeAudioOptions({sources: [{type: 'bogus'}, {type: 'custom', url: 'u', enabled: false}]}).sources,
-        [{type: 'custom', enabled: false, path: '', url: 'u'}]);
+        [{type: 'custom', enabled: false, path: '', url: 'u', subsources: []}]);
     const options = {sources: [
         {type: 'custom-json', url: 'http://127.0.0.1:5050/?term={term}'},
         {type: 'local-db', path: 'a.db'},
@@ -157,4 +157,20 @@ test('word audio sources: Yomitan URL templates, the JSON list, order and defaul
     const found = await findAudio(options, {term: 'run', reading: '', language: 'en'}, io);
     assert.deepEqual(found.map((f) => [f.kind, f.name]), [['url', 'Forvo'], ['url', 'audio.example'], ['tts', 'Voz do sistema']],
         'in source order; a failing database and a disabled source are skipped');
+});
+
+test('a local database keeps its own source order: kept in place, new ones added, gone ones dropped', async () => {
+    const {findAudio, mergeSubsources, normalizeAudioOptions} = await import('../src/lib/audio.js');
+    assert.deepEqual(mergeSubsources([{name: 'forvo', enabled: true}, {name: 'gone', enabled: true}, {name: 'nhk16', enabled: false}], ['nhk16', 'forvo', 'jpod']),
+        [{name: 'forvo', enabled: true}, {name: 'nhk16', enabled: false}, {name: 'jpod', enabled: true}]);
+    assert.equal(normalizeAudioOptions({others: 'buttons'}).others, 'buttons');
+    assert.equal(normalizeAudioOptions({others: 'x'}).others, 'menu');
+    const calls = [];
+    const io = {invoke: async (command, args) => { calls.push(args); return []; }};
+    await findAudio({sources: [{type: 'local-db', path: 'a.db', subsources: [{name: 'forvo', enabled: true}, {name: 'nhk16', enabled: false}, {name: 'jpod', enabled: true}]}]}, {term: 'x'}, io);
+    assert.deepEqual(calls[0].order, ['forvo', 'jpod'], 'the enabled sources, in the user order');
+    await findAudio({sources: [{type: 'local-db', path: 'a.db'}]}, {term: 'x'}, io);
+    assert.equal(calls[1].order, null, 'not set yet: all sources, default order');
+    await findAudio({sources: [{type: 'local-db', path: 'a.db', subsources: [{name: 'forvo', enabled: false}]}]}, {term: 'x'}, io);
+    assert.equal(calls.length, 2, 'every source switched off: the database is not asked');
 });
