@@ -215,6 +215,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-20 (Claude, `tests`): the pop-up's buttons say "Gerar imagem AI" and "Gerar mais imagens AI", as the user asked.
 - 2026-10-20 (Claude, `tests`): the generated pictures dictionary is shown as "Imagem AI" (it was "Imagens IA"), the name the user asked for, so it is not confused with "Imagens".
 - 2026-10-20 (Claude, `tests`): "Imagem AI" no longer disappears when it is not set up: it says what is missing. The first copy of an OpenRouter card gets `google/gemini-2.5-flash-image` and none of the text routing.
 - 2026-10-20 (Claude, `tests`): "Imagem AI" with Personalizado: thinking (mode, effort, manual value) and OpenRouter routing, as in the text provider, sent in the chat request for pictures.

@@ -859,7 +859,7 @@ function drawGenerated(body, lookup, entry, loading) {
     const count = imageGenCount(ai.imageGenCount);
     const error = entry.error ? `<p class="error">${escapeHtml(entry.error)}</p>` : '';
     const more = entry.items.length > 0 && !loading
-        ? `<button class="ghost img-more" title="Faz mais ${count === 1 ? 'uma imagem' : `${count} imagens`} e junta às de cima">${icon('plus', 'sm')}Gerar mais</button>` : '';
+        ? `<button class="ghost img-more" title="Faz mais ${count === 1 ? 'uma imagem' : `${count} imagens`} e junta às de cima">${icon('plus', 'sm')}Gerar mais imagens AI</button>` : '';
     const foot = `<div class="img-foot"><span class="img-query hint" title="${escapeHtml(gallery.query)}">Prompt: ${escapeHtml(gallery.query)}</span>${more}</div>`;
     if (entry.items.length === 0 && !loading) {
         body.innerHTML = `${error}<button class="ghost explain-btn">${icon('sparkle', 'sm')}Tentar de novo</button>`;
@@ -1382,7 +1382,7 @@ async function render(payload) {
                 void runImageGen(body);
             } else {
                 const count = imageGenCount(ai.imageGenCount);
-                body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}${count === 1 ? 'Gerar imagem' : `Gerar ${count} imagens`}</button>`;
+                body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}${count === 1 ? 'Gerar imagem AI' : `Gerar ${count} imagens AI`}</button>`;
                 body.querySelector('button').addEventListener('click', () => void runImageGen(body));
                 void showStoredImages(body);
             }
