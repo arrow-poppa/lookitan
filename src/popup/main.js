@@ -129,6 +129,20 @@ function speak(text) {
     window.speechSynthesis.speak(u);
 }
 
+/** The speaker beside a context: reads the original text aloud with the system voice. */
+function sentenceButton() {
+    return `<button class="ghost icon speak-sentence" title="Ouvir o contexto (voz do sistema)" aria-label="Ouvir o contexto">${icon('speaker', 'sm')}</button>`;
+}
+
+function bindSentence(body, text) {
+    body.querySelector('.speak-sentence')?.addEventListener('click', () => {
+        // A second click while it is still reading stops it.
+        const speaking = 'speechSynthesis' in window && window.speechSynthesis.speaking;
+        stopAudio();
+        if (!speaking) { speak(text); }
+    });
+}
+
 // ------------------------------------------------------------------ word audio (Configurações › Áudio)
 
 const audioIo = {invoke};
@@ -248,7 +262,8 @@ function renderCard(body, card, pending = false) {
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
-        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markContext(p)}</div></details>` : ''}`;
+        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div>${markContext(p)}</div></div></details>` : ''}`;
+    bindSentence(body, p.context || p.sentence);
     const speaker = body.querySelector('.speak');
     speaker?.addEventListener('click', () => void playWord(state, headword));
     if (audioOthers() === 'menu') {
@@ -367,7 +382,8 @@ async function runContext(body, force = false) {
  */
 function showTranslation(body, lookup, text) {
     const hide = ai.hideContextTranslation === true && !lookup.contextRevealed;
-    body.innerHTML = `<div class="translation${hide ? ' hidden-tr' : ''}"${hide ? ' title="Clique para mostrar"' : ''}>${highlightStars(text)}</div>`;
+    body.innerHTML = `<div class="ctx-line">${sentenceButton()}<div class="translation${hide ? ' hidden-tr' : ''}"${hide ? ' title="Clique para mostrar"' : ''}>${highlightStars(text)}</div></div>`;
+    bindSentence(body, lookup.payload.sentence);
     body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => {
         lookup.contextRevealed = true;
         ev.currentTarget.classList.remove('hidden-tr');

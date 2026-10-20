@@ -74,6 +74,10 @@ details.ctx[open] summary::after { transform: rotate(225deg); }
 details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px; }
 
 .translation { font-size: 15px; line-height: 1.5; }
+.ctx-line { display: flex; align-items: flex-start; gap: 6px; }
+.ctx-line > :last-child { flex: 1; min-width: 0; }
+.ctx-line .speak-sentence { flex: none; margin-top: -2px; color: var(--muted); }
+.ctx-line .speak-sentence:hover { color: var(--text); }
 .hint { color: var(--muted); font-size: 13px; }
 
 .shimmer { height: 12px; border-radius: 6px; margin: 8px 0; background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: sh 1.2s infinite linear; }

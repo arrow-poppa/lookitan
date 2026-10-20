@@ -648,3 +648,72 @@ test('saved word Anki errors stay visible and the add button can be retried', as
     assert.equal(button.disabled, false);
     assert.equal(listRequests, 1, 'failed addition must not erase its message by refreshing the word list');
 });
+
+async function audioPanelFixture(audio) {
+    const view = dom();
+    const root = view.add('audio-settings');
+    let saves = 0;
+    const settings = {ocrLanguage: 'ja-JP', audio};
+    const panel = await load('src/main/audio-panel.js', {document: view.document}, {
+        '@tauri-apps/api/core': {invoke: async (command) => (command === 'audio_db_sources' ? ['nhk16', 'forvo'] : [])},
+        '@tauri-apps/plugin-dialog': {open: async () => null},
+        [file('src/lib/api.js')]: {escapeHtml: String},
+        [file('src/lib/icons.js')]: {icon: () => ''},
+        [file('src/main/store.js')]: {store: {settings}, save: () => { saves++; }},
+    });
+    panel.renderAudioSection(root);
+    const rows = (className) => descendants(root).filter((node) => node.className === className);
+    const button = (row, title) => descendants(row).find((node) => node.tagName === 'button' && node.attributes.title === title);
+    const types = () => JSON.parse(JSON.stringify(settings.audio.sources.map((s) => s.type)));
+    return {root, settings, rows, button, types, saves: () => saves};
+}
+
+test('audio sources move with the up and down arrows, as in Yomitan, and the database sources too', async () => {
+    const fixture = await audioPanelFixture({sources: [{type: 'tts'}, {type: 'jpod101'}, {type: 'local-db', path: 'a.db'}]});
+    let rows = fixture.rows('audio-source');
+    assert.equal(rows.length, 3);
+    assert.equal(fixture.button(rows[0], 'Subir').disabled, true, 'the first cannot go up');
+    assert.equal(fixture.button(rows[2], 'Descer').disabled, true, 'the last cannot go down');
+    assert(!descendants(fixture.root).some((node) => node.className === 'grip'), 'no drag handles');
+    const before = fixture.saves();
+    fixture.button(rows[0], 'Descer').dispatch('click');
+    assert.deepEqual(fixture.types(), ['jpod101', 'tts', 'local-db']);
+    assert.equal(fixture.saves(), before + 1);
+    rows = fixture.rows('audio-source');
+    fixture.button(rows[2], 'Subir').dispatch('click');
+    assert.deepEqual(fixture.types(), ['jpod101', 'local-db', 'tts']);
+    assert(fixture.root.textContent.includes('Ordem: JapanesePod101 › Banco de áudio local (.db) › Voz do sistema'));
+
+    await flush();
+    const subs = fixture.rows('audio-sub');
+    assert.deepEqual(subs.map((row) => row.textContent.includes('NHK16')), [true, false], 'the file sources, in the default order');
+    fixture.button(subs[1], 'Subir').dispatch('click');
+    assert.equal(JSON.stringify(fixture.settings.audio.sources[1].subsources.map((s) => s.name)), JSON.stringify(['forvo', 'nhk16']));
+});
+
+test('every Yomitan audio source can be chosen, and a new custom URL source shows its URL field', async () => {
+    const fixture = await audioPanelFixture({sources: [{type: 'tts'}]});
+    const select = descendants(fixture.root).find((node) => node.attributes['data-setting'] === 'audio.sources.0.type');
+    assert.deepEqual(select.children.map((o) => o.attributes.value),
+        ['local-db', 'jpod101', 'language-pod-101', 'jisho', 'lingua-libre', 'wiktionary', 'custom', 'custom-json', 'tts']);
+    const add = descendants(fixture.root).find((node) => node.tagName === 'button' && String(node.innerHTML).includes('Adicionar fonte'));
+    add.dispatch('click');
+    assert.deepEqual(fixture.types(), ['tts', 'local-db']);
+    const type = descendants(fixture.root).find((node) => node.attributes['data-setting'] === 'audio.sources.1.type');
+    type.value = 'custom';
+    type.dispatch('change');
+    assert.deepEqual(fixture.types(), ['tts', 'custom']);
+    assert(descendants(fixture.root).some((node) => node.attributes['data-setting'] === 'audio.sources.1.url'), 'the URL field appears');
+});
+
+test('the audio section collapses below its first row and expands again', async () => {
+    const fixture = await audioPanelFixture({sources: [{type: 'tts'}]});
+    const head = fixture.root.children[0];
+    const button = descendants(head).find((node) => node.tagName === 'button' && node.className.includes('collapse'));
+    assert(button, 'the first row has a collapse button');
+    button.dispatch('click');
+    assert(fixture.root.children.slice(1).every((node) => node.hidden === true));
+    assert.notEqual(head.hidden, true);
+    button.dispatch('click');
+    assert(fixture.root.children.slice(1).every((node) => node.hidden === false));
+});

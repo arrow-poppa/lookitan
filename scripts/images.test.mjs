@@ -174,3 +174,52 @@ test('a local database keeps its own source order: kept in place, new ones added
     await findAudio({sources: [{type: 'local-db', path: 'a.db', subsources: [{name: 'forvo', enabled: false}]}]}, {term: 'x'}, io);
     assert.equal(calls.length, 2, 'every source switched off: the database is not asked');
 });
+
+test('Yomitan audio sources: JapanesePod101, LanguagePod101, Jisho, Lingua Libre and Wiktionary', async () => {
+    const audio = await import('../src/lib/audio.js');
+    assert.equal(audio.jpod101Url('読む', 'よむ'), `https://assets.languagepod101.com/dictionary/japanese/audiomp3.php?kanji=${encodeURIComponent('読む')}&kana=${encodeURIComponent('よむ')}`);
+    assert.equal(audio.jpod101Url('よむ'), `https://assets.languagepod101.com/dictionary/japanese/audiomp3.php?kana=${encodeURIComponent('よむ')}`, 'kana alone goes as the reading');
+    assert.deepEqual(audio.languagePod101Url('pt'), {name: 'Portuguese', url: 'https://www.portuguesepod101.com/learningcenter/reference/dictionary_post'});
+    assert.equal(audio.languagePod101Url('en').url, 'https://www.englishclass101.com/learningcenter/reference/dictionary_post');
+    assert.equal(audio.languagePod101Url('xx'), null);
+    const rows = '<div class="dc-result-row"><span class="dc-vocab">livro</span><audio><source src="//cdn.example/a.mp3"></audio></div>' +
+        '<div class="dc-result-row"><span class="dc-vocab">livros</span><audio><source src="//cdn.example/b.mp3"></audio></div>';
+    assert.deepEqual(audio.parseLanguagePod101(rows, 'https://www.portuguesepod101.com/x', 'Portuguese', 'livro'), ['https://cdn.example/a.mp3'], 'only rows for the word');
+    const ja = '<div class="dc-result-row"><span class="dc-vocab_kana">よむ</span><audio><source src="/a.mp3"></audio></div>';
+    assert.deepEqual(audio.parseLanguagePod101(ja, 'https://www.japanesepod101.com/x', 'Japanese', '読む', 'よむ'), ['https://www.japanesepod101.com/a.mp3']);
+    assert.deepEqual(audio.parseLanguagePod101(ja, 'https://www.japanesepod101.com/x', 'Japanese', '読む', 'どく'), [], 'another reading');
+    const jisho = '<audio id="audio_読む:よむ" preload="none"><source src="//cdn.example/y.mp3" type="audio/mpeg"></source></audio>';
+    assert.equal(audio.parseJisho(jisho, 'https://jisho.org/search/x', '読む'), 'https://cdn.example/y.mp3', 'any reading when none is known');
+    assert.equal(audio.parseJisho(jisho, 'https://jisho.org/search/x', '読む', 'どく'), null);
+
+    const commons = (titles, user) => async (url) => {
+        const u = new URL(url);
+        if (u.searchParams.get('list') === 'search') { return {ok: true, json: async () => ({query: {search: titles.map((title) => ({title}))}})}; }
+        return {ok: true, json: async () => ({query: {pages: {1: {imageinfo: [{url: `https://upload.example/${u.searchParams.get('titles')}`, user}]}}}})};
+    };
+    const wiki = await audio.findAudio({sources: [{type: 'wiktionary'}]}, {term: 'water', language: 'en'},
+        {invoke: async () => [], fetch: commons(['File:En-us-water.ogg', 'File:En-us-watery.ogg'], 'Ann')});
+    assert.equal(wiki.length, 1, 'only files for this exact word');
+    assert.match(wiki[0].name, /^Wiktionary · \(.+\) Ann$/);
+    const libre = await audio.findAudio({sources: [{type: 'lingua-libre'}]}, {term: 'livre', language: 'fr'},
+        {invoke: async () => [], fetch: commons(['File:LL-Q150 (fra)-Bob-livre.wav', 'File:LL-Q150 (fra)-Eve-livre.wav'], 'Bob')});
+    assert.deepEqual(libre.map((f) => f.name), ['Lingua Libre · Bob'], 'the speaker must be the uploader');
+
+    const io = {invoke: async () => [], fetch: async (url) => {
+        if (url.includes('/api/v1/search/words')) { return {ok: true, json: async () => ({data: [{japanese: [{word: '読む', reading: 'よむ'}]}]})}; }
+        throw new Error(`unexpected ${url}`);
+    }};
+    const jpod = await audio.findAudio({sources: [{type: 'jpod101'}, {type: 'jisho'}, {type: 'tts'}]}, {term: '読む', language: 'ja'}, io);
+    assert.deepEqual(jpod.map((f) => f.name), ['JapanesePod101', 'Voz do sistema'], 'a failing Jisho page is skipped');
+    assert(jpod[0].url.includes(`kana=${encodeURIComponent('よむ')}`), 'the reading comes from Jisho');
+    assert.deepEqual(await audio.findAudio({sources: [{type: 'jpod101'}, {type: 'jisho'}]}, {term: 'run', language: 'en'}, io), [], 'Japanese only');
+});
+
+test('a JapanesePod101 "not available" clip counts as no audio, and application/ogg is audio', async () => {
+    const {audioFile} = await import('../src/lib/audio.js');
+    const bytes = new TextEncoder().encode('real audio');
+    const io = {fetch: async () => ({ok: true, headers: {get: () => 'audio/mpeg'}, arrayBuffer: async () => bytes.buffer})};
+    assert.equal((await audioFile({kind: 'url', url: 'https://x/a', check: 'jpod101'}, io)).extension, 'mp3');
+    const ogg = {fetch: async () => ({ok: true, headers: {get: () => 'application/ogg'}, arrayBuffer: async () => bytes.buffer})};
+    assert.equal((await audioFile({kind: 'url', url: 'https://x/a.ogg'}, ogg)).extension, 'ogg', 'Wikimedia serves .ogg as application/ogg');
+});

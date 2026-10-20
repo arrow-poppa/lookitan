@@ -1,13 +1,13 @@
 // Configurações › Áudio, laid out like Yomitan's "Configure audio playback sources": a list of
-// sources in priority order (drag a row up or down, or Alt+↑/↓), each switched on or off, plus how
-// the pop-up shows the other recordings found.
+// sources in priority order (moved with the ↑/↓ buttons, or Alt+↑/↓), each switched on or off, plus
+// how the pop-up shows the other recordings found. The whole section folds under its first row.
 
 import {invoke} from '@tauri-apps/api/core';
 import {open} from '@tauri-apps/plugin-dialog';
 import {AUDIO_SOURCE_TYPES, audioFile, findAudio, mergeSubsources, normalizeAudioOptions} from '../lib/audio.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
-import {cardRow, el, select, sortableRow, textInput, toggle} from './ui.js';
+import {cardRow, collapser, el, select, textInput, toggle} from './ui.js';
 
 const PLACEHOLDERS = {
     'custom': 'https://exemplo.com/audio?term={term}&reading={reading}',
@@ -16,6 +16,11 @@ const PLACEHOLDERS = {
 
 const HINTS = {
     'local-db': 'O android.db (com o áudio dentro) ou o entries.db do Local Audio Server for Yomichan, com as pastas <fonte>_files ao lado.',
+    'jpod101': 'O áudio do JapanesePod101, só para japonês. A leitura da palavra vem do Jisho.org.',
+    'language-pod-101': 'O dicionário do LanguagePod101 no idioma do OCR (japonês, português, inglês, espanhol e outros).',
+    'jisho': 'O áudio da página da palavra no Jisho.org, só para japonês.',
+    'lingua-libre': 'Gravações de falantes nativos do Lingua Libre (Wikimedia Commons), em vários idiomas.',
+    'wiktionary': 'As gravações do Wikcionário (Wikimedia Commons), em vários idiomas, com a região de quem fala.',
     'custom': 'Uma URL que responde com o próprio áudio. Variáveis: {term}, {reading}, {language}.',
     'custom-json': 'Uma URL que responde com uma lista de áudios no formato do Yomitan, como o servidor de áudio local do Anki. Variáveis: {term}, {reading}, {language}.',
     'tts': 'A voz do sistema, no idioma do OCR. Sempre encontra algo, por isso fica bem por último.',
@@ -32,27 +37,54 @@ function options() {
 /** Display names of local-audio-yomichan's sources. */
 const SUBSOURCE_NAMES = {nhk16: 'NHK16', shinmeikai8: 'Shinmeikai 8 (SMK8)', forvo: 'Forvo', jpod: 'JPod101', jpod_alternate: 'JPod101 Alt', ozk5: 'OZK5', daijisen: 'Daijisen', taas: 'TAAS'};
 
+function move(items, from, to) {
+    items.splice(to, 0, items.splice(from, 1)[0]);
+    save();
+}
+
+/** ↑ and ↓ buttons that move item `i` of `items`, as in Yomitan's list of audio sources. */
+function moveButtons(items, i, onMove) {
+    const button = (step, name, label) => {
+        const b = el('button', {class: 'ghost icon', type: 'button', title: label, 'aria-label': label, html: icon(name, 'sm')});
+        const to = i + step;
+        if (to < 0 || to >= items.length) { b.disabled = true; }
+        b.addEventListener('click', () => { move(items, i, to); onMove(to); });
+        return b;
+    };
+    return el('span', {class: 'audio-move'}, button(-1, 'chevronUp', 'Subir'), button(1, 'chevronDown', 'Descer'));
+}
+
+/** Alt+↑/↓ on a focused row moves it, like the buttons. */
+function moveKeys(row, items, i, onMove) {
+    row.addEventListener('keydown', (ev) => {
+        if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') || ev.target !== row) { return; }
+        ev.preventDefault?.();
+        const to = i + (ev.key === 'ArrowUp' ? -1 : 1);
+        if (to < 0 || to >= items.length) { return; }
+        move(items, i, to);
+        onMove(to);
+    });
+}
+
 /**
- * The sources inside a local database (nhk16, forvo…), in the user's priority order: drag to
- * reorder, switch off the ones not wanted. Read from the file each time the row is drawn.
+ * The sources inside a local database (nhk16, forvo…), in the user's priority order: move them with
+ * the arrows, switch off the ones not wanted. Read from the file each time the row is drawn.
  */
 function subsourceList(source) {
     const box = el('div', {class: 'audio-subsources'}, el('div', {class: 'd muted'}, 'Lendo as fontes do arquivo…'));
-    const draw = () => {
+    const draw = (focus = null) => {
         const list = el('ol', {class: 'audio-sources sub'});
         source.subsources.forEach((sub, i) => {
-            const row = el('li', {class: 'audio-sub', tabindex: '0', title: 'Arraste para mudar a prioridade'},
-                el('span', {class: 'grip', html: icon('drag', 'sm')}),
+            const row = el('li', {class: 'audio-sub', tabindex: '0', title: 'Use as setas para mudar a prioridade (ou Alt+↑/↓)'},
                 el('span', {class: 'num'}, String(i + 1)),
                 el('span', {class: 'name'}, SUBSOURCE_NAMES[sub.name] || sub.name),
-                toggle(sub.enabled, (v) => { sub.enabled = v; save(); }));
-            sortableRow(list, row, {ignore: '.switch', onDrop: (from, to) => {
-                if (to !== from) { source.subsources.splice(to, 0, source.subsources.splice(from, 1)[0]); save(); }
-                draw();
-            }});
+                toggle(sub.enabled, (v) => { sub.enabled = v; save(); }),
+                moveButtons(source.subsources, i, draw));
+            moveKeys(row, source.subsources, i, draw);
             list.append(row);
         });
-        box.replaceChildren(el('div', {class: 'd'}, 'Fontes dentro deste arquivo, em ordem de prioridade (arraste para reordenar):'), list);
+        box.replaceChildren(el('div', {class: 'd'}, 'Fontes dentro deste arquivo, em ordem de prioridade:'), list);
+        if (focus !== null) { list.children[focus]?.focus?.(); }
     };
     invoke('audio_db_sources', {path: source.path}).then((names) => {
         const merged = mergeSubsources(source.subsources, names || []);
@@ -64,7 +96,7 @@ function subsourceList(source) {
 
 function sourceRow(redraw, source, i) {
     const all = options().sources;
-    const type = select(AUDIO_SOURCE_TYPES, source.type, (v) => { source.type = v; save(); redraw(); });
+    const type = select(AUDIO_SOURCE_TYPES, source.type, (v) => { source.type = v; save(); redraw(i); });
     type.setAttribute('data-setting', `audio.sources.${i}.type`);
     let field = null;
     if (source.type === 'local-db') {
@@ -85,22 +117,13 @@ function sourceRow(redraw, source, i) {
     }
     const remove = el('button', {class: 'ghost icon', title: 'Remover esta fonte', 'aria-label': 'Remover esta fonte', html: icon('trash', 'sm')});
     remove.addEventListener('click', () => { all.splice(i, 1); save(); redraw(); });
-    const row = el('li', {class: 'audio-source', tabindex: '0', title: 'Arraste para mudar a prioridade (ou Alt+↑/↓)'},
-        el('span', {class: 'grip', html: icon('drag', 'sm')}),
+    const row = el('li', {class: 'audio-source', tabindex: '0', title: 'Use as setas para mudar a prioridade (ou Alt+↑/↓)'},
         el('span', {class: 'num'}, String(i + 1)),
         el('div', {class: 'audio-body'},
-            el('div', {class: 'audio-line'}, type, toggle(source.enabled, (v) => { source.enabled = v; save(); }), remove),
+            el('div', {class: 'audio-line'}, type, toggle(source.enabled, (v) => { source.enabled = v; save(); redraw(i); }), moveButtons(all, i, redraw), remove),
             el('div', {class: 'd muted'}, HINTS[source.type]),
             field));
-    row.addEventListener('keydown', (ev) => {
-        if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') || ev.target !== row) { return; }
-        ev.preventDefault?.();
-        const to = i + (ev.key === 'ArrowUp' ? -1 : 1);
-        if (to < 0 || to >= all.length) { return; }
-        all.splice(to, 0, all.splice(i, 1)[0]);
-        save();
-        redraw(to);
-    });
+    moveKeys(row, all, i, redraw);
     return row;
 }
 
@@ -119,8 +142,11 @@ function testRow() {
             if (found.length === 0) { out.className = 'error'; out.textContent = 'Nenhum áudio encontrado.'; return; }
             out.className = 'ok';
             out.textContent = `${found.length} encontrado(s): ${found.slice(0, 4).map((f) => f.name).join(', ')}${found.length > 4 ? '…' : ''}`;
-            const first = found.find((f) => f.kind !== 'tts');
-            const file = first ? await audioFile(first, io) : null;
+            let file = null;
+            for (const entry of found.filter((f) => f.kind !== 'tts')) {
+                file = await audioFile(entry, io).catch(() => null);
+                if (file) { break; }
+            }
             if (file) {
                 const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
                 void new Audio(URL.createObjectURL(new Blob([bytes], {type: file.mime}))).play();
@@ -143,24 +169,19 @@ export function renderAudioSection(root, focusIndex = null) {
     const audio = options();
     const redraw = (focus = null) => renderAudioSection(root, focus);
     const list = el('ol', {class: 'audio-sources'});
-    audio.sources.forEach((source, i) => {
-        const row = sourceRow(redraw, source, i);
-        sortableRow(list, row, {
-            ignore: '.switch, input, select, textarea, button, .audio-subsources',
-            onDrop: (from, to) => {
-                if (to !== from) { audio.sources.splice(to, 0, audio.sources.splice(from, 1)[0]); save(); }
-                redraw();
-            },
-        });
-        list.append(row);
-    });
+    audio.sources.forEach((source, i) => list.append(sourceRow(redraw, source, i)));
     const add = el('button', {html: `${icon('plus', 'sm')}Adicionar fonte`});
     add.addEventListener('click', () => {
-        audio.sources.push({type: 'local-db', enabled: true, path: '', url: ''});
+        audio.sources.push({type: 'local-db', enabled: true, path: '', url: '', subsources: []});
         save();
-        redraw();
+        redraw(audio.sources.length - 1);
     });
+    const label = (type) => AUDIO_SOURCE_TYPES.find((t) => t.value === type)?.label || type;
+    const order = audio.sources.filter((s) => s.enabled).map((s) => label(s.type));
+    const head = cardRow({icon: 'speaker', title: 'Áudio da palavra',
+        desc: order.length ? `Ordem: ${order.join(' › ')}` : 'Nenhuma fonte ligada: o botão de áudio não toca nada.'});
     root.replaceChildren(
+        head,
         cardRow({icon: 'play', title: 'Tocar o áudio automaticamente', desc: 'Toca o primeiro áudio encontrado assim que o popup abre.',
             control: toggle(audio.autoPlay, (v) => { audio.autoPlay = v; save(); })}),
         cardRow({icon: 'speaker', title: 'Os outros áudios no popup', desc: 'O botão de áudio toca o primeiro encontrado. Os demais aparecem num menu do clique direito ou como botões ao lado.', wide: true,
@@ -171,10 +192,14 @@ export function renderAudioSection(root, focusIndex = null) {
         el('div', {class: 'card-row stack'},
             el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('list')}),
                 el('div', {class: 'txt'}, el('div', {class: 't'}, 'Fontes de áudio'),
-                    el('div', {class: 'd'}, 'Em ordem de prioridade: a de cima é tentada primeiro. Arraste uma fonte para cima ou para baixo para mudar a ordem.')),
+                    el('div', {class: 'd'}, 'Em ordem de prioridade: a de cima é tentada primeiro. Use as setas ↑ ↓ para mudar a ordem.')),
                 add),
             list),
         testRow(),
     );
+    // Folds every row below the first, as the Anki section does.
+    const collapse = collapser('audio', () => [...root.children].filter((node) => node !== head));
+    head.querySelector('.ctl').append(collapse.button);
+    collapse.apply();
     if (focusIndex !== null) { list.children[focusIndex]?.focus?.(); }
 }

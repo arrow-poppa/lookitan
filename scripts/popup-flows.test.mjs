@@ -585,6 +585,7 @@ test('the context translation can stay blurred until clicked, like the word tran
     await view.popup.runContext(body);
     assert(body.innerHTML.includes('translation hidden-tr'), 'blurred at first');
     assert(body.innerHTML.includes('<mark>corro</mark>'));
+    assert(body.innerHTML.includes('speak-sentence'), 'a speaker reads the original sentence aloud');
     view.lookup.contextRevealed = true;
     await view.popup.runContext(body);
     assert(!body.innerHTML.includes('hidden-tr'), 'once shown it stays shown for the lookup');
