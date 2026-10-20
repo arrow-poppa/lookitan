@@ -3,6 +3,7 @@
 // generateContent with an IMAGE answer, or `:predict` for Imagen; OpenRouter, and other chat
 // servers that answer with pictures, get a chat request with `modalities: ["image", "text"]`.
 
+import {CustomProvider} from './ai/ai-provider.js';
 import {fillLanguages, languageName} from './ai/word-card.js';
 
 /** The providers that can make pictures. DeepSeek cannot. */
@@ -153,14 +154,13 @@ export function imageGenRequests(options, prompt, {count = 1, aspect = '1:1', qu
         // server, since not every one takes it; "JSON extra" can add it.
         return [{url: endpoint, headers, format: 'images', count: n, body: {model, prompt, n, ...extra}}];
     }
-    return each({url: endpoint, headers, format: 'chat', body: {
-        model,
-        messages: [{role: 'user', content: prompt}],
-        modalities: ['image', 'text'],
-        image_config: {aspect_ratio: ratio},
-        ...extra,
-        stream: false,
-    }});
+    const body = {model, messages: [{role: 'user', content: prompt}], modalities: ['image', 'text'], image_config: {aspect_ratio: ratio}};
+    // The same thinking and OpenRouter routing options as the text requests of "Personalizado"
+    // (reasoning, or thinking/reasoning_effort elsewhere; provider order/only/ignore, fallbacks).
+    const text = new CustomProvider(cfg);
+    text._applyReasoningOptions(body);
+    text._applyOpenRouterProviderOptions(body);
+    return each({url: endpoint, headers, format: 'chat', body: {...body, ...extra, stream: false}});
 }
 
 /** A data URL's type and base64 data, or null. */
