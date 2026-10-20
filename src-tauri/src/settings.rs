@@ -44,10 +44,6 @@ pub enum DictionaryKind {
     /// Built-in: pictures of the word from Bing Images, searched with an AI-made query (as in
     /// Migaku's pop-up). The front end does the search; the backend only keeps its place and switch.
     AiImages,
-    /// "Imagem AI" (pictures made by an image model) existed briefly on 2026-10-20 and was taken
-    /// out at the user's request (kept in the `image-ai-backup` branch). Only read, so settings
-    /// saved meanwhile still load; `migrate()` drops the entry.
-    AiImageGen,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -151,6 +147,9 @@ pub struct Settings {
     /// Size of the captured region around the pointer (region scope), in logical pixels.
     pub capture_width: u32,
     pub capture_height: u32,
+    /// An entry this version cannot read (a kind from a newer or a test build) is left out, rather
+    /// than making the whole file invalid and every setting fall back to its default.
+    #[serde(deserialize_with = "readable_dictionaries")]
     pub dictionaries: Vec<DictionaryConfig>,
     pub profiles: Vec<AppProfile>,
     pub autostart: bool,
@@ -225,6 +224,18 @@ pub fn builtin_dictionaries() -> Vec<DictionaryConfig> {
     ]
 }
 
+/// The dictionaries of a settings file, without the entries this version cannot read.
+fn readable_dictionaries<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<DictionaryConfig>, D::Error> {
+    let entries: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    Ok(entries.into_iter().filter_map(|entry| match serde_json::from_value(entry) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            log::warn!("left out a dictionary entry this version cannot read ({e})");
+            None
+        }
+    }).collect())
+}
+
 /// Settings saved by older versions have no built-in AI dictionaries; add them at the top.
 pub fn migrate(mut s: Settings) -> Settings {
     // The definition and translation languages follow Lookupper's list: Latin American Spanish
@@ -242,7 +253,6 @@ pub fn migrate(mut s: Settings) -> Settings {
     for p in &mut s.profiles {
         if p.freeze == FreezeMode::Default { p.freeze = FreezeMode::None; }
     }
-    s.dictionaries.retain(|d| d.kind != DictionaryKind::AiImageGen);
     for (pos, b) in builtin_dictionaries().into_iter().enumerate() {
         if !s.dictionaries.iter().any(|d| d.id == b.id) {
             s.dictionaries.insert(pos.min(s.dictionaries.len()), b);
@@ -336,16 +346,16 @@ mod tests {
     }
 
     #[test]
-    fn the_removed_generated_pictures_entry_loads_and_is_dropped() {
-        let saved: Settings = serde_json::from_str(r#"{"dictionaries": [
+    fn a_dictionary_of_an_unknown_kind_is_left_out_and_the_rest_is_kept() {
+        let saved: Settings = serde_json::from_str(r#"{"definitionLanguage": "es-419", "dictionaries": [
             {"id": "ai-word", "kind": "ai-word"},
             {"id": "ai-context", "kind": "ai-context"},
             {"id": "ai-images", "kind": "ai-images"},
-            {"id": "ai-image-gen", "kind": "ai-image-gen", "enabled": true},
+            {"id": "from-a-newer-build", "kind": "something-new", "enabled": true},
             {"id": "local", "kind": "mdict", "path": "x.mdx"}
         ]}"#).unwrap();
-        let s = migrate(saved);
-        let ids: Vec<&str> = s.dictionaries.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(saved.definition_language, "es-419", "the other settings are kept");
+        let ids: Vec<&str> = saved.dictionaries.iter().map(|d| d.id.as_str()).collect();
         assert_eq!(ids, ["ai-word", "ai-context", "ai-images", "local"]);
     }
 
