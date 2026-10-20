@@ -35,9 +35,14 @@ pub struct AudioEntry {
     pub name: String,
 }
 
+/// Recent lookups kept per database, so the same word looked up again skips SQLite (as
+/// yomitan-audio-fast's row cache does, smaller).
+const LOOKUPS_KEPT: usize = 256;
+
 pub struct AudioDb {
     dir: PathBuf,
     conn: Mutex<Connection>,
+    lookups: Mutex<Vec<((String, Option<String>), Vec<AudioEntry>)>>,
     /// The android.db variant, with the audio inside.
     blobs: bool,
 }
@@ -73,8 +78,13 @@ fn safe_relative(file: &str) -> Option<PathBuf> {
 
 impl AudioDb {
     pub fn open(path: &Path) -> Result<Self> {
+        // Read-only, with yomitan-audio-fast's read settings: query-only, temporary data in memory,
+        // a small page cache (4 MB) and a memory map (64 MB) that keep repeated lookups off the
+        // disk without holding the file in RAM.
         let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
             .with_context(|| format!("não foi possível abrir {}", path.display()))?;
+        conn.execute_batch("PRAGMA query_only = ON; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -4096; PRAGMA mmap_size = 67108864;")
+            .with_context(|| format!("não foi possível ler {}", path.display()))?;
         let has = |table: &str| -> Result<bool> {
             Ok(conn.query_row("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1", [table], |_| Ok(()))
                 .optional()?.is_some())
@@ -83,7 +93,7 @@ impl AudioDb {
             anyhow::bail!("{} não é um banco de áudio local (falta a tabela entries)", path.display());
         }
         let blobs = has("android")?;
-        Ok(Self { dir: path.parent().map(Path::to_path_buf).unwrap_or_default(), conn: Mutex::new(conn), blobs })
+        Ok(Self { dir: path.parent().map(Path::to_path_buf).unwrap_or_default(), conn: Mutex::new(conn), lookups: Mutex::new(Vec::new()), blobs })
     }
 
     /// The recordings of a word, best source first. Without a reading every reading matches; with
@@ -92,6 +102,16 @@ impl AudioDb {
         let term = term.trim();
         if term.is_empty() { return Ok(Vec::new()); }
         let reading = reading.map(str::trim).filter(|r| !r.is_empty());
+        let key = (term.to_string(), reading.map(str::to_string));
+        if let Some(hit) = self.lookups.lock().iter().find(|(k, _)| *k == key) { return Ok(hit.1.clone()); }
+        let found = self.query(term, reading)?;
+        let mut kept = self.lookups.lock();
+        kept.insert(0, (key, found.clone()));
+        kept.truncate(LOOKUPS_KEPT);
+        Ok(found)
+    }
+
+    fn query(&self, term: &str, reading: Option<&str>) -> Result<Vec<AudioEntry>> {
         let order = SOURCES.iter().enumerate()
             .map(|(i, (id, _))| format!("WHEN '{id}' THEN {i}")).collect::<Vec<_>>().join(" ");
         let sql = format!(
@@ -196,6 +216,17 @@ mod tests {
         assert_eq!(db.data("jpod", "../android.db").unwrap(), None, "never outside the source folder");
         assert_eq!(db.data("../x", "a.mp3").unwrap(), None);
         assert_eq!(db.data("forvo", "missing.mp3").unwrap(), None);
+    }
+
+    #[test]
+    fn a_repeated_lookup_is_answered_from_memory() {
+        let dir = temp("cache");
+        let db = AudioDb::open(&sample(&dir, false)).unwrap();
+        let first = db.lookup("読む", Some("よむ")).unwrap();
+        assert_eq!(db.lookup("読む", Some("よむ")).unwrap(), first);
+        assert_eq!(db.lookups.lock().len(), 1);
+        db.lookup("読む", None).unwrap();
+        assert_eq!(db.lookups.lock().len(), 2, "another reading is another entry");
     }
 
     #[test]

@@ -98,8 +98,8 @@ pub struct AppState {
     busy: AtomicBool,
     pinned: AtomicBool,
     blank: Blanking,
-    /// Local audio databases opened so far, by path (see audio.rs).
-    audio_dbs: Mutex<HashMap<String, Arc<audio::AudioDb>>>,
+    /// The local audio databases used most recently, newest first, at most AUDIO_DBS_OPEN (audio.rs).
+    audio_dbs: Mutex<Vec<(String, Arc<audio::AudioDb>)>>,
 }
 
 /// The overlay and the pop-up are hidden only once they show nothing (see `hide_blank`).
@@ -1387,12 +1387,23 @@ fn read_text_file(path: String) -> std::result::Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))
 }
 
-/// The local audio database at `path`, opened once (read-only) and kept.
+/// How many local audio databases stay open at once. Each costs a few MB (SQLite's page cache);
+/// switching to a fourth closes the one used longest ago.
+const AUDIO_DBS_OPEN: usize = 3;
+
+/// The local audio database at `path`, opened read-only and kept among the last AUDIO_DBS_OPEN used.
 fn audio_db(state: &AppState, path: &str) -> std::result::Result<Arc<audio::AudioDb>, String> {
     let mut dbs = state.audio_dbs.lock();
-    if let Some(db) = dbs.get(path) { return Ok(db.clone()); }
+    if let Some(i) = dbs.iter().position(|(p, _)| p == path) {
+        let entry = dbs.remove(i);
+        let db = entry.1.clone();
+        dbs.insert(0, entry);
+        return Ok(db);
+    }
     let db = Arc::new(audio::AudioDb::open(std::path::Path::new(path)).map_err(|e| format!("{e:#}"))?);
-    dbs.insert(path.to_string(), db.clone());
+    dbs.insert(0, (path.to_string(), db.clone()));
+    // Dropping the last handle closes the file (a lookup still using it keeps it until it ends).
+    dbs.truncate(AUDIO_DBS_OPEN);
     Ok(db)
 }
 
@@ -1482,7 +1493,7 @@ pub fn run() {
                 busy: AtomicBool::new(false),
                 pinned: AtomicBool::new(false),
                 blank: Blanking::default(),
-                audio_dbs: Mutex::new(HashMap::new()),
+                audio_dbs: Mutex::new(Vec::new()),
             });
 
             // Configured WebViews can invoke get_settings before setup reaches manage().
