@@ -37,6 +37,10 @@ html, body { height: 100%; overflow: hidden; background: transparent; }
 .top button:hover { color: var(--text); }
 .top button.on { color: var(--accent); }
 #btn-save .i, #btn-anki .i { width: 20px; height: 20px; }
+/* Counters: cards of this word saved in the app, and its notes in Anki (click to see them). */
+.top button.count { gap: 3px; min-height: 28px; padding: 2px 7px; color: var(--accent); background: transparent; border-color: transparent; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.top button.count:hover { color: var(--accent-strong); background: var(--surface-3); }
+.top button.count .i { width: 16px; height: 16px; }
 
 .notice { margin: 4px 16px; padding: 6px 10px; border-radius: 6px; background: var(--surface-2); font-size: 12.5px; color: var(--muted); }
 
@@ -154,3 +158,21 @@ details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px
 .empty { padding: 30px 8px; text-align: center; color: var(--muted); }
 .empty strong { display: block; color: var(--text); margin-bottom: 4px; font-size: 15px; }
 .meta { padding: 4px 16px 8px; font-size: 11px; color: var(--faint); min-height: 18px; }
+
+/* The saved cards of this word cover the pop-up, like the enlarged picture. */
+.saved-view { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--surface); }
+.saved-bar { display: flex; align-items: center; gap: 8px; padding: 10px 10px 6px 18px; border-bottom: 1px solid var(--border-strong); }
+.saved-bar strong { font-size: 17px; }
+.saved-bar .spacer { flex: 1; }
+.saved-list { flex: 1; overflow-y: auto; padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+.saved-card { padding: 10px 14px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); }
+.saved-card.current { border-color: var(--accent); }
+.saved-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.saved-head .word { font-size: 18px; font-weight: 600; }
+.saved-card .def { margin: 2px 0 6px; font-size: 14px; }
+.saved-card blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--border-strong); color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.saved-card .ctx-tr { margin: 0 0 6px; font-size: 13.5px; line-height: 1.5; }
+.saved-shot img { display: block; max-width: 100%; max-height: 120px; margin: 6px 0; border-radius: 6px; }
+.saved-foot { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 4px; }
+.saved-foot .spacer { flex: 1; }
+.saved-foot button { font-size: 12px; min-height: 26px; padding: 2px 8px; gap: 5px; color: var(--muted); }

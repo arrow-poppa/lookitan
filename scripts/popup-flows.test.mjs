@@ -29,9 +29,11 @@ class Element {
         if (!this.parts.has(selector)) { this.parts.set(selector, new Element()); }
         return this.parts.get(selector);
     }
+    querySelectorAll() { return []; }
+    remove() { this.removed = true; }
 }
 
-async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, audioRows = async () => null} = {}) {
+async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, audioRows = async () => null, words = []} = {}) {
     const nodes = new Map();
     const document = {getElementById: (id) => {
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
@@ -47,7 +49,8 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         '@tauri-apps/api/core': {invoke: async (command, args) => { calls.invokes.push([command, args]); return audioRows(command, args); }},
         '@tauri-apps/api/event': {listen: async (name, handler) => { calls.listeners.set(name, handler); return () => {}; }, emit: async (...args) => { calls.events.push(args); }},
         [file('src/lib/api.js')]: {
-            api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, webviewBlank: async (token) => { calls.blanks.push(token); }, entryHtml, listDictionaries: async () => dictionaries},
+            api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, webviewBlank: async (token) => { calls.blanks.push(token); }, entryHtml, listDictionaries: async () => dictionaries,
+                listWords: async () => words, deleteWord: async (id) => { calls.deleted = id; }, wordImage: async () => null},
             entryUrl: () => '', escapeHtml: (value) => String(value).replace(/[&<>"']/g, (c) =>
                 ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]),
             loadAllSettings: async () => ({settings, ai, anki: options}), renderMarkdown: (text) => String(text),
@@ -77,7 +80,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
                 return stub ? new SyntheticModule(Object.keys(stub), function () {
                     for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
                 }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
-                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries, refreshSavedCount, refreshAnkiNotes, openSavedCards, openAnkiNotes};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
                 {context, identifier: id});
             })());
         }
@@ -610,4 +613,44 @@ test('{audio} gets the word audio from a local database source, as an Anki sound
     const file = await ctx.audio();
     assert.deepEqual(JSON.parse(JSON.stringify(file)), {data: 'T2dnUw==', extension: 'ogg', mime: 'audio/ogg'});
     assert.deepEqual(JSON.parse(JSON.stringify(view.calls.invokes[0])), ['audio_lookup', {path: 'C:/audio/android.db', term: '読む', reading: null, order: null}]);
+});
+
+test('a counter beside the bookmark shows how many cards of the word were saved, and opens them', async () => {
+    const words = [
+        {id: 'a', word: 'run', dictionaryForm: 'run', translation: 'correr', sentence: 'I run daily.', createdAt: 1},
+        {id: 'b', word: 'ran', dictionaryForm: 'Run', translation: 'correu', sentence: 'She ran home.', contextTranslation: 'Ela **correu** para casa.', createdAt: 2},
+        {id: 'c', word: 'walk', dictionaryForm: 'walk', createdAt: 3},
+    ];
+    const view = await fixture({words});
+    await view.popup.refreshSavedCount(view.lookup);
+    const button = view.nodes.get('btn-saved');
+    assert.equal(button.hidden, false);
+    assert(button.innerHTML.includes('<span class="n">2</span>'), 'the word as found and its dictionary form both count');
+    assert(button.title.includes('2 vezes em contextos diferentes'));
+    await view.popup.openSavedCards();
+    const box = view.nodes.get('card').children.at(-1);
+    assert.equal(box.className, 'saved-view');
+    const newer = box.innerHTML.indexOf('She <mark>ran</mark> home.');
+    assert(newer >= 0 && newer < box.innerHTML.indexOf('I <mark>run</mark> daily.'), 'newest first, the word marked in its sentence');
+    assert(box.innerHTML.includes('<mark>correu</mark>'), 'the saved context translation');
+    const empty = await fixture({words: [words[2]]});
+    await empty.popup.refreshSavedCount(empty.lookup);
+    assert.equal(empty.nodes.get('btn-saved').hidden, true, 'no counter for a word never saved');
+});
+
+test('a counter beside the Anki button shows the notes of the word in Anki, and opens them in Anki', async () => {
+    const browsed = [];
+    const connection = {findNoteIds: async () => [[11, 12]], guiBrowseNotes: async (ids) => { browsed.push(ids); }};
+    const view = await fixture({connection});
+    Object.assign(view.options, {enable: true, checkForDuplicates: true});
+    await view.popup.refreshAnkiNotes(view.lookup, view.options);
+    const button = view.nodes.get('btn-anki-notes');
+    assert.equal(button.hidden, false);
+    assert(button.innerHTML.includes('<span class="n">2</span>'));
+    assert(button.title.includes('2 notas'));
+    await view.popup.openAnkiNotes();
+    assert.equal(JSON.stringify(browsed), JSON.stringify([[11, 12]]));
+    view.options.checkForDuplicates = false;
+    await view.popup.refreshAnkiNotes(view.lookup, view.options);
+    assert.equal(button.hidden, true, 'off with the duplicate check');
 });
