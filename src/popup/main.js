@@ -14,7 +14,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {audioFile, findAudio, normalizeAudioOptions} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
-import {generateImages, imageGenCount, imageGenPrompt, isImageGenConfigured} from '../lib/image-gen.js';
+import {generateImages, imageGenCount, imageGenMissing, imageGenPrompt} from '../lib/image-gen.js';
 import {forgetStoredGeneration, loadGeneration, saveGeneration} from '../lib/image-store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1369,12 +1369,16 @@ async function render(payload) {
                 body.innerHTML = `<button class="ghost explain-btn">${icon('image', 'sm')}Mostrar imagens</button>`;
                 body.querySelector('button').addEventListener('click', () => void runImages(body));
             }
-        } else if (d.kind === 'ai-image-gen' && payload.word && isImageGenConfigured(imageGenOptions())) {
-            const body = section('Imagens IA', {ai: true, onRegenerate: (b) => void runImageGen(b, 'again')});
+        } else if (d.kind === 'ai-image-gen' && payload.word) {
+            const missing = imageGenMissing(imageGenOptions());
+            const body = section('Imagens IA', {ai: true, onRegenerate: missing ? null : (b) => void runImageGen(b, 'again')});
             shown++;
             // Like "Explicar": made on a click, or at once with the automatic option. Pictures
-            // already made for this word show at once.
-            if (ai.autoGenerateImages === true) {
+            // already made for this word show at once. Switched on but not set up, it says what
+            // is missing, as the word card does.
+            if (missing) {
+                body.innerHTML = `<p class="hint">Falta ${escapeHtml(missing)} em Dicionários › Imagens IA.</p>`;
+            } else if (ai.autoGenerateImages === true) {
                 void runImageGen(body);
             } else {
                 const count = imageGenCount(ai.imageGenCount);
