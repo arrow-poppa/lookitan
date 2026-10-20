@@ -8,7 +8,7 @@ import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
-import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady} from '../lib/anki/notes.js';
+import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {invoke} from '@tauri-apps/api/core';
 import {audioFile, findAudio, normalizeAudioOptions} from '../lib/audio.js';
@@ -867,6 +867,32 @@ async function refreshSavedCount(lookup = state) {
         `Salva ${n === 1 ? '1 vez' : `${n} vezes${n > 1 ? ' em contextos diferentes' : ''}`} — clique para ver`);
 }
 
+// Field names of each Anki note type, asked once per pop-up session (again after a settings change).
+let modelFieldNames = new Map();
+
+async function noteTypeFields(conn, options) {
+    const model = options.cardFormats?.[0]?.model || '';
+    const key = `${options.server} ${model}`;
+    if (!modelFieldNames.has(key)) {
+        const asked = conn.getModelFieldNames(model);
+        modelFieldNames.set(key, asked);
+        asked.catch(() => modelFieldNames.delete(key));
+    }
+    return modelFieldNames.get(key);
+}
+
+/**
+ * Notes for Anki's duplicate search: fields in the note type's order (it queries the first one),
+ * and only those whose first field has something, since an empty one would match every note
+ * without it, whatever the word.
+ */
+async function duplicateQueryNotes(conn, options, contexts) {
+    const names = await noteTypeFields(conn, options);
+    const notes = await Promise.all(contexts.map((ctx) => buildNote(ctx, options, null)));
+    return notes.map((note) => orderNoteFields(note, names))
+        .filter((note) => String(Object.values(note.fields)[0] ?? '').replace(/<[^>]*>/g, '').trim() !== '');
+}
+
 /**
  * The Anki notes of this word: one duplicate-check query per form of the word (as found, the
  * dictionary's headword, the AI card's once it is there), so the counter does not wait for the AI
@@ -881,8 +907,8 @@ async function refreshAnkiNotes(lookup = state, options = anki) {
     try {
         const conn = createConnection(options);
         const base = noteContext(lookup, options);
-        const notes = await Promise.all(wordFormList(lookup).map((form) => buildNote({...base, word: form, headword: form}, options, null)));
-        const found = await conn.findNoteIds(notes);
+        const notes = await duplicateQueryNotes(conn, options, wordFormList(lookup).map((form) => ({...base, word: form, headword: form})));
+        const found = notes.length ? await conn.findNoteIds(notes) : [];
         if (!latest()) { return; }
         const ids = [...new Set([...(found || []).flat(), ...(lookup.ankiNoteId ? [lookup.ankiNoteId] : [])])];
         lookup.ankiNotes = ids;
@@ -1082,8 +1108,8 @@ async function onAnkiClick() {
             if (lookup.ankiNoteId) {
                 await conn.guiBrowseNote(lookup.ankiNoteId);
             } else {
-                const note = await buildNote(noteContext(lookup, options), options, null);
-                const [ids] = await conn.findNoteIds([note]);
+                const notes = await duplicateQueryNotes(conn, options, [noteContext(lookup, options)]);
+                const [ids] = notes.length ? await conn.findNoteIds(notes) : [[]];
                 if (ids && ids.length) { await conn.guiBrowseNotes(ids); }
             }
         } catch (e) { if (state === lookup) { ankiStatus(`Anki: ${e?.message || e}`, true); } }
@@ -1353,6 +1379,8 @@ void listen('settings-changed', async () => {
         settings = all.settings;
         ai = all.ai;
         anki = all.anki;
+        // The note type or its fields may have changed.
+        modelFieldNames = new Map();
         await refreshAnkiButton();
     } catch (e) { ankiStatus(`Configurações: ${e?.message || e}`, true); }
 });
