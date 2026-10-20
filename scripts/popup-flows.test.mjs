@@ -654,3 +654,34 @@ test('a counter beside the Anki button shows the notes of the word in Anki, and 
     await view.popup.refreshAnkiNotes(view.lookup, view.options);
     assert.equal(button.hidden, true, 'off with the duplicate check');
 });
+
+test('the Anki notes counter does not wait for the AI card and searches every form of the word', async () => {
+    const queried = [];
+    const connection = {findNoteIds: async (notes) => {
+        queried.push(notes.map((n) => n.fields.Word));
+        return notes.map((n) => (n.fields.Word === 'run' ? [7] : []));
+    }};
+    const view = await fixture({connection});
+    Object.assign(view.options, {enable: true, checkForDuplicates: true});
+    view.lookup.payload = {word: 'ran', sentence: 'She ran home.', entries: [{headword: 'run'}]};
+    view.lookup.aiPending = true;
+    await view.popup.refreshAnkiButton();
+    await flush();
+    assert.equal(JSON.stringify(queried[0]), JSON.stringify(['ran', 'run']), 'the word as found and its headword, in one request');
+    const button = view.nodes.get('btn-anki-notes');
+    assert.equal(button.hidden, false, 'shown while the AI card is still generating');
+    assert(button.innerHTML.includes('<span class="n">1</span>'));
+});
+
+test('a slow, older Anki notes check cannot overwrite a newer one', async () => {
+    const slow = deferred();
+    let calls = 0;
+    const connection = {findNoteIds: async () => { calls++; return calls === 1 ? slow.promise : [[5]]; }};
+    const view = await fixture({connection});
+    Object.assign(view.options, {enable: true, checkForDuplicates: true});
+    const first = view.popup.refreshAnkiNotes(view.lookup, view.options);
+    await view.popup.refreshAnkiNotes(view.lookup, view.options);
+    slow.resolve([[1, 2, 3]]);
+    await first;
+    assert(view.nodes.get('btn-anki-notes').innerHTML.includes('<span class="n">1</span>'), 'the newest answer stays');
+});

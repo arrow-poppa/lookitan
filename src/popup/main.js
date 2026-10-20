@@ -825,11 +825,17 @@ function setSaveIcon(saved) {
 // Lookupper's bookmark that changes colour: how many cards of this word were saved in the app (a
 // click shows them in the pop-up), and how many Anki notes it has (a click opens Anki's browser).
 
+/** The forms of this lookup's word: as found, the first entry's headword and the AI card's. */
+function wordFormList(lookup) {
+    const p = lookup.payload;
+    const seen = new Set();
+    return [p.word, p.entries?.[0]?.headword, lookup.aiCard?.headword].map((w) => String(w || '').trim())
+        .filter((w) => w && !seen.has(w.toLowerCase()) && seen.add(w.toLowerCase()));
+}
+
 /** The forms a saved card may have used for this lookup's word, lower-cased. */
 function wordForms(lookup) {
-    const p = lookup.payload;
-    return new Set([p.word, lookup.aiCard?.headword, p.entries?.[0]?.headword]
-        .map((w) => String(w || '').trim().toLowerCase()).filter(Boolean));
+    return new Set(wordFormList(lookup).map((w) => w.toLowerCase()));
 }
 
 /** The saved cards of this lookup's word (by the word as found or its dictionary form), newest first. */
@@ -851,29 +857,40 @@ function setCount(button, n, iconName, title) {
 
 async function refreshSavedCount(lookup = state) {
     if (!lookup?.payload.word) { setCount($('btn-saved'), 0); return; }
+    const check = (lookup.savedCheck || 0) + 1;
+    lookup.savedCheck = check;
     const cards = await savedCardsOf(lookup);
-    if (state !== lookup) { return; }
+    if (state !== lookup || lookup.savedCheck !== check) { return; }
     lookup.savedCards = cards;
     const n = cards.length;
     setCount($('btn-saved'), n, 'bookmarkFilled',
         `Salva ${n === 1 ? '1 vez' : `${n} vezes${n > 1 ? ' em contextos diferentes' : ''}`} — clique para ver`);
 }
 
+/**
+ * The Anki notes of this word: one duplicate-check query per form of the word (as found, the
+ * dictionary's headword, the AI card's once it is there), so the counter does not wait for the AI
+ * and finds notes made from another form. Only the newest check of a lookup is shown.
+ */
 async function refreshAnkiNotes(lookup = state, options = anki) {
     const button = $('btn-anki-notes');
     if (!options.enable || !options.checkForDuplicates || !isFormatReady(options) || !lookup?.payload.word) { setCount(button, 0); return; }
+    const check = (lookup.ankiNotesCheck || 0) + 1;
+    lookup.ankiNotesCheck = check;
+    const latest = () => state === lookup && lookup.ankiNotesCheck === check;
     try {
         const conn = createConnection(options);
-        const note = await buildNote(noteContext(lookup, options), options, null);
-        const [found] = await conn.findNoteIds([note]);
-        const ids = [...new Set([...(found || []), ...(lookup.ankiNoteId ? [lookup.ankiNoteId] : [])])];
-        if (state !== lookup) { return; }
+        const base = noteContext(lookup, options);
+        const notes = await Promise.all(wordFormList(lookup).map((form) => buildNote({...base, word: form, headword: form}, options, null)));
+        const found = await conn.findNoteIds(notes);
+        if (!latest()) { return; }
+        const ids = [...new Set([...(found || []).flat(), ...(lookup.ankiNoteId ? [lookup.ankiNoteId] : [])])];
         lookup.ankiNotes = ids;
         const n = ids.length;
         setCount(button, n, 'cards', `${n === 1 ? '1 nota' : `${n} notas`} desta palavra no Anki — clique para abrir no Anki`);
     } catch (_e) {
         // AnkiConnect not running: no counter, as with the "+" button.
-        if (state === lookup) { setCount(button, 0); }
+        if (latest()) { setCount(button, 0); }
     }
 }
 
@@ -1015,7 +1032,7 @@ async function refreshAnkiButton() {
     const options = anki;
     // The counters follow the lookup: the AI card can change the word's dictionary form.
     void refreshSavedCount(lookup);
-    if (!lookup?.aiPending && !lookup?.explainPending) { void refreshAnkiNotes(lookup, options); }
+    void refreshAnkiNotes(lookup, options);
     if (!options.enable || !lookup?.payload.word) { setAnki('hidden'); ankiStatus(); return; }
     if (!isFormatReady(options)) {
         setAnki('configure', 'Configurar o Anki');
