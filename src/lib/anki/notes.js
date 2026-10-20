@@ -260,7 +260,7 @@ function cloze(sentence, word) {
  * @property {() => Promise<{data: string, extension: string}[]>} [images] The pictures checked in the
  *   pop-up's "Imagens" section, as base64 files, for {image}.
  * @property {() => Promise<{data: string, extension: string}[]>} [aiImages] The pictures checked in
- *   "Imagens IA", for {ai-image}; they go to {image} too when the note has no {ai-image}.
+ *   "Imagem AI", for {ai-image}; they go to {image} too when the note has no {ai-image}.
  * @property {() => Promise<{data: string, extension: string}|null>} [audio] The word's audio from
  *   Configurações › Áudio (the recording last played, else the first found), for {audio}.
  * @property {() => Promise<{data: string, extension: string}|null>} [sentenceAudio] The sentence

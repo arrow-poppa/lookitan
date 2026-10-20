@@ -761,10 +761,10 @@ async function imageGenFixture({configured = true, imageStore = {}, blobs = fals
     return {view, made, show, settle};
 }
 
-test('"Imagens IA" makes its pictures on a click, adds more, and sends the checked ones to Anki', async () => {
+test('"Imagem AI" makes its pictures on a click, adds more, and sends the checked ones to Anki', async () => {
     const {view, made, show, settle} = await imageGenFixture();
     const {sectionNode, body} = await show();
-    assert(sectionNode.innerHTML.includes('Imagens IA'));
+    assert(sectionNode.innerHTML.includes('Imagem AI'));
     assert(body.innerHTML.includes('Gerar 2 imagens'), 'like Explicar, nothing is made before the click');
     await settle();
     assert.equal(made.length, 0);
@@ -785,7 +785,7 @@ test('"Imagens IA" makes its pictures on a click, adds more, and sends the check
 
 });
 
-test('"Imagens IA" shows pictures already made for the word at once, and the refresh button makes a new set', async () => {
+test('"Imagem AI" shows pictures already made for the word at once, and the refresh button makes a new set', async () => {
     const {made, show, settle} = await imageGenFixture();
     const first = await show();
     first.body.querySelector('button').listeners.click();
@@ -801,18 +801,18 @@ test('"Imagens IA" shows pictures already made for the word at once, and the ref
     assert(again.body.innerHTML.includes('https://gen.example/3.png') && !again.body.innerHTML.includes('https://gen.example/1.png'), 'a new set replaces the old one');
 });
 
-test('"Imagens IA" switched on but not set up says what is missing, and makes nothing', async () => {
+test('"Imagem AI" switched on but not set up says what is missing, and makes nothing', async () => {
     const {made, show, settle} = await imageGenFixture({configured: false});
     const {sectionNode, body} = await show();
     await settle();
-    assert(sectionNode.innerHTML.includes('Imagens IA'), 'the section shows');
-    assert(body.innerHTML.includes('Falta o modelo de imagem em Dicionários › Imagens IA.'));
+    assert(sectionNode.innerHTML.includes('Imagem AI'), 'the section shows');
+    assert(body.innerHTML.includes('Falta o modelo de imagem em Dicionários › Imagem AI.'));
     assert(!body.innerHTML.includes('Gerar'));
     assert.equal(sectionNode.querySelector('.sec-head').children.length, 0, 'no refresh button');
     assert.equal(made.length, 0);
 });
 
-test('"Imagens IA" pictures made before the app was closed come back from disk, without a click or a new request', async () => {
+test('"Imagem AI" pictures made before the app was closed come back from disk, without a click or a new request', async () => {
     const disk = new Map();
     const imageStore = {
         loadGeneration: async (key) => disk.get(key) || null,

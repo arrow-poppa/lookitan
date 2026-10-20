@@ -772,7 +772,7 @@ async function checkedImageFiles(...galleries) {
     return files.filter(Boolean);
 }
 
-// ------------------------------------------------------------------ "Imagens IA" (pictures made by an image model)
+// ------------------------------------------------------------------ "Imagem AI" (pictures made by an image model)
 
 /**
  * Pictures made per prompt, so looking the word up again shows them without paying for new ones.
@@ -1379,13 +1379,13 @@ async function render(payload) {
             }
         } else if (d.kind === 'ai-image-gen' && payload.word) {
             const missing = imageGenMissing(imageGenOptions());
-            const body = section('Imagens IA', {ai: true, onRegenerate: missing ? null : (b) => void runImageGen(b, 'again')});
+            const body = section('Imagem AI', {ai: true, onRegenerate: missing ? null : (b) => void runImageGen(b, 'again')});
             shown++;
             // Like "Explicar": made on a click, or at once with the automatic option. Pictures
             // already made for this word show at once. Switched on but not set up, it says what
             // is missing, as the word card does.
             if (missing) {
-                body.innerHTML = `<p class="hint">Falta ${escapeHtml(missing)} em Dicionários › Imagens IA.</p>`;
+                body.innerHTML = `<p class="hint">Falta ${escapeHtml(missing)} em Dicionários › Imagem AI.</p>`;
             } else if (ai.autoGenerateImages === true) {
                 void runImageGen(body);
             } else {

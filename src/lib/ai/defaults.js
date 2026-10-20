@@ -37,7 +37,7 @@ function providerFields(source, base) {
 }
 
 /**
- * "Imagens IA"'s provider block. Its first copy of the word card's keeps the keys and the endpoint
+ * "Imagem AI"'s provider block. Its first copy of the word card's keeps the keys and the endpoint
  * but takes image models (OpenRouter's endpoint gets OPENROUTER_IMAGE_MODEL), and leaves the text
  * model's thinking and provider routing behind: the providers that serve a text model rarely serve
  * an image one. A provider that cannot make pictures (DeepSeek) becomes OpenAI.
@@ -86,7 +86,7 @@ function baseAiOptions() {
         autoShowImages: false,
         // Migaku's meme mode, switched in the pop-up's "Imagens" section: " meme" ends the search.
         imageMemeMode: false,
-        // "Imagens IA": pictures made by an image model from this prompt, on a click unless
+        // "Imagem AI": pictures made by an image model from this prompt, on a click unless
         // autoGenerateImages is on; imageGenCount per click.
         imageGenPrompt: IMAGE_GEN_PROMPT,
         imageGenCount: 1,
