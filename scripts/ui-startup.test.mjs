@@ -237,6 +237,70 @@ test('the images dictionary has its own image query prompts, switch and provider
     assert.equal(fixture.ai.openai.model, 'kept-model');
 });
 
+test('the pop-up order is changed by dragging a row or with Alt+arrows, without HTML drag and drop', async () => {
+    const view = dom();
+    view.add('add-dict');
+    view.add('dict-detail');
+    const list = view.add('dict-list');
+    let order = [{id: 'ai-word', kind: 'ai-word', enabled: true}, {id: 'ai-context', kind: 'ai-context', enabled: true}, {id: 'local', kind: 'mdict', name: 'Local', enabled: true}];
+    const moves = [];
+    const ui = await load('src/main/dicts-tab.js', {document: view.document, setTimeout}, {
+        '@tauri-apps/plugin-dialog': {open: async () => null, ask: async () => true},
+        [file('src/lib/api.js')]: {api: {
+            listDictionaries: async () => order,
+            updateDictionary: async (id, {moveTo}) => {
+                moves.push([id, moveTo]);
+                const item = order.find((d) => d.id === id);
+                order = order.filter((d) => d !== item);
+                order.splice(moveTo, 0, item);
+                return order;
+            },
+        }, escapeHtml: String},
+        [file('src/lib/icons.js')]: {icon: () => ''},
+        [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => ''},
+        [file('src/main/store.js')]: {store: {settings: {definitionLanguage: 'en-US', translationLanguage: 'pt-BR'}, ai: normalizeAiOptions({})}, save: () => {}},
+    });
+    await ui.initDictsTab();
+    // Rows whose middles are at 20, 60 and 100 px.
+    assert.equal(ui.dropIndex([20, 60, 100], 75, 0), 1, 'the first row dragged past the second');
+    assert.equal(ui.dropIndex([20, 60, 100], 130, 0), 2, 'to the end');
+    assert.equal(ui.dropIndex([20, 60, 100], 5, 2), 0, 'the last row dragged to the top');
+    assert.equal(ui.dropIndex([20, 60, 100], 90, 2), 2, 'not past any row: it stays');
+    for (const row of list.children) {
+        assert.equal(row.attributes.draggable, undefined, 'no HTML drag and drop, which the WebView does not deliver');
+        assert(row.listeners.pointerdown && row.listeners.pointermove && row.listeners.pointerup);
+    }
+    const key = (row, k) => row.listeners.keydown[0]({key: k, altKey: true, preventDefault() {}});
+    key(list.children[0], 'ArrowDown');
+    await new Promise((done) => setImmediate(done));
+    assert.deepEqual(moves, [['ai-word', 1]]);
+    assert.deepEqual(order.map((d) => d.id), ['ai-context', 'ai-word', 'local']);
+    key(list.children[0], 'ArrowUp');
+    await new Promise((done) => setImmediate(done));
+    assert.equal(moves.length, 1, 'the top row cannot move up');
+    // A mouse drag: rows are 40 px high, so their middles are at 20, 60 and 100.
+    list.insertBefore = (node, ref) => {
+        list.children = list.children.filter((row) => row !== node);
+        const at = ref ? list.children.indexOf(ref) : list.children.length;
+        list.children.splice(at, 0, node);
+    };
+    for (const row of list.children) {
+        row.getBoundingClientRect = () => ({top: list.children.indexOf(row) * 40, height: 40});
+        row.setPointerCapture = () => {};
+    }
+    const last = list.children[2];
+    const pointer = (type, clientY) => last.listeners[type][0]({type, clientY, pointerId: 7, button: 0, target: {closest: () => null}});
+    pointer('pointerdown', 100);
+    pointer('pointermove', 98);
+    assert.equal(list.children[2], last, 'a few pixels are not a drag');
+    pointer('pointermove', 10);
+    assert.equal(list.children[0], last, 'the row moves among the others while dragged');
+    pointer('pointerup', 10);
+    await new Promise((done) => setImmediate(done));
+    assert.deepEqual(moves.at(-1), ['local', 0]);
+    assert.deepEqual(order.map((d) => d.id), ['local', 'ai-context', 'ai-word']);
+});
+
 test('settings render and GPU toggle work while OCR status is pending', async () => {
     const fixture = await settingsFixture();
     const {view, root, settings, languages, status, initialization} = fixture;

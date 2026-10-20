@@ -1,5 +1,5 @@
-// Dictionaries tab: the pop-up order on the left (drag to reorder, switch to enable) and the selected
-// dictionary's details on the right. The built-in AI dictionaries carry the BYOK provider settings.
+// Dictionaries tab: the pop-up order on the left (drag a row or press Alt+↑/↓ to reorder, switch to
+// enable) and the selected dictionary's details on the right. The built-in AI dictionaries carry the BYOK provider settings.
 
 import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
@@ -13,7 +13,10 @@ import {cardRow, el, languageOptions, select, textArea, textInput, toggle} from 
 
 let dicts = [];
 let selectedId = null;
-let dragId = null;
+/** The row to focus after the list is drawn again (keyboard reordering). */
+let focusId = null;
+/** Set by a drag that just ended, so its click does not count as choosing the row. */
+let dragEnded = false;
 
 const AI_NAMES = {'ai-word': 'IA — palavra no contexto', 'ai-context': 'Tradutor de contexto', 'ai-images': 'Imagens'};
 
@@ -66,6 +69,65 @@ function alertDetail(text) {
     document.getElementById('dict-detail').prepend(el('p', {class: 'error'}, text));
 }
 
+/**
+ * Where a dragged row lands: after every other row whose middle is above the pointer. `mids` are
+ * the rows' vertical middles as laid out when the drag began, `from` the dragged row's index.
+ */
+export function dropIndex(mids, y, from) {
+    let to = 0;
+    mids.forEach((mid, i) => { if (i !== from && y > mid) { to++; } });
+    return to;
+}
+
+async function moveDictionary(id, to) {
+    if (to < 0 || to >= dicts.length || dicts.findIndex((d) => d.id === id) === to) { return; }
+    dicts = await api.updateDictionary(id, {moveTo: to});
+    renderList();
+}
+
+/**
+ * Reordering by dragging a row. It uses pointer events, not HTML drag and drop. Tauri's native
+ * file drop handler (on by default) keeps WebView2 on Windows from delivering HTML drag events, and
+ * they are unreliable in WebKitGTK too; that is why the old draggable rows could not be moved.
+ */
+function sortable(list, li, id) {
+    let drag = null;
+    li.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0 || ev.target.closest?.('.switch')) { return; }
+        const rows = [...list.children];
+        drag = {pointer: ev.pointerId, y: ev.clientY, from: rows.indexOf(li), to: rows.indexOf(li), moving: false,
+            mids: rows.map((row) => { const r = row.getBoundingClientRect(); return r.top + r.height / 2; })};
+    });
+    li.addEventListener('pointermove', (ev) => {
+        if (!drag || ev.pointerId !== drag.pointer) { return; }
+        if (!drag.moving) {
+            if (Math.abs(ev.clientY - drag.y) < 5) { return; }
+            drag.moving = true;
+            li.setPointerCapture?.(ev.pointerId);
+            li.classList.add('dragging');
+        }
+        const to = dropIndex(drag.mids, ev.clientY, drag.from);
+        if (to === drag.to) { return; }
+        drag.to = to;
+        // The row moves among the others while it is dragged, and the numbers follow.
+        const others = [...list.children].filter((row) => row !== li);
+        list.insertBefore(li, others[to] || null);
+        [...list.children].forEach((row, i) => { const num = row.querySelector('.num'); if (num) { num.textContent = String(i + 1); } });
+    });
+    const end = (ev) => {
+        if (!drag || ev.pointerId !== drag.pointer) { return; }
+        const {moving, from, to} = drag;
+        drag = null;
+        if (!moving) { return; }
+        li.classList.remove('dragging');
+        dragEnded = true;
+        setTimeout(() => { dragEnded = false; }, 0);
+        if (ev.type === 'pointerup' && to !== from) { void moveDictionary(id, to).catch((e) => { alertDetail(String(e)); renderList(); }); } else { renderList(); }
+    };
+    li.addEventListener('pointerup', end);
+    li.addEventListener('pointercancel', end);
+}
+
 function renderList() {
     const list = document.getElementById('dict-list');
     list.replaceChildren();
@@ -73,25 +135,27 @@ function renderList() {
     dicts.forEach((d, i) => {
         const sw = toggle(d.enabled, async (v) => { dicts = await api.updateDictionary(d.id, {enabled: v}); renderList(); }, {on: '', off: ''});
         sw.addEventListener('click', (ev) => ev.stopPropagation());
-        const li = el('li', {class: d.id === selectedId ? 'sel' : '', draggable: 'true'},
+        const li = el('li', {class: d.id === selectedId ? 'sel' : '', tabindex: '0', title: 'Arraste para mudar a ordem no popup (ou Alt+↑/↓)'},
+            el('span', {class: 'grip', html: icon('drag', 'sm')}),
             el('span', {class: 'num'}, String(i + 1)),
             d.kind !== 'mdict' ? el('span', {class: 'faint', html: icon('cloud', 'sm')}) : null,
             el('span', {class: 'name'}, displayName(d)),
             d.error ? el('span', {class: 'err', title: d.error, html: icon('alert', 'sm')}) : null,
             sw);
-        li.addEventListener('click', () => { selectedId = d.id; renderList(); });
-        li.addEventListener('dragstart', (ev) => { dragId = d.id; ev.dataTransfer.effectAllowed = 'move'; });
-        li.addEventListener('dragover', (ev) => { ev.preventDefault(); li.classList.add('drag-over'); });
-        li.addEventListener('dragleave', () => li.classList.remove('drag-over'));
-        li.addEventListener('drop', async (ev) => {
-            ev.preventDefault();
-            li.classList.remove('drag-over');
-            if (dragId && dragId !== d.id) {
-                dicts = await api.updateDictionary(dragId, {moveTo: i});
-                renderList();
-            }
+        li.addEventListener('click', () => {
+            if (dragEnded) { return; }
+            selectedId = d.id;
+            renderList();
         });
+        li.addEventListener('keydown', (ev) => {
+            if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown')) { return; }
+            ev.preventDefault?.();
+            focusId = d.id;
+            void moveDictionary(d.id, i + (ev.key === 'ArrowUp' ? -1 : 1));
+        });
+        sortable(list, li, d.id);
         list.append(li);
+        if (d.id === focusId) { focusId = null; li.focus?.(); }
     });
     renderDetail();
 }

@@ -37,7 +37,13 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .dict-list li:hover { background: var(--surface-2); }
 .dict-list li.sel { background: var(--surface-2); }
 .dict-list li.sel::before { content: ""; position: absolute; left: 0; top: 30%; height: 40%; width: 3px; border-radius: 2px; background: var(--accent); }
-.dict-list li.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+.dict-list { user-select: none; }
+.dict-list li { touch-action: none; }
+.dict-list li:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The row being dragged to a new place in the pop-up order. */
+.dict-list li.dragging { background: var(--surface-3); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); cursor: grabbing; z-index: 1; }
+.dict-list .grip { display: inline-flex; color: var(--faint); cursor: grab; margin-right: -4px; }
+.dict-list li:hover .grip { color: var(--muted); }
 .dict-list .num { width: 16px; color: var(--muted); font-size: 13px; text-align: right; }
 .dict-list .name { flex: 1; min-width: 0; }
 .dict-list .err { color: var(--danger); display: inline-flex; }
