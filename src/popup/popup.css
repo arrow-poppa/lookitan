@@ -183,8 +183,10 @@ details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px
 .saved-foot .spacer { flex: 1; }
 .saved-foot button { font-size: 12px; min-height: 26px; padding: 2px 8px; gap: 5px; color: var(--muted); }
 
-/* "Imagem AI": "Gerar imagem AI" and "Gerar mais imagens AI" open a menu of prompts. */
-.gen-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 10px; }
+/* "Imagem AI": "Gerar imagem AI:" and a button per prompt, like the audio buttons. */
+.gen-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0 10px; }
 .gen-row .explain-btn { margin: 0; }
-.prompt-menu button.on { color: var(--accent); }
+.img-foot .gen-row { margin: 0; justify-content: flex-end; }
+.gen-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); margin-right: 2px; }
+.gen-prompt.on { color: var(--text); border-color: var(--accent); }
 .img-foot .spacer { flex: 1; }

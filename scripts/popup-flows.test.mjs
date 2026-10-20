@@ -718,6 +718,10 @@ test('the Anki notes counter queries the note type\'s first field, and nothing w
     assert.equal(other.nodes.get('btn-anki-notes').hidden, true);
 });
 
+// The "Imagem AI" buttons are made one by one: the newest are the last children of their row.
+const clickGen = (body, i = -1) => body.querySelector('.gen-row').children.at(i).listeners.click();
+const clickMore = (body, i = -1) => body.querySelector('.gen-more').children.at(i).listeners.click();
+
 async function imageGenFixture({configured = true, imageStore = {}, blobs = false} = {}) {
     const made = [];
     let n = 0;
@@ -748,15 +752,15 @@ test('"Imagem AI" makes its pictures on a click, adds more, and sends the checke
     const {view, made, show, settle} = await imageGenFixture();
     const {sectionNode, body} = await show();
     assert(sectionNode.innerHTML.includes('Imagem AI'));
-    assert(body.innerHTML.includes('Gerar 2 imagens AI'), 'like Explicar, nothing is made before the click');
+    assert.equal(body.querySelector('.gen-row').children.at(-1).innerHTML, 'sparkleGerar 2 imagens AI', 'like Explicar, nothing is made before the click');
     await settle();
     assert.equal(made.length, 0);
-    body.querySelector('.gen-btn').listeners.click();
+    clickGen(body);
     await settle();
     assert.deepEqual(made, [{prompt: 'draw corre', count: 2}], 'the prompt is filled, and the count chosen is sent');
     assert(body.innerHTML.includes('https://gen.example/1.png') && body.innerHTML.includes('https://gen.example/2.png'));
     assert(body.innerHTML.includes('img-check'), 'each picture has its check mark');
-    body.querySelector('.img-more').listeners.click();
+    clickMore(body);
     await settle();
     assert.equal(made.length, 2);
     assert(body.innerHTML.includes('https://gen.example/1.png') && body.innerHTML.includes('https://gen.example/4.png'), 'more pictures join the first ones');
@@ -771,12 +775,12 @@ test('"Imagem AI" makes its pictures on a click, adds more, and sends the checke
 test('"Imagem AI" shows pictures already made for the word at once, and the refresh button makes a new set', async () => {
     const {made, show, settle} = await imageGenFixture();
     const first = await show();
-    first.body.querySelector('.gen-btn').listeners.click();
+    clickGen(first.body);
     await settle();
     const again = await show();
     await settle();
     assert.equal(made.length, 1, 'nothing is paid for twice');
-    assert(again.body.innerHTML.includes('https://gen.example/2.png') && !again.body.innerHTML.includes('Gerar 2 imagens AI'));
+    assert(again.body.innerHTML.includes('https://gen.example/2.png'));
     const [refresh] = again.sectionNode.querySelector('.sec-head').children;
     refresh.listeners.click();
     await settle();
@@ -804,7 +808,7 @@ test('"Imagem AI" pictures made before the app was closed come back from disk, w
     };
     const before = await imageGenFixture({imageStore, blobs: true});
     const first = await before.show();
-    first.body.querySelector('.gen-btn').listeners.click();
+    clickGen(first.body);
     await before.settle();
     assert.equal(disk.size, 1, 'the pictures are saved');
     assert.equal(JSON.stringify([...disk.values()][0].map((p) => p.title)), JSON.stringify(['test', 'test']), 'each picture keeps its model name');
@@ -838,40 +842,37 @@ test('a saved card opens whole in the pop-up, as the Palavras tab shows it', asy
     }
 });
 
-test('"Imagem AI": the button asks which prompt to use, and the pictures of every prompt join in one strip', async () => {
+test('"Imagem AI": a button per prompt, as the audio buttons, and the pictures of every prompt join in one strip', async () => {
     const {view, made, show, settle} = await imageGenFixture();
     Object.assign(view.ai, {imageGenPrompts: [{id: 'a', name: 'Ação', prompt: 'act {{target}}'}, {id: 'b', name: 'Objeto', prompt: 'thing {{target}}'}], imageGenPromptId: 'a'});
     const {body} = await show();
-    assert(body.innerHTML.includes('Gerar 2 imagens AI'), 'the button says the pictures are made by AI');
-    const card = view.document.getElementById('card');
-    const menu = () => card.children.at(-1);
-    body.querySelector('.gen-btn').listeners.click();
-    assert.equal(made.length, 0, 'a click only opens the menu');
-    assert.equal(menu().className, 'audio-menu prompt-menu');
-    assert.equal(JSON.stringify(menu().children.map((b) => b.innerHTML.replace(/^(check|sparkle)/, ''))), JSON.stringify(['Ação', 'Objeto']), 'it lists the prompts');
-    assert(menu().children[0].className.includes('on'), 'the prompt used last is marked');
-    menu().children[0].listeners.click();
+    const row = body.querySelector('.gen-row').children;
+    assert.equal(row[0].innerHTML, 'sparkleGerar 2 imagens AI:', 'it says the pictures are made by AI');
+    assert.equal(JSON.stringify(row.slice(1).map((b) => b.innerHTML)), JSON.stringify(['Ação', 'Objeto']), 'one button per prompt');
+    assert(row[1].className.includes('audio-chip') && row[1].className.includes(' on'), 'the look of the audio buttons, the prompt used last highlighted');
+    assert.equal(made.length, 0);
+    clickGen(body, 1);
     await settle();
-    assert.equal(made[0].prompt, 'act corre', 'choosing a prompt makes the pictures at once');
+    assert.equal(made[0].prompt, 'act corre', 'a click makes the pictures with that prompt');
     assert.equal(view.calls.saved, undefined, 'the same prompt again saves nothing');
-    assert(body.innerHTML.includes('Gerar mais imagens AI'));
-    body.querySelector('.img-more').listeners.click();
-    menu().children[1].listeners.click();
+    const more = body.querySelector('.gen-more').children;
+    assert.equal(more[0].innerHTML, 'plusGerar mais 2 imagens AI:');
+    clickMore(body, -1);
     await settle();
     assert.equal(made[1].prompt, 'thing corre');
     assert.equal(view.ai.imageGenPromptId, 'b');
-    assert.equal(view.calls.saved.ai.imageGenPromptId, 'b', 'the choice is kept for the next lookups');
+    assert.equal(view.calls.saved.ai.imageGenPromptId, 'b', 'the prompt used is kept for the next lookups');
     assert.equal(view.calls.saved.ai.imageMemeMode, false, 'and nothing else changes');
     const items = view.popup.stateForTest().generated.items;
     assert.equal(JSON.stringify(items.map((i) => i.title)), JSON.stringify(['Ação · test', 'Ação · test', 'Objeto · test', 'Objeto · test']),
         'the new pictures join the first ones, each saying which prompt made it');
 });
 
-test('"Imagem AI" with a single prompt makes the pictures on the first click, with no menu', async () => {
+test('"Imagem AI" with a single prompt has just the one button', async () => {
     const {view, made, show, settle} = await imageGenFixture();
     Object.assign(view.ai, {imageGenPrompts: [{id: 'a', name: 'Ação', prompt: 'act {{target}}'}], imageGenPromptId: 'a'});
     const {body} = await show();
-    body.querySelector('.gen-btn').listeners.click();
+    clickGen(body);
     await settle();
     assert.equal(made[0].prompt, 'act corre');
 });

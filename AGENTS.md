@@ -225,6 +225,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-20 (Claude, `image-prompts`): the prompts are buttons, one per prompt, like the audio buttons ("Gerar imagem AI:" then each name; `promptButtons`), instead of the menu. The user then asked to drop "Imagem AI" from `tests`; this state is kept in `image-ai-backup`.
 - 2026-10-20 (Claude, `image-prompts`): the prompt is chosen from a menu that "Gerar imagem AI" opens, instead of a selector beside it, as the user asked. The pop-up's buttons say "imagem AI".
 - 2026-10-20 (Claude, `image-prompts`): several named "Imagem AI" prompts, with a selector in the pop-up, at the user's request, on a branch of its own to test.
   - Three examples to start with.

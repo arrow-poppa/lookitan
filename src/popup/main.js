@@ -787,48 +787,43 @@ function generationKey(payload) {
 const imageGenPrompts = () => (Array.isArray(ai.imageGenPrompts) ? ai.imageGenPrompts : []);
 
 /**
- * "Gerar imagem AI" and "Gerar mais imagens AI" ask which prompt to use: a menu under the button lists them,
- * the one used last marked, and choosing one makes the pictures at once. With a single prompt
- * there is nothing to ask. The choice is kept for the next lookups and for automatic pictures.
+ * One button per prompt, as the audio buttons: "Gerar imagem AI:" (or "Gerar mais imagens AI:")
+ * and then each prompt's name, the one used last highlighted. A click makes the pictures with
+ * that prompt at once. With a single prompt there is just the one button. The prompt used is kept
+ * for the next lookups and for automatic pictures.
+ * @param {'show'|'more'} mode
  */
-function pickPrompt(button, make) {
-    closeAudioMenu();
+function promptButtons(row, body, label, mode) {
     const list = imageGenPrompts();
-    if (list.length < 2) { make(); return; }
+    const make = (p) => {
+        if (p && ai.imageGenPromptId !== p.id) {
+            ai.imageGenPromptId = p.id;
+            void saveImageGenPrompt(p.id);
+        }
+        void runImageGen(body, mode);
+    };
+    const button = (className, html, title, onClick) => {
+        const b = document.createElement('button');
+        b.className = className;
+        b.innerHTML = html;
+        if (title) { b.title = title; }
+        b.addEventListener('click', onClick);
+        row.append(b);
+        return b;
+    };
+    if (list.length < 2) {
+        button(mode === 'more' ? 'ghost img-more gen-btn' : 'ghost explain-btn gen-btn', `${icon(mode === 'more' ? 'plus' : 'sparkle', 'sm')}${escapeHtml(label)}`, '', () => make(list[0]));
+        return;
+    }
+    const head = document.createElement('span');
+    head.className = 'gen-label';
+    head.innerHTML = `${icon(mode === 'more' ? 'plus' : 'sparkle', 'sm')}${escapeHtml(label)}:`;
+    row.append(head);
     const last = chosenImageGenPrompt(ai).id;
-    const menu = document.createElement('div');
-    // The audio menu's look, and its closing: a click elsewhere, a new lookup.
-    menu.className = 'audio-menu prompt-menu';
-    menu.setAttribute('role', 'menu');
     for (const p of list) {
-        const item = document.createElement('button');
-        item.className = `ghost${p.id === last ? ' on' : ''}`;
-        item.setAttribute('role', 'menuitem');
-        item.title = p.prompt;
-        item.innerHTML = `${icon(p.id === last ? 'check' : 'sparkle', 'sm')}${escapeHtml(p.name)}`;
-        item.addEventListener('click', (ev) => {
-            ev?.stopPropagation?.();
-            closeAudioMenu();
-            if (ai.imageGenPromptId !== p.id) {
-                ai.imageGenPromptId = p.id;
-                void saveImageGenPrompt(p.id);
-            }
-            make();
-        });
-        menu.append(item);
+        button(`ghost audio-chip gen-prompt${p.id === last ? ' on' : ''}`, escapeHtml(p.name), p.prompt, () => make(p));
     }
-    const r = button.getBoundingClientRect?.();
-    const card = $('card').getBoundingClientRect?.();
-    if (r && card) {
-        menu.style.left = `${r.left - card.left}px`;
-        menu.style.top = `${r.bottom - card.top + 4}px`;
-    }
-    $('card').append(menu);
-    setTimeout(() => document.addEventListener('click', closeAudioMenu, {once: true}), 0);
 }
-
-/** The arrow after a button's label that says it opens the prompt menu. */
-const menuArrow = () => (imageGenPrompts().length > 1 ? icon('chevronDown', 'sm') : '');
 
 async function saveImageGenPrompt(id) {
     try {
@@ -839,16 +834,12 @@ async function saveImageGenPrompt(id) {
     } catch (e) { ankiStatus(`Configurações: ${e?.message || e}`, true); }
 }
 
-/** Before any picture: "Gerar imagem AI", which asks for the prompt. */
+/** Before any picture: "Gerar imagem AI" with a button per prompt. */
 function drawGenButton(body, error = '') {
     const count = imageGenCount(ai.imageGenCount);
     const label = error ? 'Tentar de novo' : count === 1 ? 'Gerar imagem AI' : `Gerar ${count} imagens AI`;
-    body.innerHTML = `${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}<div class="gen-row"><button class="ghost explain-btn gen-btn" aria-haspopup="${imageGenPrompts().length > 1 ? 'menu' : 'false'}">${icon('sparkle', 'sm')}${label}${menuArrow()}</button></div>`;
-    const button = body.querySelector('.gen-btn');
-    button?.addEventListener('click', (ev) => {
-        ev?.stopPropagation?.();
-        pickPrompt(button, () => void runImageGen(body, error ? 'more' : 'show'));
-    });
+    body.innerHTML = `${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}<div class="gen-row"></div>`;
+    promptButtons(body.querySelector('.gen-row'), body, label, error ? 'more' : 'show');
 }
 
 /** Lets a set of pictures go from memory: its addresses stop working, its files stay with any lookup that checked them. */
@@ -927,19 +918,15 @@ function drawGenerated(body, lookup, entry, loading) {
     const gallery = lookup.generated;
     const count = imageGenCount(ai.imageGenCount);
     const error = entry.error ? `<p class="error">${escapeHtml(entry.error)}</p>` : '';
-    const more = entry.items.length > 0 && !loading
-        ? `<button class="ghost img-more" title="Faz mais ${count === 1 ? 'uma imagem' : `${count} imagens`} e junta às de cima">${icon('plus', 'sm')}Gerar mais imagens AI${menuArrow()}</button>` : '';
-    const foot = `<div class="img-foot"><span class="spacer"></span>${more}</div>`;
+    const more = entry.items.length > 0 && !loading;
+    const foot = `<div class="img-foot"><span class="spacer"></span>${more ? '<div class="gen-row gen-more"></div>' : ''}</div>`;
     if (entry.items.length === 0 && !loading) {
         drawGenButton(body, entry.error || 'Nenhuma imagem foi gerada.');
         return;
     }
     drawStrip(body, lookup, gallery, {foot: `${error}${foot}`, loading});
-    const moreButton = body.querySelector('.img-more');
-    moreButton?.addEventListener('click', (ev) => {
-        ev?.stopPropagation?.();
-        pickPrompt(moreButton, () => void runImageGen(body, 'more'));
-    });
+    // More pictures join the strip: "Gerar mais imagens AI" with the same buttons.
+    if (more) { promptButtons(body.querySelector('.gen-more'), body, count === 1 ? 'Gerar mais imagens AI' : `Gerar mais ${count} imagens AI`, 'more'); }
 }
 
 /** Pictures already made for this word (in memory or on disk) replace the button at once. */
