@@ -161,6 +161,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
     - OpenAI: `/v1/images/generations`. gpt-image-* sends `n` in one request; DALL·E 3 sends one request per picture, with `response_format: b64_json`.
     - Gemini: `:generateContent` with `responseModalities: [TEXT, IMAGE]` and `imageConfig.aspectRatio`, one request per picture, with the key in `x-goog-api-key`. A model name ending in `-vertex` goes to Vertex AI Express with `?key=`. `imagen-*` models use `:predict` with `sampleCount`.
     - Personalizado: an endpoint ending in `/images/generations` gets the OpenAI Images body (xAI and the like). Any other endpoint gets a chat request with `modalities: [image, text]` (OpenRouter), one per picture, and the answer's `message.images`. That chat request also takes the text requests' thinking and routing options, through the same `CustomProvider` methods: `_applyReasoningOptions` gives `reasoning` on OpenRouter, else `thinking`/`reasoning_effort`, and `_applyOpenRouterProviderOptions` gives `provider`. Its "JSON extra" is merged last.
+  - A text model asked for a picture (OpenRouter: "No endpoints found that support the requested output modalities"; Gemini: response modalities) gets a plain error naming image models (`noPictureReason`). A chat answer with text and no picture says the model answered with text only. The user had tried a Gemini Flash-Lite model.
+  - "Qualidade" shows only with OpenAI, inside the provider block: no other provider takes it.
   - Results: requests that fail are skipped while another one gives a picture. With none, the error is shown with a "Tentar de novo" button (the server's message, Gemini's block reason or the model's text).
   - Pop-up: switched on but not set up, the section says what is missing (`imageGenMissing`: key, endpoint for Personalizado, image model, or a provider that makes pictures) and makes nothing. It used to be hidden, which looked like a bug to the user, whose OpenRouter block had no model. It has a "Gerar imagem" / "Gerar N imagens" button and reuses the "Imagens" strip and viewer: `drawStrip` and the viewer take a gallery, `lookup.images` or `lookup.generated`.
     - Base64 pictures become blobs shown through object URLs, and `downloadImage` reads `item.blob` without fetching.
@@ -215,6 +217,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-20 (Claude, `tests`): "Imagem AI" explains a text model asked for a picture, and shows "Qualidade" only with OpenAI.
 - 2026-10-20 (Claude, `tests`): the pop-up's buttons say "Gerar imagem AI" and "Gerar mais imagens AI", as the user asked.
 - 2026-10-20 (Claude, `tests`): the generated pictures dictionary is shown as "Imagem AI" (it was "Imagens IA"), the name the user asked for, so it is not confused with "Imagens".
 - 2026-10-20 (Claude, `tests`): "Imagem AI" no longer disappears when it is not set up: it says what is missing. The first copy of an OpenRouter card gets `google/gemini-2.5-flash-image` and none of the text routing.

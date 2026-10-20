@@ -256,6 +256,7 @@ test('"Imagem AI" has its own prompt, count and image provider, without DeepSeek
     assert.equal(fixture.ai.imageGenCount, 3);
     fixture.change('sectionProviders.ai-image-gen.provider', 'custom');
     assert(fixture.control('sectionProviders.ai-image-gen.custom.endpoint'), 'a custom provider shows its endpoint');
+    assert(!fixture.control('imageGenQuality'), 'only OpenAI has a quality');
     for (const key of ['thinkingMode', 'thinkingIntensity', 'customThinkingIntensity', 'providerRoutingMode', 'providerSlugs', 'providerAllowFallbacks', 'requestBodyJson']) {
         assert(fixture.control(`sectionProviders.ai-image-gen.custom.${key}`), `the custom image provider has ${key}, as the text one`);
     }
