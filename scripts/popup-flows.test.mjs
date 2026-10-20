@@ -62,6 +62,9 @@ async function fixture({explain = async () => '', ready = true, connection = {},
             glossaryDictionaryNames: () => [],
             isFormatReady: () => typeof ready === 'function' ? ready() : ready,
             buildNote: async (ctx) => { calls.notes.push(ctx); return {fields: {Word: ctx.word}, options: {}}; },
+            // As notes.js does: the note type's fields first, in its order (tested in images.test.mjs).
+            orderNoteFields: (note, names) => (names?.length ? {...note, fields: Object.fromEntries([
+                ...names.map((n) => [n, note.fields[n] ?? '']), ...Object.entries(note.fields).filter(([n]) => !names.includes(n))])} : note),
         },
         [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }},
         [file('src/lib/icons.js')]: {hydrateIcons() {}, icon: (name) => name},
@@ -640,7 +643,7 @@ test('a counter beside the bookmark shows how many cards of the word were saved,
 
 test('a counter beside the Anki button shows the notes of the word in Anki, and opens them in Anki', async () => {
     const browsed = [];
-    const connection = {findNoteIds: async () => [[11, 12]], guiBrowseNotes: async (ids) => { browsed.push(ids); }};
+    const connection = {getModelFieldNames: async () => ['Word'], findNoteIds: async () => [[11, 12]], guiBrowseNotes: async (ids) => { browsed.push(ids); }};
     const view = await fixture({connection});
     Object.assign(view.options, {enable: true, checkForDuplicates: true});
     await view.popup.refreshAnkiNotes(view.lookup, view.options);
@@ -657,7 +660,7 @@ test('a counter beside the Anki button shows the notes of the word in Anki, and 
 
 test('the Anki notes counter does not wait for the AI card and searches every form of the word', async () => {
     const queried = [];
-    const connection = {findNoteIds: async (notes) => {
+    const connection = {getModelFieldNames: async () => ['Word'], findNoteIds: async (notes) => {
         queried.push(notes.map((n) => n.fields.Word));
         return notes.map((n) => (n.fields.Word === 'run' ? [7] : []));
     }};
@@ -676,7 +679,7 @@ test('the Anki notes counter does not wait for the AI card and searches every fo
 test('a slow, older Anki notes check cannot overwrite a newer one', async () => {
     const slow = deferred();
     let calls = 0;
-    const connection = {findNoteIds: async () => { calls++; return calls === 1 ? slow.promise : [[5]]; }};
+    const connection = {getModelFieldNames: async () => ['Word'], findNoteIds: async () => { calls++; return calls === 1 ? slow.promise : [[5]]; }};
     const view = await fixture({connection});
     Object.assign(view.options, {enable: true, checkForDuplicates: true});
     const first = view.popup.refreshAnkiNotes(view.lookup, view.options);
@@ -702,4 +705,27 @@ test('{sentence-audio} reads only the sentence, with the Edge voice of the conte
     await ctx.sentenceAudio();
     const last = view.calls.invokes.filter(([command]) => command === 'edge_tts_speak').at(-1);
     assert.equal(last[1].voice, '', 'with the system voice, the language default Edge voice');
+});
+
+test('the Anki notes counter queries the note type\'s first field, and nothing when it would be empty', async () => {
+    const queried = [];
+    let model = ['Word', 'Audio'];
+    let asked = 0;
+    const connection = {
+        getModelFieldNames: async () => { asked++; return model; },
+        findNoteIds: async (notes) => { queried.push(Object.keys(notes[0].fields)[0]); return [[3]]; },
+    };
+    const view = await fixture({connection});
+    Object.assign(view.options, {enable: true, checkForDuplicates: true, server: 'http://127.0.0.1:8765', cardFormats: [{model: 'Mine'}]});
+    await view.popup.refreshAnkiNotes(view.lookup, view.options);
+    assert.equal(queried[0], 'Word', 'the note type\'s first field, not the first key of the saved settings');
+    await view.popup.refreshAnkiNotes(view.lookup, view.options);
+    assert.equal(asked, 1, 'the note type\'s fields are asked once');
+    // A note type whose first field Lookitan leaves empty: an empty query would match every note.
+    model = ['Expression', 'Word'];
+    const other = await fixture({connection});
+    Object.assign(other.options, {enable: true, checkForDuplicates: true, server: 'http://127.0.0.1:8765', cardFormats: [{model: 'Other'}]});
+    await other.popup.refreshAnkiNotes(other.lookup, other.options);
+    assert.equal(queried.length, 2, 'not asked');
+    assert.equal(other.nodes.get('btn-anki-notes').hidden, true);
 });

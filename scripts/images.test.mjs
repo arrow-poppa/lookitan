@@ -280,3 +280,28 @@ test('{sentence-audio} stores the sentence read aloud as an Anki sound file, onl
     assert.equal(notes.suggestMarker('Audio', 3), '{audio}');
     assert.equal(notes.suggestMarker('Sentence', 3), '{sentence}');
 });
+
+test('orderNoteFields puts the fields in the note type\'s order, its first field first', async () => {
+    const context = createContext({AbortController, setTimeout, clearTimeout});
+    const modules = new Map();
+    async function load(id) {
+        if (!modules.has(id)) {
+            modules.set(id, (async () => (id === '@tauri-apps/plugin-http' ? new SyntheticModule(['fetch'], function () {
+                this.setExport('fetch', async () => { throw new Error('unused'); });
+            }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8'), {context, identifier: id})))());
+        }
+        return modules.get(id);
+    }
+    const module = await load(resolve(project, 'src/lib/anki/notes.js'));
+    await module.link((specifier, owner) => load(specifier.startsWith('.') ? resolve(owner.identifier, '..', specifier) : specifier));
+    await module.evaluate();
+    const {orderNoteFields} = module.namespace;
+    // Sorted keys, as the settings come back from the app.
+    const note = {deckName: 'D', fields: {Audio: '', Gone: 'x', Meaning: 'm', Word: 'cat'}};
+    const ordered = orderNoteFields(note, ['Word', 'Meaning', 'Audio', 'Picture']);
+    assert.equal(JSON.stringify(Object.keys(ordered.fields)), JSON.stringify(['Word', 'Meaning', 'Audio', 'Picture', 'Gone']));
+    assert.equal(ordered.fields.Word, 'cat');
+    assert.equal(ordered.fields.Picture, '', 'a field without a marker is empty');
+    assert.equal(ordered.deckName, 'D');
+    assert.equal(orderNoteFields(note, []), note, 'no field list: unchanged');
+});

@@ -118,6 +118,21 @@ export function fieldValue(field) {
     return field && typeof field.value === 'string' ? field.value : '';
 }
 
+/**
+ * The note with its fields in the order of its Anki note type, the model's first field first.
+ * AnkiConnect's duplicate search (findNoteIds) queries the note's first field, as Anki does. The
+ * settings come back from the app with their object keys sorted (serde_json without
+ * preserve_order), so the saved field map's first key is the alphabetically first field ("Audio"),
+ * not the note type's first one. A field the note type no longer has goes last.
+ */
+export function orderNoteFields(note, fieldNames) {
+    if (!Array.isArray(fieldNames) || fieldNames.length === 0) { return note; }
+    const fields = {};
+    for (const name of fieldNames) { fields[name] = Object.hasOwn(note.fields, name) ? note.fields[name] : ''; }
+    for (const [name, value] of Object.entries(note.fields)) { if (!Object.hasOwn(fields, name)) { fields[name] = value; } }
+    return {...note, fields};
+}
+
 export function createConnection(anki) {
     const conn = new AnkiConnect();
     conn.server = anki.server;
