@@ -121,3 +121,17 @@ test('the prompt, count and provider block of "Imagens IA"', () => {
     assert.equal(saved.sectionProviders['ai-image-gen'].gemini.model, 'imagen-4.0-generate-001');
     assert(!isImageGenConfigured({provider: 'custom', custom: {apiKey: 'k', model: 'm', endpoint: ''}}), 'a custom provider needs its endpoint');
 });
+
+test('a picture answered only as an address is fetched once, so it can be kept; one that cannot be read keeps its address', async () => {
+    const request = async (url, init) => {
+        if (init.method === 'POST') {
+            return {ok: true, status: 200, text: async () => JSON.stringify({data: [{url: 'https://cdn.example/a.png'}, {url: 'https://cdn.example/gone.png'}]})};
+        }
+        const ok = url.endsWith('a.png');
+        return {ok, status: ok ? 200 : 404, headers: {get: () => (ok ? 'image/png' : 'text/html')}, arrayBuffer: async () => Buffer.from('fake-png')};
+    };
+    const pictures = await generateImages(options('custom', {model: 'grok-2-image', endpoint: 'https://api.x.ai/v1/images/generations'}), 'a', {count: 2, fetch: request});
+    assert.equal(pictures[0].blob.type, 'image/png');
+    assert.equal(Buffer.from(await pictures[0].blob.arrayBuffer()).toString(), 'fake-png');
+    assert.deepEqual(pictures[1], {url: 'https://cdn.example/gone.png'});
+});
