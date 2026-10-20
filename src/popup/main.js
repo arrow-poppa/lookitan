@@ -817,12 +817,183 @@ async function saveWord(lookup = state, lookupSettings = settings) {
     const saved = await api.saveWord(card);
     lookup.savedId = saved.id;
     if (state === lookup) { setSaveIcon(true); }
+    await refreshSavedCount(lookup);
 }
 
 function setSaveIcon(saved) {
     $('btn-save').innerHTML = icon(saved ? 'bookmarkFilled' : 'bookmark');
     $('btn-save').classList.toggle('on', saved);
     $('btn-save').title = saved ? 'Palavra salva' : 'Salvar palavra';
+}
+
+// ------------------------------------------------------------------ trackers: saved cards and Anki notes
+
+// Two counters beside the bookmark and Anki buttons, like Yomitan's "view added note" button and
+// Lookupper's bookmark that changes colour: how many cards of this word were saved in the app (a
+// click shows them in the pop-up), and how many Anki notes it has (a click opens Anki's browser).
+
+/** The forms of this lookup's word: as found, the first entry's headword and the AI card's. */
+function wordFormList(lookup) {
+    const p = lookup.payload;
+    const seen = new Set();
+    return [p.word, p.entries?.[0]?.headword, lookup.aiCard?.headword].map((w) => String(w || '').trim())
+        .filter((w) => w && !seen.has(w.toLowerCase()) && seen.add(w.toLowerCase()));
+}
+
+/** The forms a saved card may have used for this lookup's word, lower-cased. */
+function wordForms(lookup) {
+    return new Set(wordFormList(lookup).map((w) => w.toLowerCase()));
+}
+
+/** The saved cards of this lookup's word (by the word as found or its dictionary form), newest first. */
+async function savedCardsOf(lookup) {
+    const forms = wordForms(lookup);
+    const all = await api.listWords().catch(() => []);
+    return (all || [])
+        .filter((c) => forms.has(String(c.word || '').trim().toLowerCase()) || forms.has(String(c.dictionaryForm || '').trim().toLowerCase()))
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+function setCount(button, n, iconName, title) {
+    button.hidden = !n;
+    if (!n) { return; }
+    button.innerHTML = `${icon(iconName, 'sm')}<span class="n">${n > 99 ? '99+' : n}</span>`;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+}
+
+async function refreshSavedCount(lookup = state) {
+    if (!lookup?.payload.word) { setCount($('btn-saved'), 0); return; }
+    const check = (lookup.savedCheck || 0) + 1;
+    lookup.savedCheck = check;
+    const cards = await savedCardsOf(lookup);
+    if (state !== lookup || lookup.savedCheck !== check) { return; }
+    lookup.savedCards = cards;
+    const n = cards.length;
+    setCount($('btn-saved'), n, 'bookmarkFilled',
+        `Salva ${n === 1 ? '1 vez' : `${n} vezes${n > 1 ? ' em contextos diferentes' : ''}`} — clique para ver`);
+}
+
+/**
+ * The Anki notes of this word: one duplicate-check query per form of the word (as found, the
+ * dictionary's headword, the AI card's once it is there), so the counter does not wait for the AI
+ * and finds notes made from another form. Only the newest check of a lookup is shown.
+ */
+async function refreshAnkiNotes(lookup = state, options = anki) {
+    const button = $('btn-anki-notes');
+    if (!options.enable || !options.checkForDuplicates || !isFormatReady(options) || !lookup?.payload.word) { setCount(button, 0); return; }
+    const check = (lookup.ankiNotesCheck || 0) + 1;
+    lookup.ankiNotesCheck = check;
+    const latest = () => state === lookup && lookup.ankiNotesCheck === check;
+    try {
+        const conn = createConnection(options);
+        const base = noteContext(lookup, options);
+        const notes = await Promise.all(wordFormList(lookup).map((form) => buildNote({...base, word: form, headword: form}, options, null)));
+        const found = await conn.findNoteIds(notes);
+        if (!latest()) { return; }
+        const ids = [...new Set([...(found || []).flat(), ...(lookup.ankiNoteId ? [lookup.ankiNoteId] : [])])];
+        lookup.ankiNotes = ids;
+        const n = ids.length;
+        setCount(button, n, 'cards', `${n === 1 ? '1 nota' : `${n} notas`} desta palavra no Anki — clique para abrir no Anki`);
+    } catch (_e) {
+        // AnkiConnect not running: no counter, as with the "+" button.
+        if (latest()) { setCount(button, 0); }
+    }
+}
+
+async function openAnkiNotes() {
+    const lookup = state;
+    if (!lookup?.ankiNotes?.length) { return; }
+    try { await createConnection(anki).guiBrowseNotes(lookup.ankiNotes); }
+    catch (e) { if (state === lookup) { ankiStatus(`Anki: ${e?.message || e}`, true); } }
+}
+
+// The saved cards open over the pop-up, like the enlarged picture; Esc or X closes them.
+let savedView = null;
+
+async function openSavedCards() {
+    const lookup = state;
+    if (!lookup) { return; }
+    closeViewer();
+    closeSavedCards();
+    const box = document.createElement('div');
+    box.className = 'saved-view';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Cards salvos desta palavra');
+    $('card').append(box);
+    savedView = {box, lookup};
+    await drawSavedCards();
+}
+
+async function drawSavedCards() {
+    if (!savedView) { return; }
+    const {box, lookup} = savedView;
+    const cards = await savedCardsOf(lookup);
+    if (savedView?.box !== box) { return; }
+    lookup.savedCards = cards;
+    const word = lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word;
+    const date = (ms) => (ms ? new Date(ms).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'}) : '');
+    box.innerHTML = `
+        <div class="saved-bar">
+            <strong>${escapeHtml(word)}</strong><span class="muted">${cards.length === 1 ? '1 card salvo' : `${cards.length} cards salvos`}</span>
+            <span class="spacer"></span>
+            <button class="ghost icon saved-close" title="Fechar (Esc)" aria-label="Fechar">${icon('close')}</button>
+        </div>
+        <div class="saved-list">${cards.length ? cards.map((c, i) => `
+            <article class="saved-card${c.id === lookup.savedId ? ' current' : ''}" data-i="${i}">
+                <div class="saved-head">
+                    <span class="word">${escapeHtml(c.dictionaryForm || c.word)}</span>
+                    ${c.ipa ? `<span class="ipa">/${escapeHtml(c.ipa)}/</span>` : ''}
+                    ${c.cefr && /^[ABC][12]$/.test(c.cefr) ? `<span class="cefr ${c.cefr.toLowerCase()}">${c.cefr}</span>` : ''}
+                    ${c.id === lookup.savedId ? '<span class="chip">esta consulta</span>' : ''}
+                </div>
+                ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
+                ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
+                ${c.sentence ? `<blockquote>${markWord(c.sentence, c.word)}</blockquote>` : ''}
+                ${c.contextTranslation ? `<p class="ctx-tr">${highlightStars(c.contextTranslation)}</p>` : ''}
+                <div class="saved-shot" hidden></div>
+                <div class="saved-foot">
+                    <span class="muted">${escapeHtml([date(c.createdAt), c.windowTitle].filter(Boolean).join(' · '))}</span>
+                    <span class="spacer"></span>
+                    ${c.ankiNoteId ? `<button class="ghost saved-anki" title="Abrir esta nota no navegador do Anki">${icon('cards', 'sm')}Abrir no Anki</button>` : ''}
+                    <button class="ghost icon saved-delete" title="Excluir este card salvo" aria-label="Excluir este card salvo">${icon('trash', 'sm')}</button>
+                </div>
+            </article>`).join('') : '<p class="hint">Nenhum card salvo desta palavra.</p>'}
+        </div>`;
+    box.querySelector('.saved-close').addEventListener('click', () => closeSavedCards());
+    box.querySelectorAll('.saved-card').forEach((article) => {
+        const card = cards[Number(article.dataset.i)];
+        article.querySelector('.saved-anki')?.addEventListener('click', async () => {
+            try { await createConnection(anki).guiBrowseNote(card.ankiNoteId); }
+            catch (e) { ankiStatus(`Anki: ${e?.message || e}`, true); }
+        });
+        article.querySelector('.saved-delete')?.addEventListener('click', async () => {
+            await api.deleteWord(card.id);
+            if (card.id === lookup.savedId) {
+                lookup.savedId = null;
+                if (state === lookup) { setSaveIcon(false); }
+            }
+            await refreshSavedCount(lookup);
+            if (!lookup.savedCards?.length) { closeSavedCards(); return; }
+            await drawSavedCards();
+        });
+        if (card.image) {
+            void api.wordImage(card.image).then((data) => {
+                const shot = article.querySelector('.saved-shot');
+                if (!data || !shot) { return; }
+                shot.innerHTML = `<img src="data:image/png;base64,${data}" alt="Captura do contexto">`;
+                shot.hidden = false;
+            }, () => {});
+        }
+    });
+}
+
+/** Closes the saved cards; false when they were not open. */
+function closeSavedCards() {
+    if (!savedView) { return false; }
+    savedView.box.remove();
+    savedView = null;
+    return true;
 }
 
 function noteContext(lookup = state, options = anki) {
@@ -866,6 +1037,9 @@ function ankiStatus(message = '', error = false) {
 async function refreshAnkiButton() {
     const lookup = state;
     const options = anki;
+    // The counters follow the lookup: the AI card can change the word's dictionary form.
+    void refreshSavedCount(lookup);
+    void refreshAnkiNotes(lookup, options);
     if (!options.enable || !lookup?.payload.word) { setAnki('hidden'); ankiStatus(); return; }
     if (!isFormatReady(options)) {
         setAnki('configure', 'Configurar o Anki');
@@ -943,6 +1117,7 @@ async function onAnkiClick() {
         }
         lookup.ankiNoteId = id;
         if (state === lookup) { setAnki('added', 'Adicionada ao Anki — clique para abrir'); }
+        void refreshAnkiNotes(lookup, options);
         if (lookup.savedId) { void saveWord(lookup, lookupSettings); }
     } catch (e) {
         if (state === lookup) { setAnki('add', `Erro: ${e?.message || e}`); ankiStatus(`Anki: ${e?.message || e}`, true); }
@@ -974,6 +1149,7 @@ async function render(payload) {
         responses.cancelPendingExcept(keepRunning(keep));
     }
     closeViewer();
+    closeSavedCards();
     closeAudioMenu();
     stopAudio();
     $('sections').replaceChildren();
@@ -988,6 +1164,8 @@ async function render(payload) {
     $('meta').textContent = meta.join(' · ');
     setSaveIcon(false);
     setAnki('hidden');
+    setCount($('btn-saved'), 0);
+    setCount($('btn-anki-notes'), 0);
 
     if (payload.error) {
         $('sections').innerHTML = `<div class="empty"><strong>${escapeHtml(payload.error)}</strong>Aponte para uma palavra e use o atalho de novo.</div>`;
@@ -1123,6 +1301,7 @@ function closePopup() {
 void listen('popup-blank', (event) => {
     stopDictionaryAudio();
     closeViewer();
+    closeSavedCards();
     closeAudioMenu();
     stopAudio();
     if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
@@ -1149,14 +1328,16 @@ $('btn-pin').addEventListener('click', () => {
 });
 $('btn-save').addEventListener('click', () => { void saveWord(); });
 $('btn-anki').addEventListener('click', () => { void onAnkiClick(); });
+$('btn-saved').addEventListener('click', () => { void openSavedCards(); });
+$('btn-anki-notes').addEventListener('click', () => { void openAnkiNotes(); });
 document.addEventListener('keydown', (ev) => {
     if (viewer && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) { stepViewer(ev.key === 'ArrowLeft' ? -1 : 1); return; }
     // With a picture enlarged, + − 0 zoom the picture instead of the pop-up.
     if (viewer && (ev.key === '+' || ev.key === '=')) { ev.preventDefault?.(); zoomBy(ZOOM_STEP); return; }
     if (viewer && ev.key === '-') { ev.preventDefault?.(); zoomBy(1 / ZOOM_STEP); return; }
     if (viewer && ev.key === '0') { ev.preventDefault?.(); zoomBy(1 / (viewer.zoom?.scale || 1)); return; }
-    // Esc closes an enlarged picture first, then the pop-up.
-    if (ev.key === 'Escape') { if (!closeViewer()) { closePopup(); } }
+    // Esc closes an enlarged picture or the saved cards first, then the pop-up.
+    if (ev.key === 'Escape') { if (!closeViewer() && !closeSavedCards()) { closePopup(); } }
     if (ev.ctrlKey && (ev.key === '+' || ev.key === '=')) { zoom = Math.min(2, zoom + 0.1); applyZoom(); }
     if (ev.ctrlKey && ev.key === '-') { zoom = Math.max(0.6, zoom - 0.1); applyZoom(); }
     if (ev.ctrlKey && ev.key === '0') { zoom = 1; applyZoom(); }
@@ -1168,6 +1349,7 @@ void listen('lookup', (event) => { void render(event.payload); });
 void listen('popup-hidden', () => {
     stopDictionaryAudio();
     closeViewer();
+    closeSavedCards();
     closeAudioMenu();
     stopAudio();
     if (ai && Object.keys(KIND_DICTIONARY).some(cancels)) { responses.cancelPendingExcept(keepRunning(new Set())); }
