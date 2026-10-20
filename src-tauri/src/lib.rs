@@ -889,6 +889,27 @@ fn dismiss_popup(app: &AppHandle) {
     popup_hidden(app);
 }
 
+/// Where the pop-up goes for a word (all in physical pixels): centred on the word, just below it,
+/// as Lookupper's lookup TeachingTip (WinUI centres a tip on its target). It moves above the word
+/// when there is no room below, and sideways only as far as the monitor's edge needs.
+fn popup_position(word: (f64, f64, f64, f64), size: (f64, f64), monitor: Option<platform::geometry::Rect>, scale: f64) -> (f64, f64) {
+    let (x0, y0, x1, y1) = word;
+    let (w, h) = size;
+    let gap = 10.0 * scale;
+    let edge = 8.0 * scale;
+    let mut x = (x0 + x1) / 2.0 - w / 2.0;
+    let mut y = y1 + gap;
+    if let Some(m) = monitor {
+        if y + h > m.y + m.height {
+            y = (y0 - h - gap).max(m.y);
+        }
+        let left = m.x + edge;
+        let right = (m.x + m.width - w - edge).max(left);
+        x = x.clamp(left, right);
+    }
+    (x, y)
+}
+
 /// Sends the result to the popup and shows it next to the word (desktop coordinates).
 fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64, f64, f64)>) {
     let Some(win) = app.get_webview_window("popup") else { return };
@@ -904,20 +925,12 @@ fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64
             .unwrap_or(((x0, y0), (x1, y1)));
         let size = win.outer_size().unwrap_or(PhysicalSize::new(560, 520));
         let (w, h) = (size.width as f64, size.height as f64);
-        let mut x = x0 - 24.0;
-        let mut y = y1 + 10.0;
         let bounds = display.map(|d| d.native).or_else(|| app.monitor_from_point(x0, y0).ok().flatten()
             .map(|m| platform::geometry::Rect { x: m.position().x as f64, y: m.position().y as f64,
                 width: m.size().width as f64, height: m.size().height as f64 }));
-        if let Some(m) = bounds {
-            let (mx, my, mw, mh) = (m.x, m.y, m.width, m.height);
-            if y + h > my + mh {
-                y = (y0 - h - 10.0).max(my);
-            }
-            x = x.clamp(mx, (mx + mw - w).max(mx));
-        }
-        let _ = win.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
         let scale = win.scale_factor().unwrap_or(1.0).max(0.5);
+        let (x, y) = popup_position((x0, y0, x1, y1), (w, h), bounds, scale);
+        let _ = win.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
         let word_x = ((x0 + x1) / 2.0 - x).clamp(0.0, w);
         let word_y = if y >= y1 { 0.0 } else { h };
         origin = (word_x / scale, word_y / scale, false);
@@ -1666,4 +1679,39 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lookitan");
+}
+
+#[cfg(test)]
+mod popup_position_tests {
+    use super::popup_position;
+    use crate::platform::geometry::Rect;
+
+    const SCREEN: Rect = Rect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+
+    #[test]
+    fn the_popup_is_centred_on_the_word_just_below_it() {
+        let (x, y) = popup_position((900.0, 300.0, 1000.0, 320.0), (560.0, 520.0), Some(SCREEN), 1.0);
+        assert_eq!(x + 280.0, 950.0, "the word's centre is the popup's centre");
+        assert_eq!(y, 330.0);
+    }
+
+    #[test]
+    fn near_an_edge_it_moves_only_as_far_as_the_screen_needs() {
+        let (x, _) = popup_position((10.0, 300.0, 60.0, 320.0), (560.0, 520.0), Some(SCREEN), 1.0);
+        assert_eq!(x, 8.0);
+        let (x, _) = popup_position((1880.0, 300.0, 1910.0, 320.0), (560.0, 520.0), Some(SCREEN), 1.0);
+        assert_eq!(x, 1920.0 - 560.0 - 8.0);
+    }
+
+    #[test]
+    fn without_room_below_it_goes_above_the_word() {
+        let (_, y) = popup_position((900.0, 800.0, 1000.0, 820.0), (560.0, 520.0), Some(SCREEN), 1.0);
+        assert_eq!(y, 800.0 - 520.0 - 10.0);
+    }
+
+    #[test]
+    fn gaps_follow_the_display_scale() {
+        let (x, y) = popup_position((10.0, 300.0, 60.0, 320.0), (840.0, 780.0), Some(Rect { x: 0.0, y: 0.0, width: 2880.0, height: 1620.0 }), 1.5);
+        assert_eq!((x, y), (12.0, 335.0));
+    }
 }
