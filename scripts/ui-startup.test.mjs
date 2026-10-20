@@ -75,8 +75,7 @@ async function load(path, globals, stubs) {
     function get(id) {
         if (!modules.has(id)) {
             modules.set(id, (async () => {
-                // Nothing here talks to the network: the HTTP plugin is always a stub.
-                const exports = stubs[id] || (id === '@tauri-apps/plugin-http' ? {fetch: async () => { throw new Error('no network in tests'); }} : null);
+                const exports = stubs[id];
                 const module = exports ? new SyntheticModule(Object.keys(exports), function () {
                     for (const [name, value] of Object.entries(exports)) { this.setExport(name, value); }
                 }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8'), {context, identifier: id});
@@ -128,7 +127,7 @@ async function dictionaryFixture(overrides = {}) {
         '@tauri-apps/plugin-dialog': {open: async () => null, ask: async () => true},
         [file('src/lib/api.js')]: {api: {listDictionaries: async () => [
             {id: 'ai-word', kind: 'ai-word', enabled: true}, {id: 'ai-context', kind: 'ai-context', enabled: true},
-            {id: 'ai-images', kind: 'ai-images', enabled: true}, {id: 'ai-image-gen', kind: 'ai-image-gen', enabled: true},
+            {id: 'ai-images', kind: 'ai-images', enabled: true},
         ]}, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => 'test answer'},
@@ -237,33 +236,6 @@ test('the images dictionary has its own image query prompts, switch and provider
     assert.equal(fixture.ai.imageQueryPrompt, 'Word: {{target}}');
     fixture.change('sectionProviders.ai-images.openai.model', 'cheap-model', 'input');
     assert.equal(fixture.ai.sectionProviders['ai-images'].openai.model, 'cheap-model');
-    assert.equal(fixture.ai.openai.model, 'kept-model');
-});
-
-test('"Imagem AI" has its own prompt, count and image provider, without DeepSeek', async () => {
-    const fixture = await dictionaryFixture({provider: 'openai', openai: {apiKey: 'sk', model: 'kept-model'}});
-    fixture.list.children[3].dispatch('click');
-    for (const key of ['autoGenerateImages', 'imageGenCount', 'imageGenAspect', 'imageGenQuality', 'imageGenPrompt',
-        'sectionProviders.ai-image-gen.provider', 'sectionProviders.ai-image-gen.openai.model', 'sectionProviders.ai-image-gen.openai.apiKey']) {
-        assert(fixture.control(key), `${key} must be visible`);
-    }
-    assert(!fixture.control('sectionProviders.ai-image-gen.temperature'), 'image models take no temperature');
-    const providers = fixture.control('sectionProviders.ai-image-gen.provider').children.map((o) => o.attributes.value);
-    assert.equal(JSON.stringify(providers), JSON.stringify(['openai', 'gemini', 'custom']));
-    assert.equal(fixture.control('sectionProviders.ai-image-gen.openai.model').value, 'gpt-image-1-mini');
-    assert.equal(fixture.control('imageGenCount').value, '1', 'one picture per click by default');
-    fixture.change('imageGenCount', '3');
-    assert.equal(fixture.ai.imageGenCount, 3);
-    fixture.change('sectionProviders.ai-image-gen.provider', 'custom');
-    assert(fixture.control('sectionProviders.ai-image-gen.custom.endpoint'), 'a custom provider shows its endpoint');
-    assert(!fixture.control('imageGenQuality'), 'only OpenAI has a quality');
-    for (const key of ['thinkingMode', 'thinkingIntensity', 'customThinkingIntensity', 'providerRoutingMode', 'providerSlugs', 'providerAllowFallbacks', 'requestBodyJson']) {
-        assert(fixture.control(`sectionProviders.ai-image-gen.custom.${key}`), `the custom image provider has ${key}, as the text one`);
-    }
-    fixture.change('sectionProviders.ai-image-gen.custom.thinkingIntensity', 'low');
-    assert.equal(fixture.ai.sectionProviders['ai-image-gen'].custom.thinkingIntensity, 'low');
-    assert.equal(fixture.ai.custom.thinkingIntensity, '', 'the word card keeps its own');
-    assert.equal(fixture.ai.provider, 'openai', 'the word card keeps its provider');
     assert.equal(fixture.ai.openai.model, 'kept-model');
 });
 

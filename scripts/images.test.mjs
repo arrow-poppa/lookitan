@@ -124,24 +124,6 @@ test('{image} uploads the checked pictures to Anki, in order, only when a field 
     assert(notes.MARKERS.includes('image'));
     assert.equal(notes.suggestMarker('Picture', 3), '{image}');
     assert.equal(notes.suggestMarker('Screenshot', 3), '{screenshot}');
-
-    // "Imagem AI": its own {ai-image}; a note without it gets them in {image}, after Bing's.
-    const aiImages = async () => [{data: 'GEN', extension: 'png'}];
-    stored.length = 0;
-    options.cardFormats[0].fields = {Front: {value: '{expression}'}, Picture: {value: '{image}'}, Generated: {value: '{ai-image}'}};
-    const apart = await notes.buildNote({word: 'cat', images, aiImages}, options, conn);
-    assert.equal(apart.fields.Picture, `<img src="${stored[0].name}"><img src="${stored[1].name}">`);
-    assert.match(stored[2].name, /^lookitan_ai_image_1_.+\.png$/);
-    assert.equal(apart.fields.Generated, `<img src="${stored[2].name}">`);
-    stored.length = 0;
-    options.cardFormats[0].fields = {Front: {value: '{expression}'}, Picture: {value: '{image}'}};
-    const together = await notes.buildNote({word: 'cat', images, aiImages}, options, conn);
-    assert.equal(stored.map((s) => s.data).join(), 'AAA,BBB,GEN', 'nothing checked is lost without {ai-image}');
-    assert.equal((together.fields.Picture.match(/<img/g) || []).length, 3);
-    assert(notes.MARKERS.includes('ai-image'));
-    assert.equal(notes.suggestMarker('AI Image', 3), '{ai-image}');
-    assert.equal(notes.suggestMarker('Imagem IA', 3), '{ai-image}');
-    assert.equal(notes.suggestMarker('Image', 3), '{image}');
 });
 
 test('meme mode puts " meme" at the end of the search, as Migaku does', async () => {

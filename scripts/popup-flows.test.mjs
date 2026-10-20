@@ -5,8 +5,6 @@ import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {CARD_PROMPT} from '../src/lib/ai/word-card.js';
 import * as realImages from '../src/lib/images.js';
-import * as realImageGen from '../src/lib/image-gen.js';
-import * as realImageStore from '../src/lib/image-store.js';
 import {createContext, SourceTextModule, SyntheticModule} from 'node:vm';
 
 const project = resolve(import.meta.dirname, '..');
@@ -35,7 +33,7 @@ class Element {
     remove() { this.removed = true; }
 }
 
-async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, imageGen = {}, imageStore = {}, audioRows = async () => null, words = []} = {}) {
+async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, audioRows = async () => null, words = []} = {}) {
     const nodes = new Map();
     const document = {getElementById: (id) => {
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
@@ -72,12 +70,10 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }},
         [file('src/lib/icons.js')]: {hydrateIcons() {}, icon: (name) => name},
         [file('src/lib/images.js')]: {...realImages, ...images},
-        [file('src/lib/image-gen.js')]: {...realImageGen, ...imageGen},
-        [file('src/lib/image-store.js')]: {...realImageStore, ...imageStore},
     };
     const context = createContext({document, window: {addEventListener() {}}, localStorage: {getItem: () => null, setItem() {}},
         AbortController, DOMException, crypto: {subtle: {digest: async (_algorithm, bytes) => createHash('sha256').update(bytes).digest()}},
-        TextEncoder, URL, console, Intl, setTimeout, clearTimeout, requestAnimationFrame: (callback) => callback()});
+        TextEncoder, console, Intl, setTimeout, clearTimeout, requestAnimationFrame: (callback) => callback()});
     const modules = new Map();
     // The promise is kept at once, so a module imported twice at the same time (a diamond in the
     // import graph) is created and linked only once.
@@ -88,7 +84,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
                 return stub ? new SyntheticModule(Object.keys(stub), function () {
                     for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
                 }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
-                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries, refreshSavedCount, refreshAnkiNotes, openSavedCards, openAnkiNotes, runImageGen, checkedImageFiles};\nexport function stateForTest() { return state; }\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries, refreshSavedCount, refreshAnkiNotes, openSavedCards, openAnkiNotes};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
                 {context, identifier: id});
             })());
         }
@@ -717,109 +713,6 @@ test('the Anki notes counter queries the note type\'s first field, and nothing w
     assert.equal(other.nodes.get('btn-anki-notes').hidden, true);
 });
 
-async function imageGenFixture({configured = true, imageStore = {}, blobs = false} = {}) {
-    const made = [];
-    let n = 0;
-    const view = await fixture({
-        dictionaries: [{id: 'ai-image-gen', kind: 'ai-image-gen', name: 'AI images', enabled: true}],
-        imageGen: {
-            imageGenMissing: () => (configured ? '' : 'o modelo de imagem'),
-            generateImages: async (_options, prompt, choice) => {
-                made.push({prompt, count: choice.count});
-                return Array.from({length: choice.count}, () => (blobs ? {blob: new Blob([`picture ${++n}`], {type: 'image/png'})} : {url: `https://gen.example/${++n}.png`}));
-            },
-        },
-        imageStore,
-        images: {downloadImage: async (item) => ({data: item.src, extension: 'png'})},
-    });
-    Object.assign(view.ai, {customPrompt: 'explain', contextPrompt: 'translate', imageGenPrompt: 'draw {{target}}', imageGenCount: 2});
-    const payload = {word: 'corre', sentence: 'Ele corre todo dia.', entries: []};
-    const show = async () => {
-        await view.popup.render(payload);
-        const [sectionNode] = view.document.getElementById('sections').children;
-        return {sectionNode, body: sectionNode?.querySelector('.sec-body')};
-    };
-    const settle = async () => { for (let i = 0; i < 20; i++) { await flush(); } };
-    return {view, made, show, settle};
-}
-
-test('"Imagem AI" makes its pictures on a click, adds more, and sends the checked ones to Anki', async () => {
-    const {view, made, show, settle} = await imageGenFixture();
-    const {sectionNode, body} = await show();
-    assert(sectionNode.innerHTML.includes('Imagem AI'));
-    assert(body.innerHTML.includes('Gerar 2 imagens AI'), 'like Explicar, nothing is made before the click');
-    await settle();
-    assert.equal(made.length, 0);
-    body.querySelector('button').listeners.click();
-    await settle();
-    assert.deepEqual(made, [{prompt: 'draw corre', count: 2}], 'the prompt is filled, and the count chosen is sent');
-    assert(body.innerHTML.includes('https://gen.example/1.png') && body.innerHTML.includes('https://gen.example/2.png'));
-    assert(body.innerHTML.includes('img-check'), 'each picture has its check mark');
-    body.querySelector('.img-more').listeners.click();
-    await settle();
-    assert.equal(made.length, 2);
-    assert(body.innerHTML.includes('https://gen.example/1.png') && body.innerHTML.includes('https://gen.example/4.png'), 'more pictures join the first ones');
-    const lookup = view.popup.stateForTest();
-    lookup.generated.selected.add(3);
-    lookup.generated.selected.add(0);
-    assert.equal(JSON.stringify((await view.popup.checkedImageFiles(lookup.generated)).map((f) => f.data)), JSON.stringify(['https://gen.example/1.png', 'https://gen.example/4.png']),
-        'the checked pictures are sent in the strip\'s order');
-
-});
-
-test('"Imagem AI" shows pictures already made for the word at once, and the refresh button makes a new set', async () => {
-    const {made, show, settle} = await imageGenFixture();
-    const first = await show();
-    first.body.querySelector('button').listeners.click();
-    await settle();
-    const again = await show();
-    await settle();
-    assert.equal(made.length, 1, 'nothing is paid for twice');
-    assert(again.body.innerHTML.includes('https://gen.example/2.png') && !again.body.innerHTML.includes('Gerar 2 imagens AI'));
-    const [refresh] = again.sectionNode.querySelector('.sec-head').children;
-    refresh.listeners.click();
-    await settle();
-    assert.equal(made.length, 2);
-    assert(again.body.innerHTML.includes('https://gen.example/3.png') && !again.body.innerHTML.includes('https://gen.example/1.png'), 'a new set replaces the old one');
-});
-
-test('"Imagem AI" switched on but not set up says what is missing, and makes nothing', async () => {
-    const {made, show, settle} = await imageGenFixture({configured: false});
-    const {sectionNode, body} = await show();
-    await settle();
-    assert(sectionNode.innerHTML.includes('Imagem AI'), 'the section shows');
-    assert(body.innerHTML.includes('Falta o modelo de imagem em Dicionários › Imagem AI.'));
-    assert(!body.innerHTML.includes('Gerar'));
-    assert.equal(sectionNode.querySelector('.sec-head').children.length, 0, 'no refresh button');
-    assert.equal(made.length, 0);
-});
-
-test('"Imagem AI" pictures made before the app was closed come back from disk, without a click or a new request', async () => {
-    const disk = new Map();
-    const imageStore = {
-        loadGeneration: async (key) => disk.get(key) || null,
-        saveGeneration: async (key, pictures) => { disk.set(key, pictures); },
-        forgetStoredGeneration: async (key) => { disk.delete(key); },
-    };
-    const before = await imageGenFixture({imageStore, blobs: true});
-    const first = await before.show();
-    first.body.querySelector('button').listeners.click();
-    await before.settle();
-    assert.equal(disk.size, 1, 'the pictures are saved');
-    assert.equal(JSON.stringify([...disk.values()][0].map((p) => p.title)), JSON.stringify(['test', 'test']), 'each picture keeps its model name');
-    // A new pop-up module, as after the app was opened again.
-    const after = await imageGenFixture({imageStore, blobs: true});
-    const shown = await after.show();
-    await after.settle();
-    assert.equal(after.made.length, 0, 'nothing is paid for again');
-    assert.equal((shown.body.innerHTML.match(/src="blob:/g) || []).length, 2, 'both pictures show at once');
-    const [refresh] = shown.sectionNode.querySelector('.sec-head').children;
-    refresh.listeners.click();
-    await after.settle();
-    assert.equal(after.made.length, 1);
-    assert.equal([...disk.values()][0].length, 2, 'a new set replaces the saved one');
-});
-
 test('a saved card opens whole in the pop-up, as the Palavras tab shows it', async () => {
     const words = [{id: 'a', word: 'optimized', dictionaryForm: 'optimize', ipa: 'ˈɑptɪmaɪz', cefr: 'C1', partOfSpeech: ['verb'], labels: ['technical'],
         translation: 'otimizar', definition: 'To make as effective as possible.', explanation: 'Used for **software**.',
@@ -836,3 +729,4 @@ test('a saved card opens whole in the pop-up, as the Palavras tab shows it', asy
         assert(html.includes(part), `the saved card shows ${part}`);
     }
 });
+

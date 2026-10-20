@@ -52,4 +52,8 @@ test('the context translator gets its own automatic switch, starting from the ol
     assert.equal(normalizeAiOptions({autoGenerateOnLookup: true}).autoTranslateContext, true);
     assert.equal(normalizeAiOptions({autoGenerateOnLookup: true, autoTranslateContext: false}).autoTranslateContext, false);
     assert.equal(normalizeAiOptions({}).imageMemeMode, false);
+    // Settings saved while "Imagem AI" existed load without its keys or its provider block.
+    const removed = normalizeAiOptions({imageGenPrompt: 'x', imageGenCount: 2, autoGenerateImages: true, sectionProviders: {'ai-image-gen': {provider: 'custom'}}});
+    assert.equal(['imageGenPrompt', 'imageGenCount', 'autoGenerateImages'].filter((key) => key in removed).length, 0);
+    assert.equal('ai-image-gen' in removed.sectionProviders, false);
 });

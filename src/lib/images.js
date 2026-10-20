@@ -178,18 +178,11 @@ async function shrink(blob, type) {
 /**
  * Downloads a picture for an Anki note: the full picture, or Bing's thumbnail when the site does
  * not serve it. Returns null when neither can be read.
- * @param {{src: string, thumb: string, blob?: Blob}} item
+ * @param {{src: string, thumb: string}} item
  * @param {{signal?: AbortSignal, fetch?: typeof globalThis.fetch}} [options]
  * @returns {Promise<{data: string, extension: string}|null>}
  */
 export async function downloadImage(item, {signal, fetch: request} = {}) {
-    if (item.blob instanceof Blob) {
-        // A picture made by "Imagem AI": already here, only shrunk.
-        const type = (item.blob.type || '').toLowerCase();
-        const small = await shrink(item.blob, type);
-        if (small) { return {data: toBase64(small.bytes), extension: small.extension}; }
-        return EXTENSIONS[type] ? {data: toBase64(new Uint8Array(await item.blob.arrayBuffer())), extension: EXTENSIONS[type]} : null;
-    }
     const doFetch = await httpFetch(request);
     for (const url of [...new Set([item.src, item.thumb].filter(isWebUrl))]) {
         const timeout = deadline(DOWNLOAD_TIMEOUT_MS, signal);
