@@ -44,8 +44,9 @@ pub enum DictionaryKind {
     /// Built-in: pictures of the word from Bing Images, searched with an AI-made query (as in
     /// Migaku's pop-up). The front end does the search; the backend only keeps its place and switch.
     AiImages,
-    /// Built-in: pictures made by an image model from the user's prompt ("Imagens IA"). Also done
-    /// by the front end.
+    /// "Imagem AI" (pictures made by an image model) existed briefly on 2026-10-20 and was taken
+    /// out at the user's request (kept in the `image-ai-backup` branch). Only read, so settings
+    /// saved meanwhile still load; `migrate()` drops the entry.
     AiImageGen,
 }
 
@@ -221,7 +222,6 @@ pub fn builtin_dictionaries() -> Vec<DictionaryConfig> {
         DictionaryConfig { id: "ai-word".into(), kind: DictionaryKind::AiWord, name: "AI word in context".into(), ..Default::default() },
         DictionaryConfig { id: "ai-context".into(), kind: DictionaryKind::AiContext, name: "Context translator".into(), ..Default::default() },
         DictionaryConfig { id: "ai-images".into(), kind: DictionaryKind::AiImages, name: "Images".into(), ..Default::default() },
-        DictionaryConfig { id: "ai-image-gen".into(), kind: DictionaryKind::AiImageGen, name: "AI images".into(), ..Default::default() },
     ]
 }
 
@@ -242,6 +242,7 @@ pub fn migrate(mut s: Settings) -> Settings {
     for p in &mut s.profiles {
         if p.freeze == FreezeMode::Default { p.freeze = FreezeMode::None; }
     }
+    s.dictionaries.retain(|d| d.kind != DictionaryKind::AiImageGen);
     for (pos, b) in builtin_dictionaries().into_iter().enumerate() {
         if !s.dictionaries.iter().any(|d| d.id == b.id) {
             s.dictionaries.insert(pos.min(s.dictionaries.len()), b);
@@ -320,21 +321,32 @@ mod tests {
         ]}"#).unwrap();
         let s = migrate(saved);
         let ids: Vec<&str> = s.dictionaries.iter().map(|d| d.id.as_str()).collect();
-        assert_eq!(ids, ["ai-word", "ai-context", "ai-images", "ai-image-gen", "local"]);
+        assert_eq!(ids, ["ai-word", "ai-context", "ai-images", "local"]);
         assert_eq!(s.dictionaries[2].kind, DictionaryKind::AiImages);
-        assert_eq!(s.dictionaries[3].kind, DictionaryKind::AiImageGen);
         assert!(s.dictionaries[2].enabled);
         let moved: Settings = serde_json::from_str(r#"{"dictionaries": [
             {"id": "ai-images", "kind": "ai-images", "enabled": false},
             {"id": "ai-word", "kind": "ai-word"},
-            {"id": "ai-context", "kind": "ai-context"},
-            {"id": "ai-image-gen", "kind": "ai-image-gen", "enabled": false}
+            {"id": "ai-context", "kind": "ai-context"}
         ]}"#).unwrap();
         let s = migrate(moved);
         assert_eq!(s.dictionaries[0].id, "ai-images", "a moved or switched-off images entry stays as the user left it");
         assert!(!s.dictionaries[0].enabled);
-        assert_eq!(s.dictionaries.len(), 4);
-        assert!(!s.dictionaries[3].enabled);
+        assert_eq!(s.dictionaries.len(), 3);
+    }
+
+    #[test]
+    fn the_removed_generated_pictures_entry_loads_and_is_dropped() {
+        let saved: Settings = serde_json::from_str(r#"{"dictionaries": [
+            {"id": "ai-word", "kind": "ai-word"},
+            {"id": "ai-context", "kind": "ai-context"},
+            {"id": "ai-images", "kind": "ai-images"},
+            {"id": "ai-image-gen", "kind": "ai-image-gen", "enabled": true},
+            {"id": "local", "kind": "mdict", "path": "x.mdx"}
+        ]}"#).unwrap();
+        let s = migrate(saved);
+        let ids: Vec<&str> = s.dictionaries.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, ["ai-word", "ai-context", "ai-images", "local"]);
     }
 
     #[test]

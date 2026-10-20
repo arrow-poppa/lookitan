@@ -1,5 +1,5 @@
 // Lookup popup. Sections follow the dictionary order from the Dictionaries tab: the AI word card,
-// the context translator, the pictures, the generated pictures and the MDict dictionaries. Top-right: save the word and add
+// the context translator, the pictures and the MDict dictionaries. Top-right: save the word and add
 // it to Anki.
 
 import {emit, listen} from '@tauri-apps/api/event';
@@ -14,8 +14,6 @@ import {invoke} from '@tauri-apps/api/core';
 import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
-import {generateImages, imageGenCount, imageGenMissing, imageGenPrompt} from '../lib/image-gen.js';
-import {forgetStoredGeneration, loadGeneration, saveGeneration} from '../lib/image-store.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -459,7 +457,7 @@ async function runImages(body, force = false) {
         if (!current()) { return; }
         const items = await searchCached(query, force);
         if (!current()) { return; }
-        lookup.images = {kind: 'images', query, items, selected: new Set()};
+        lookup.images = {query, items, selected: new Set()};
         renderImages(body, lookup);
     } catch (e) {
         if (current() && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
@@ -480,7 +478,10 @@ function setChecked(button, selected) {
     button.setAttribute('aria-pressed', String(selected));
 }
 
-/** Pictures below the "Imagens" heading: Bing's results with the search made and meme mode. */
+/**
+ * A horizontal strip, as in Migaku. The check mark shows on hover (and stays on a checked
+ * picture); only a click on it checks the picture for Anki. A click anywhere else enlarges it.
+ */
 function renderImages(body, lookup) {
     const {query, items} = lookup.images;
     // Below the pictures, as in Migaku: the search that was made and the meme mode switch.
@@ -495,24 +496,12 @@ function renderImages(body, lookup) {
         bindMemeMode(body);
     };
     if (items.length === 0) { empty(`Nenhuma imagem para “${escapeHtml(query)}”.`); return; }
-    drawStrip(body, lookup, lookup.images, {foot, onEmpty: () => empty(`Nenhuma imagem pôde ser carregada para “${escapeHtml(query)}”.`)});
-    bindMemeMode(body);
-}
-
-/**
- * A horizontal strip, as in Migaku. The check mark shows on hover (and stays on a checked
- * picture); only a click on it checks the picture for Anki. A click anywhere else enlarges it.
- * @param {{kind: string, query: string, items: object[], selected: Set<number>}} gallery
- * @param {{foot?: string, loading?: number, onEmpty?: () => void}} [extra] `loading` placeholders
- *   go after the pictures.
- */
-function drawStrip(body, lookup, gallery, {foot = '', loading = 0, onEmpty = null} = {}) {
-    const {query, items, kind} = gallery;
     body.innerHTML = `<div class="img-strip" role="list">${items.map((item, i) => `
-        <div class="img-tile${gallery.selected.has(i) ? ' sel' : ''}" role="listitem" data-g="${kind}" data-i="${i}">
+        <div class="img-tile${lookup.images.selected.has(i) ? ' sel' : ''}" role="listitem" data-i="${i}">
             <img src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || query)}" draggable="false" referrerpolicy="no-referrer">
-            ${checkButton(gallery.selected.has(i))}
-        </div>`).join('')}${'<div class="img-tile loading"></div>'.repeat(loading)}</div>${foot}`;
+            ${checkButton(lookup.images.selected.has(i))}
+        </div>`).join('')}</div>${foot}`;
+    bindMemeMode(body);
     const strip = body.querySelector('.img-strip');
     strip?.addEventListener('wheel', (ev) => {
         // The wheel scrolls the strip sideways while it can, then the pop-up again.
@@ -523,24 +512,24 @@ function drawStrip(body, lookup, gallery, {foot = '', loading = 0, onEmpty = nul
         ev.preventDefault();
         strip.scrollLeft = next;
     }, {passive: false});
-    for (const tile of body.querySelectorAll?.('.img-tile:not(.loading)') || []) {
+    for (const tile of body.querySelectorAll?.('.img-tile') || []) {
         const i = Number(tile.dataset.i);
         // A picture the site does not serve is left out, as Migaku leaves it out.
         tile.querySelector('img')?.addEventListener('error', () => {
             tile.remove();
-            if (state === lookup && !strip?.querySelector('.img-tile')) { onEmpty?.(); }
+            if (state === lookup && !strip?.querySelector('.img-tile')) { empty(`Nenhuma imagem pôde ser carregada para “${escapeHtml(query)}”.`); }
         }, {once: true});
         tile.addEventListener('click', (ev) => {
             if (state !== lookup) { return; }
             const check = ev.target.closest?.('.img-check');
             if (check) {
                 ev.stopPropagation();
-                toggleImage(gallery, i);
-                setChecked(check, gallery.selected.has(i));
-                tile.classList.toggle('sel', gallery.selected.has(i));
+                toggleImage(lookup, i);
+                setChecked(check, lookup.images.selected.has(i));
+                tile.classList.toggle('sel', lookup.images.selected.has(i));
                 return;
             }
-            openViewer(lookup, gallery, i);
+            openViewer(lookup, i);
         });
     }
 }
@@ -564,18 +553,18 @@ async function saveMemeMode(on) {
     } catch (e) { ankiStatus(`Configurações: ${e?.message || e}`, true); }
 }
 
-function toggleImage(gallery, i) {
-    const selected = gallery.selected;
+function toggleImage(lookup, i) {
+    const selected = lookup.images.selected;
     if (selected.has(i)) { selected.delete(i); } else { selected.add(i); }
 }
 
 /** Shows a checked or unchecked picture the same way in the strip, after a change in the viewer. */
-function syncTile(gallery, i) {
-    const tile = document.querySelector?.(`.img-tile[data-g="${gallery.kind}"][data-i="${i}"]`);
+function syncTile(lookup, i) {
+    const tile = document.querySelector?.(`.img-tile[data-i="${i}"]`);
     const check = tile?.querySelector('.img-check');
     if (!tile || !check) { return; }
-    tile.classList.toggle('sel', gallery.selected.has(i));
-    setChecked(check, gallery.selected.has(i));
+    tile.classList.toggle('sel', lookup.images.selected.has(i));
+    setChecked(check, lookup.images.selected.has(i));
 }
 
 // The enlarged picture covers the pop-up. The arrows at its sides, ← →, or dragging the picture
@@ -585,14 +574,14 @@ let viewer = null;
 /** How far the picture must be dragged to move to the next one, in CSS pixels. */
 const SWIPE_PX = 60;
 
-function openViewer(lookup, gallery, i) {
+function openViewer(lookup, i) {
     closeViewer();
     const box = document.createElement('div');
     box.className = 'img-viewer';
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-label', 'Imagem ampliada');
     $('card').append(box);
-    viewer = {box, lookup, gallery, i, swiped: false};
+    viewer = {box, lookup, i, swiped: false};
     box.addEventListener('click', (ev) => {
         // The click that ends a drag is not a click outside the picture.
         if (viewer?.swiped) { viewer.swiped = false; return; }
@@ -603,22 +592,22 @@ function openViewer(lookup, gallery, i) {
 
 function drawViewer(from = '') {
     if (!viewer) { return; }
-    const {box, gallery, i} = viewer;
-    const items = gallery.items;
+    const {box, lookup, i} = viewer;
+    const items = lookup.images.items;
     const item = items[i];
-    const selected = gallery.selected.has(i);
+    const selected = lookup.images.selected.has(i);
     const several = items.length > 1;
     let host = '';
     try { host = item.page ? new URL(item.page).hostname.replace(/^www\./, '') : ''; } catch (_e) { /* not a URL */ }
     box.innerHTML = `
         <div class="img-frame">
-            <img class="full${from ? ` from-${from}` : ''}" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || gallery.query)}" draggable="false" referrerpolicy="no-referrer">
+            <img class="full${from ? ` from-${from}` : ''}" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || lookup.images.query)}" draggable="false" referrerpolicy="no-referrer">
             ${several ? `<button class="img-nav prev" title="Anterior (←)" aria-label="Anterior">${icon('chevronLeft')}</button>
             <button class="img-nav next" title="Próxima (→)" aria-label="Próxima">${icon('chevronRight')}</button>` : ''}
         </div>
         <div class="img-bar">
             ${several ? `<span class="img-count">${i + 1}/${items.length}</span>` : ''}
-            <span class="img-caption">${escapeHtml(item.title || gallery.query)}</span>
+            <span class="img-caption">${escapeHtml(item.title || lookup.images.query)}</span>
             <button class="ghost icon img-zoom-out" title="Diminuir (−)" aria-label="Diminuir">${icon('zoomOut')}</button>
             <button class="ghost icon img-zoom-in" title="Ampliar (+, roda do mouse ou clique duplo)" aria-label="Ampliar">${icon('zoomIn')}</button>
             ${host ? `<button class="ghost img-page" title="${escapeHtml(item.page)}">${icon('open', 'sm')}${escapeHtml(host)}</button>` : ''}
@@ -640,8 +629,8 @@ function drawViewer(from = '') {
     }
     box.querySelector('.img-pick')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        toggleImage(gallery, i);
-        syncTile(gallery, i);
+        toggleImage(lookup, i);
+        syncTile(lookup, i);
         drawViewer();
     });
     box.querySelector('.img-nav.prev')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(-1); });
@@ -746,7 +735,7 @@ function gestures(frame, full, several) {
 
 function stepViewer(delta) {
     if (!viewer) { return; }
-    const n = viewer.gallery.items.length;
+    const n = viewer.lookup.images.items.length;
     viewer.i = (viewer.i + delta + n) % n;
     // The next picture slides in from the side it comes from.
     drawViewer(delta > 0 ? 'right' : 'left');
@@ -760,128 +749,13 @@ function closeViewer() {
     return true;
 }
 
-/**
- * The checked pictures of some galleries as files, each in its strip's order; unreadable ones are
- * skipped. Bing's go to {image}, the generated ones to {ai-image}.
- */
-async function checkedImageFiles(...galleries) {
-    const picked = galleries.filter(Boolean)
-        .flatMap((g) => [...g.selected].sort((a, b) => a - b).map((i) => g.items[i]).filter(Boolean));
-    if (picked.length === 0) { return []; }
-    const files = await Promise.all(picked.map((item) => downloadImage(item).catch(() => null)));
+/** The checked pictures as files for {image}, in the strip's order; unreadable ones are skipped. */
+async function checkedImageFiles(lookup) {
+    const images = lookup.images;
+    if (!images || images.selected.size === 0) { return []; }
+    const order = [...images.selected].sort((a, b) => a - b);
+    const files = await Promise.all(order.map((i) => downloadImage(images.items[i]).catch(() => null)));
     return files.filter(Boolean);
-}
-
-// ------------------------------------------------------------------ "Imagem AI" (pictures made by an image model)
-
-/**
- * Pictures made per prompt, so looking the word up again shows them without paying for new ones.
- * They are also kept on disk (image-store.js), so they come back after the app is closed.
- * "Gerar mais" adds to them; "Gerar de novo" starts over.
- * @type {Map<string, {items: object[], pending: Promise<void>|null, error: string}>}
- */
-const generations = new Map();
-const GENERATIONS_KEPT = 30;
-
-const imageGenOptions = () => aiOptionsFor(ai, 'ai-image-gen');
-
-function generationKey(options, prompt) {
-    const cfg = options[options.provider] || {};
-    return JSON.stringify([options.provider, cfg.model || '', cfg.endpoint || '', cfg.requestBodyJson || '', prompt,
-        ai.imageGenAspect || '1:1', ai.imageGenQuality || 'low']);
-}
-
-/** Lets a set of pictures go from memory: its addresses stop working, its files stay with any lookup that checked them. */
-function dropGeneration(key) {
-    for (const item of generations.get(key)?.items || []) {
-        if (item.blob && item.src.startsWith('blob:')) { URL.revokeObjectURL?.(item.src); }
-    }
-    generations.delete(key);
-}
-
-function rememberGeneration(key, entry) {
-    generations.set(key, entry);
-    // Only memory is trimmed here; the disk keeps its own limit.
-    while (generations.size > GENERATIONS_KEPT) { dropGeneration(generations.keys().next().value); }
-    return entry;
-}
-
-/** The pictures of a prompt: in memory, or read back from disk when they were made before. */
-async function storedGeneration(key) {
-    if (generations.has(key)) { return generations.get(key); }
-    const saved = await loadGeneration(key);
-    if (generations.has(key)) { return generations.get(key); }
-    if (!saved?.length) { return null; }
-    return rememberGeneration(key, {items: saved.map((p) => generatedItem(p, p.title)), pending: null, error: ''});
-}
-
-function generatedItem(picture, title) {
-    if ('url' in picture) { return {src: picture.url, thumb: picture.url, title, page: ''}; }
-    const src = URL.createObjectURL(picture.blob);
-    return {src, thumb: src, title, page: '', blob: picture.blob};
-}
-
-/**
- * Shows the pictures for this word, making them when there are none yet. `mode` "more" makes
- * another set and adds it; "again" drops what was made and makes a new set.
- * @param {'show'|'more'|'again'} mode
- */
-async function runImageGen(body, mode = 'show') {
-    const lookup = state;
-    const options = imageGenOptions();
-    const prompt = imageGenPrompt(ai.imageGenPrompt, lookup.payload, settings);
-    const key = generationKey(options, prompt);
-    const count = imageGenCount(ai.imageGenCount);
-    if (mode === 'again' && !generations.get(key)?.pending) {
-        dropGeneration(key);
-        void forgetStoredGeneration(key);
-        lookup.generated = null;
-    }
-    let entry = mode === 'again' ? generations.get(key) : await storedGeneration(key);
-    if (state !== lookup) { return; }
-    entry ||= rememberGeneration(key, {items: [], pending: null, error: ''});
-    if (lookup.generated?.key !== key) { lookup.generated = {kind: 'generated', key, query: prompt, items: entry.items, selected: new Set()}; }
-    const make = !entry.pending && (mode !== 'show' || entry.items.length === 0);
-    if (make) {
-        entry.error = '';
-        const title = String(options[options.provider]?.model || '');
-        // Not cancelled by a new lookup: the pictures are paid for, so they are kept for later.
-        entry.pending = generateImages(options, prompt, {count, aspect: ai.imageGenAspect, quality: ai.imageGenQuality})
-            .then((pictures) => {
-                entry.items.push(...pictures.map((p) => generatedItem(p, title)));
-                void saveGeneration(key, entry.items.filter((item) => item.blob).map((item) => ({blob: item.blob, title: item.title})));
-            })
-            .catch((e) => { entry.error = e?.message || String(e); })
-            .finally(() => { entry.pending = null; });
-    }
-    const pending = entry.pending;
-    drawGenerated(body, lookup, entry, pending ? count : 0);
-    if (!pending) { return; }
-    await pending;
-    if (state === lookup && lookup.generated?.key === key) { drawGenerated(body, lookup, entry, 0); }
-}
-
-function drawGenerated(body, lookup, entry, loading) {
-    const gallery = lookup.generated;
-    const count = imageGenCount(ai.imageGenCount);
-    const error = entry.error ? `<p class="error">${escapeHtml(entry.error)}</p>` : '';
-    const more = entry.items.length > 0 && !loading
-        ? `<button class="ghost img-more" title="Faz mais ${count === 1 ? 'uma imagem' : `${count} imagens`} e junta às de cima">${icon('plus', 'sm')}Gerar mais imagens AI</button>` : '';
-    const foot = `<div class="img-foot"><span class="img-query hint" title="${escapeHtml(gallery.query)}">Prompt: ${escapeHtml(gallery.query)}</span>${more}</div>`;
-    if (entry.items.length === 0 && !loading) {
-        body.innerHTML = `${error}<button class="ghost explain-btn">${icon('sparkle', 'sm')}Tentar de novo</button>`;
-        body.querySelector('button')?.addEventListener('click', () => void runImageGen(body, 'more'));
-        return;
-    }
-    drawStrip(body, lookup, gallery, {foot: `${error}${foot}`, loading});
-    body.querySelector('.img-more')?.addEventListener('click', () => void runImageGen(body, 'more'));
-}
-
-/** Pictures already made for this word (in memory or on disk) replace the button at once. */
-async function showStoredImages(body, lookup = state) {
-    const options = imageGenOptions();
-    const entry = await storedGeneration(generationKey(options, imageGenPrompt(ai.imageGenPrompt, lookup.payload, settings)));
-    if (entry?.items.length && state === lookup) { await runImageGen(body); }
 }
 
 // ------------------------------------------------------------------ dictionaries
@@ -1180,8 +1054,7 @@ function noteContext(lookup = state, options = anki) {
         popupSelection: popupSelection(),
         dictionaryOrder: glossaryDictionaryNames(dicts),
         screenshot: async () => (lookup.payload.recognition ? api.captureImage(lookup.payload.recognition, options.screenshotArea || 'sentence') : null),
-        images: () => checkedImageFiles(lookup.images),
-        aiImages: () => checkedImageFiles(lookup.generated),
+        images: () => checkedImageFiles(lookup),
         audio: () => audioForAnki(lookup, lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word),
         sentenceAudio: () => sentenceAudioFile(lookup.payload.sentence, settings.audio, settings.ocrLanguage, audioIo),
     };
@@ -1376,23 +1249,6 @@ async function render(payload) {
             } else {
                 body.innerHTML = `<button class="ghost explain-btn">${icon('image', 'sm')}Mostrar imagens</button>`;
                 body.querySelector('button').addEventListener('click', () => void runImages(body));
-            }
-        } else if (d.kind === 'ai-image-gen' && payload.word) {
-            const missing = imageGenMissing(imageGenOptions());
-            const body = section('Imagem AI', {ai: true, onRegenerate: missing ? null : (b) => void runImageGen(b, 'again')});
-            shown++;
-            // Like "Explicar": made on a click, or at once with the automatic option. Pictures
-            // already made for this word show at once. Switched on but not set up, it says what
-            // is missing, as the word card does.
-            if (missing) {
-                body.innerHTML = `<p class="hint">Falta ${escapeHtml(missing)} em Dicionários › Imagem AI.</p>`;
-            } else if (ai.autoGenerateImages === true) {
-                void runImageGen(body);
-            } else {
-                const count = imageGenCount(ai.imageGenCount);
-                body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}${count === 1 ? 'Gerar imagem AI' : `Gerar ${count} imagens AI`}</button>`;
-                body.querySelector('button').addEventListener('click', () => void runImageGen(body));
-                void showStoredImages(body);
             }
         } else if (d.kind === 'mdict' && renderDictionary(d)) { shown++; }
     }

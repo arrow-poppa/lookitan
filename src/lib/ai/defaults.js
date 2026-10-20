@@ -3,7 +3,6 @@
 
 import {CARD_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
-import {IMAGE_GEN_DEFAULT_MODELS, IMAGE_GEN_PROMPT, IMAGE_GEN_PROVIDERS, OPENROUTER_IMAGE_MODEL, imageGenCount, isOpenRouterEndpoint} from '../image-gen.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
 export const DEFAULT_PROMPT = EXPLAIN_PROMPT;
@@ -19,7 +18,7 @@ const PROVIDER_ACCOUNTS = ['openai', 'gemini', 'deepseek', 'custom'];
 export const PROVIDER_FIELDS = ['provider', ...PROVIDER_ACCOUNTS, 'temperature', 'streamResponse', 'cancelPendingRequests', 'systemPrompt'];
 
 /** The AI dictionaries with a provider of their own besides the word card ("ai-word"). */
-export const SECTION_PROVIDERS = ['ai-context', 'ai-images', 'ai-image-gen'];
+export const SECTION_PROVIDERS = ['ai-context', 'ai-images'];
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -36,38 +35,18 @@ function providerFields(source, base) {
     return out;
 }
 
-/**
- * "Imagem AI"'s provider block. Its first copy of the word card's keeps the keys and the endpoint
- * but takes image models (OpenRouter's endpoint gets OPENROUTER_IMAGE_MODEL), and leaves the text
- * model's thinking and provider routing behind: the providers that serve a text model rarely serve
- * an image one. A provider that cannot make pictures (DeepSeek) becomes OpenAI.
- */
-function imageGenFields(source, base, copied) {
-    const out = providerFields(source, base);
-    if (copied) {
-        for (const id of IMAGE_GEN_PROVIDERS) { out[id] = {...out[id], model: IMAGE_GEN_DEFAULT_MODELS[id]}; }
-        out.custom = {...out.custom, thinkingMode: '', thinkingIntensity: '', customThinkingIntensity: '', providerRoutingMode: '', providerSlugs: '', providerAllowFallbacks: true,
-            model: isOpenRouterEndpoint(out.custom.endpoint) ? OPENROUTER_IMAGE_MODEL : ''};
-    }
-    if (!IMAGE_GEN_PROVIDERS.includes(out.provider)) { out.provider = 'openai'; }
-    return out;
-}
-
-/** A dictionary's own provider block: its stored one, or a copy of the word card's. */
-function sectionFields(id, stored, card, base) {
-    const own = isObject(stored) ? stored : null;
-    return id === 'ai-image-gen' ? imageGenFields(own || card, base, !own) : providerFields(own || card, base);
-}
-
 /** The AI options one dictionary's requests use: the shared prompts with its own provider fields. */
 export function aiOptionsFor(ai, dictId) {
     const own = ai?.sectionProviders?.[dictId];
     return isObject(own) ? {...ai, ...own} : ai;
 }
 
+/** Keys of the removed "Imagem AI" dictionary. */
+const REMOVED_KEYS = ['imageGenPrompt', 'imageGenPrompts', 'imageGenPromptId', 'imageGenCount', 'imageGenAspect', 'imageGenQuality', 'autoGenerateImages'];
+
 export function defaultAiOptions() {
     const options = baseAiOptions();
-    options.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, sectionFields(id, null, options, options)]));
+    options.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(options, options)]));
     return options;
 }
 
@@ -86,13 +65,6 @@ function baseAiOptions() {
         autoShowImages: false,
         // Migaku's meme mode, switched in the pop-up's "Imagens" section: " meme" ends the search.
         imageMemeMode: false,
-        // "Imagem AI": pictures made by an image model from this prompt, on a click unless
-        // autoGenerateImages is on; imageGenCount per click.
-        imageGenPrompt: IMAGE_GEN_PROMPT,
-        imageGenCount: 1,
-        imageGenAspect: '1:1',
-        imageGenQuality: 'low',
-        autoGenerateImages: false,
         systemPrompt: '',
         // The word card ("IA — palavra no contexto").
         autoGenerateOnLookup: true,
@@ -133,7 +105,10 @@ export function normalizeAiOptions(stored) {
         return defaultAiOptions();
     }
     const out = {...base, ...stored};
-    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'autoGenerateImages']) {
+    // "Imagem AI" was taken out (branch `image-ai-backup`): its keys saved meanwhile are dropped.
+    // Its provider block goes too, since sectionProviders is rebuilt below.
+    for (const key of REMOVED_KEYS) { delete out[key]; }
+    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation']) {
         if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
     }
     // One switch used to start both the word card and the context translation: until the
@@ -145,12 +120,8 @@ export function normalizeAiOptions(stored) {
     // The context translator and the pictures had no provider of their own before: until they get
     // one, they start from a copy of the word card's, so they keep working as they did.
     const own = isObject(stored.sectionProviders) ? stored.sectionProviders : {};
-    out.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, sectionFields(id, own[id], out, base)]));
-    out.imageGenCount = imageGenCount(out.imageGenCount);
-    for (const key of ['imageGenAspect', 'imageGenQuality']) {
-        if (typeof out[key] !== 'string' || !out[key]) { out[key] = base[key]; }
-    }
-    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt', 'imageGenPrompt']) {
+    out.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(isObject(own[id]) ? own[id] : out, base)]));
+    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
         if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
     }
     // Card prompts saved before the translation had its own field: move the default translation
