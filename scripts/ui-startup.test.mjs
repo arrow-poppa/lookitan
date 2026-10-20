@@ -75,7 +75,8 @@ async function load(path, globals, stubs) {
     function get(id) {
         if (!modules.has(id)) {
             modules.set(id, (async () => {
-                const exports = stubs[id];
+                // Nothing here talks to the network: the HTTP plugin is always a stub.
+                const exports = stubs[id] || (id === '@tauri-apps/plugin-http' ? {fetch: async () => { throw new Error('no network in tests'); }} : null);
                 const module = exports ? new SyntheticModule(Object.keys(exports), function () {
                     for (const [name, value] of Object.entries(exports)) { this.setExport(name, value); }
                 }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8'), {context, identifier: id});
@@ -255,6 +256,12 @@ test('"Imagens IA" has its own prompt, count and image provider, without DeepSee
     assert.equal(fixture.ai.imageGenCount, 3);
     fixture.change('sectionProviders.ai-image-gen.provider', 'custom');
     assert(fixture.control('sectionProviders.ai-image-gen.custom.endpoint'), 'a custom provider shows its endpoint');
+    for (const key of ['thinkingMode', 'thinkingIntensity', 'customThinkingIntensity', 'providerRoutingMode', 'providerSlugs', 'providerAllowFallbacks', 'requestBodyJson']) {
+        assert(fixture.control(`sectionProviders.ai-image-gen.custom.${key}`), `the custom image provider has ${key}, as the text one`);
+    }
+    fixture.change('sectionProviders.ai-image-gen.custom.thinkingIntensity', 'low');
+    assert.equal(fixture.ai.sectionProviders['ai-image-gen'].custom.thinkingIntensity, 'low');
+    assert.equal(fixture.ai.custom.thinkingIntensity, '', 'the word card keeps its own');
     assert.equal(fixture.ai.provider, 'openai', 'the word card keeps its provider');
     assert.equal(fixture.ai.openai.model, 'kept-model');
 });

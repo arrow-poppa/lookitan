@@ -213,43 +213,10 @@ function providerSection(ai = store.ai, prefix = '') {
                 control: ctl('gemini.thinkingLevel', 'Nível de raciocínio (Gemini 3)', select([{value: '', label: 'Padrão do modelo'}, ...['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].map((v) => ({value: v, label: v}))],
                     ai.gemini.thinkingLevel, (v) => { ai.gemini.thinkingLevel = v; save(); }))}));
         }
-        if (ai.provider === 'deepseek' || ai.provider === 'custom') {
-            const intensities = ai.provider === 'custom' ? [
-                {value: '', label: 'Padrão do modelo'}, {value: 'none', label: 'Nenhuma (none)'},
-                {value: 'minimal', label: 'Mínima (minimal)'}, {value: 'low', label: 'Baixa (low)'},
-                {value: 'medium', label: 'Média (medium)'}, {value: 'high', label: 'Alta (high)'},
-                {value: 'xhigh', label: 'Muito alta (xhigh)'}, {value: 'max', label: 'Máxima (max)'},
-                {value: 'custom', label: 'Personalizada'},
-            ] : [{value: '', label: 'Padrão do modelo'}, {value: 'high', label: 'Alta'}, {value: 'max', label: 'Máxima'}];
-            wrap.append(
-                cardRow({icon: 'sparkle', title: 'Raciocínio (thinking)', wide: true,
-                    desc: 'Use o padrão do modelo ou escolha se o raciocínio deve ficar ligado ou desligado.',
-                    control: ctl(`${ai.provider}.thinkingMode`, 'Raciocínio (thinking)', select([
-                        {value: '', label: 'Padrão'}, {value: 'enabled', label: 'Ligado'}, {value: 'disabled', label: 'Desligado'},
-                    ], cfg().thinkingMode, (v) => { cfg().thinkingMode = v; save(); }))}),
-                cardRow({icon: 'sparkle', title: 'Esforço do raciocínio (thinking)', wide: true,
-                    desc: 'O modelo precisa aceitar o nível escolhido. Máxima equivale a xhigh no OpenRouter.',
-                    control: ctl(`${ai.provider}.thinkingIntensity`, 'Esforço do raciocínio (thinking)', select(intensities, cfg().thinkingIntensity,
-                        (v) => { cfg().thinkingIntensity = v; save(); draw(); }))}),
-            );
-            if (ai.provider === 'custom') {
-                wrap.append(cardRow({icon: 'sparkle', title: 'Valor personalizado de thinking',
-                    desc: 'Usado quando o esforço é Personalizada. OpenRouter: medium, 2000 ou {"max_tokens":2000}. Outras APIs: reasoning_effort.', wide: true,
-                    control: ctl('custom.customThinkingIntensity', 'Valor personalizado de thinking', textInput(ai.custom.customThinkingIntensity,
-                        (v) => { ai.custom.customThinkingIntensity = v; save(); }, {placeholder: 'medium, 2000 ou {"max_tokens":2000}'}))}));
-            }
-        }
+        if (ai.provider === 'deepseek' || ai.provider === 'custom') { wrap.append(...thinkingRows(ai.provider, cfg(), ctl, draw)); }
         if (ai.provider === 'custom') {
             wrap.append(
-                cardRow({icon: 'list', title: 'Roteamento de provedores (OpenRouter)', wide: true,
-                    control: ctl('custom.providerRoutingMode', 'Roteamento de provedores (OpenRouter)', select([
-                        {value: '', label: 'Sem roteamento'}, {value: 'order', label: 'Ordem'}, {value: 'only', label: 'Somente'}, {value: 'ignore', label: 'Ignorar'},
-                    ], ai.custom.providerRoutingMode, (v) => { ai.custom.providerRoutingMode = v; save(); }))}),
-                cardRow({icon: 'list', title: 'Provedores do OpenRouter', desc: 'Slugs separados por vírgula, na ordem desejada.', wide: true,
-                    control: ctl('custom.providerSlugs', 'Provedores do OpenRouter', textInput(ai.custom.providerSlugs,
-                        (v) => { ai.custom.providerSlugs = v; save(); }, {placeholder: 'deepinfra/turbo, fireworks'}))}),
-                cardRow({icon: 'list', title: 'Permitir outros provedores se os escolhidos falharem',
-                    control: ctl('custom.providerAllowFallbacks', 'Permitir outros provedores', toggle(ai.custom.providerAllowFallbacks !== false, (v) => { ai.custom.providerAllowFallbacks = v; save(); }))}),
+                ...routingRows(ai.custom, ctl),
                 el('div', {class: 'card-row stack'},
                     el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'JSON extra no corpo da requisição'), el('div', {class: 'd'}, 'Mesclado ao corpo de cada pedido. Ex.: {"top_p": 0.9}'))),
                     ctl('custom.requestBodyJson', 'JSON extra no corpo da requisição', textArea(ai.custom.requestBodyJson, (v) => { ai.custom.requestBodyJson = v; save(); }, 3))),
@@ -268,6 +235,46 @@ function providerSection(ai = store.ai, prefix = '') {
     };
     draw();
     return wrap;
+}
+
+/** The thinking rows of DeepSeek and "Personalizado": mode, effort and, for the latter, a manual value. */
+function thinkingRows(provider, cfg, ctl, draw, desc = 'Use o padrão do modelo ou escolha se o raciocínio deve ficar ligado ou desligado.') {
+    const intensities = provider === 'custom' ? [
+        {value: '', label: 'Padrão do modelo'}, {value: 'none', label: 'Nenhuma (none)'},
+        {value: 'minimal', label: 'Mínima (minimal)'}, {value: 'low', label: 'Baixa (low)'},
+        {value: 'medium', label: 'Média (medium)'}, {value: 'high', label: 'Alta (high)'},
+        {value: 'xhigh', label: 'Muito alta (xhigh)'}, {value: 'max', label: 'Máxima (max)'},
+        {value: 'custom', label: 'Personalizada'},
+    ] : [{value: '', label: 'Padrão do modelo'}, {value: 'high', label: 'Alta'}, {value: 'max', label: 'Máxima'}];
+    return [
+        cardRow({icon: 'sparkle', title: 'Raciocínio (thinking)', wide: true, desc,
+            control: ctl(`${provider}.thinkingMode`, 'Raciocínio (thinking)', select([
+                {value: '', label: 'Padrão'}, {value: 'enabled', label: 'Ligado'}, {value: 'disabled', label: 'Desligado'},
+            ], cfg.thinkingMode, (v) => { cfg.thinkingMode = v; save(); }))}),
+        cardRow({icon: 'sparkle', title: 'Esforço do raciocínio (thinking)', wide: true,
+            desc: 'O modelo precisa aceitar o nível escolhido. Máxima equivale a xhigh no OpenRouter.',
+            control: ctl(`${provider}.thinkingIntensity`, 'Esforço do raciocínio (thinking)', select(intensities, cfg.thinkingIntensity,
+                (v) => { cfg.thinkingIntensity = v; save(); draw(); }))}),
+        provider === 'custom' ? cardRow({icon: 'sparkle', title: 'Valor personalizado de thinking',
+            desc: 'Usado quando o esforço é Personalizada. OpenRouter: medium, 2000 ou {"max_tokens":2000}. Outras APIs: reasoning_effort.', wide: true,
+            control: ctl('custom.customThinkingIntensity', 'Valor personalizado de thinking', textInput(cfg.customThinkingIntensity,
+                (v) => { cfg.customThinkingIntensity = v; save(); }, {placeholder: 'medium, 2000 ou {"max_tokens":2000}'}))}) : null,
+    ].filter(Boolean);
+}
+
+/** OpenRouter's provider routing rows of "Personalizado". */
+function routingRows(custom, ctl) {
+    return [
+        cardRow({icon: 'list', title: 'Roteamento de provedores (OpenRouter)', wide: true,
+            control: ctl('custom.providerRoutingMode', 'Roteamento de provedores (OpenRouter)', select([
+                {value: '', label: 'Sem roteamento'}, {value: 'order', label: 'Ordem'}, {value: 'only', label: 'Somente'}, {value: 'ignore', label: 'Ignorar'},
+            ], custom.providerRoutingMode, (v) => { custom.providerRoutingMode = v; save(); }))}),
+        cardRow({icon: 'list', title: 'Provedores do OpenRouter', desc: 'Slugs separados por vírgula, na ordem desejada.', wide: true,
+            control: ctl('custom.providerSlugs', 'Provedores do OpenRouter', textInput(custom.providerSlugs,
+                (v) => { custom.providerSlugs = v; save(); }, {placeholder: 'deepinfra/turbo, fireworks'}))}),
+        cardRow({icon: 'list', title: 'Permitir outros provedores se os escolhidos falharem',
+            control: ctl('custom.providerAllowFallbacks', 'Permitir outros provedores', toggle(custom.providerAllowFallbacks !== false, (v) => { custom.providerAllowFallbacks = v; save(); }))}),
+    ];
 }
 
 function promptCard(title, desc, get, set, fallback, setting = null) {
@@ -448,6 +455,11 @@ function imageProviderSection(own, prefix) {
                 control: ctl(`${own.provider}.apiKey`, 'Chave da API', textInput(cfg.apiKey, (v) => { cfg.apiKey = v.trim(); save(); }, {type: 'password'}))}),
             cardRow({icon: 'sparkle', title: 'Modelo de imagem', desc: modelHelp, wide: true,
                 control: el('div', {style: 'width:100%'}, modelInput, el('datalist', {id: listId}, ...models.map((m) => el('option', {value: m}))))}),
+            // A chat endpoint (OpenRouter) takes the same thinking and routing options as text.
+            ...(own.provider === 'custom' ? [
+                ...thinkingRows('custom', own.custom, ctl, draw, 'Para modelos que pensam antes de desenhar, como o Gemini 3 Pro Image. Só no endpoint de chat; a API /images/generations não tem.'),
+                ...routingRows(own.custom, ctl),
+            ] : []),
             own.provider === 'custom' ? el('div', {class: 'card-row stack'},
                 el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'JSON extra no corpo da requisição'), el('div', {class: 'd'}, 'Mesclado ao corpo de cada pedido. Ex.: {"size": "1024x1024"}'))),
                 ctl('custom.requestBodyJson', 'JSON extra no corpo da requisição', textArea(own.custom.requestBodyJson, (v) => { own.custom.requestBodyJson = v; save(); }, 3))) : null,
