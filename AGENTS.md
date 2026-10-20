@@ -22,7 +22,7 @@ Since 2026-10-16 the repository has these branches:
 | `tests` | Every agent: Claude Code, Claude in the cloud, Codex | All work is committed and pushed here. |
 | `main` | Only the user | The user merges `tests` into `main` after testing it. |
 | `with-fade` | Snapshot requested by the user | Preserves the overlay fade version at `3dcd0f0`; do not update unless the user asks. |
-| `image-ai-backup` | Snapshot requested by the user | The "Imagem AI" generated pictures, as they were when the user asked to take them out of `tests` (`634bd8e`, also `image-prompts`'s last commit). Do not update unless the user asks. |
+| `image-ai-backup` | Snapshot requested by the user | The "Imagem AI" generated pictures, as they were when the user asked to take them out of `tests` (`634bd8e`; the `image-prompts` branch it grew in was deleted on 2026-10-21). Do not update unless the user asks. |
 | `without-fade` | Only the user, or an agent the user asks | The user has it updated together with `main` (fast-forwarded to `tests` on 2026-10-20). |
 | `edge-tts` | Claude, at the user's request | Edge neural voices, to be tested apart from `tests` (made from `tests` at `1276d77` on 2026-10-20). The user decides whether it merges into `tests`. CI does not run on push here; start it with `gh workflow run build.yml --ref edge-tts`. |
 
@@ -209,6 +209,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request, the last traces of "Imagem AI" were cleaned from their own machine: its entry, keys and provider block in settings.json, and its IndexedDB. The Migaku-style "Imagens" and its AI query were left as they were. `image-prompts` was deleted, since `image-ai-backup` holds the same commit.
 - 2026-10-20 (Claude, `tests`): no code names "Imagem AI" any more, at the user's request. Settings files load with a general rule instead: a dictionary entry of an unknown kind is left out (`readable_dictionaries`), where before the whole file fell back to the defaults.
 - 2026-10-20 (Claude, `tests`): "Imagem AI" taken out at the user's request; only the Migaku-style "Imagens" stays. The feature is kept whole in `image-ai-backup`. The saved cards view showing whole cards, which came with it, stays. Older settings load: the kind is still read and then dropped.
 - 2026-10-20 (Claude, `edge-tts`): Anki marker `{sentence-audio}`, the sentence read by an Edge voice. Also merged `tests` (counters for saved cards and Anki notes) into `edge-tts`.
