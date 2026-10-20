@@ -60,11 +60,36 @@ function account(options) {
     return cfg && typeof cfg === 'object' ? cfg : null;
 }
 
+/**
+ * What the provider still lacks to make pictures, in words for the pop-up, or '' when nothing:
+ * a provider that makes pictures, its key, an image model and, for "Personalizado", the endpoint.
+ */
+export function imageGenMissing(options) {
+    const cfg = account(options);
+    if (!cfg) { return 'um provedor que gere imagens'; }
+    const missing = [];
+    if (!String(cfg.apiKey || '').trim()) { missing.push('a chave da API'); }
+    if (options.provider === 'custom' && !/^https?:\/\//i.test(String(cfg.endpoint || '').trim())) { missing.push('o endpoint'); }
+    if (!String(cfg.model || '').trim()) { missing.push('o modelo de imagem'); }
+    return missing.length > 1 ? `${missing.slice(0, -1).join(', ')} e ${missing.at(-1)}` : (missing[0] || '');
+}
+
 /** True when the provider has a key and a model (and, for "Personalizado", an endpoint). */
 export function isImageGenConfigured(options) {
-    const cfg = account(options);
-    if (!cfg || !String(cfg.apiKey || '').trim() || !String(cfg.model || '').trim()) { return false; }
-    return options.provider !== 'custom' || /^https?:\/\//i.test(String(cfg.endpoint || '').trim());
+    return imageGenMissing(options) === '';
+}
+
+/** The image model "Personalizado" starts with on OpenRouter's endpoint. */
+export const OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+
+/** True for an OpenRouter endpoint. */
+export function isOpenRouterEndpoint(endpoint) {
+    try {
+        const {hostname} = new URL(String(endpoint || ''));
+        return hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai');
+    } catch (_e) {
+        return false;
+    }
 }
 
 /** OpenAI's sizes for an aspect ratio: gpt-image-* and DALL·E 3 have different ones. */
@@ -83,15 +108,6 @@ function extraBody(json) {
         return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     } catch (_e) {
         throw new Error('O JSON extra do provedor de imagens não é válido.');
-    }
-}
-
-function isOpenRouter(endpoint) {
-    try {
-        const {hostname} = new URL(endpoint);
-        return hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai');
-    } catch (_e) {
-        return false;
     }
 }
 
@@ -148,7 +164,7 @@ export function imageGenRequests(options, prompt, {count = 1, aspect = '1:1', qu
     const endpoint = String(cfg.endpoint || '').trim();
     const extra = extraBody(cfg.requestBodyJson);
     const headers = {'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`,
-        ...(isOpenRouter(endpoint) ? {'HTTP-Referer': 'https://github.com/arrow-poppa/lookitan', 'X-OpenRouter-Title': 'Lookitan'} : {})};
+        ...(isOpenRouterEndpoint(endpoint) ? {'HTTP-Referer': 'https://github.com/arrow-poppa/lookitan', 'X-OpenRouter-Title': 'Lookitan'} : {})};
     if (/\/images\/generations\/?$/i.test(endpoint.split('?')[0])) {
         // An OpenAI-compatible Images API (xAI, Together, a local server…). The size is left to the
         // server, since not every one takes it; "JSON extra" can add it.

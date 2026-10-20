@@ -3,7 +3,7 @@
 
 import {CARD_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
-import {IMAGE_GEN_DEFAULT_MODELS, IMAGE_GEN_PROMPT, IMAGE_GEN_PROVIDERS, imageGenCount} from '../image-gen.js';
+import {IMAGE_GEN_DEFAULT_MODELS, IMAGE_GEN_PROMPT, IMAGE_GEN_PROVIDERS, OPENROUTER_IMAGE_MODEL, imageGenCount, isOpenRouterEndpoint} from '../image-gen.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
 export const DEFAULT_PROMPT = EXPLAIN_PROMPT;
@@ -37,13 +37,17 @@ function providerFields(source, base) {
 }
 
 /**
- * "Imagens IA"'s provider block. Its first copy of the word card's keeps the keys but takes image
- * models, and a provider that cannot make pictures (DeepSeek) becomes OpenAI.
+ * "Imagens IA"'s provider block. Its first copy of the word card's keeps the keys and the endpoint
+ * but takes image models (OpenRouter's endpoint gets OPENROUTER_IMAGE_MODEL), and leaves the text
+ * model's thinking and provider routing behind: the providers that serve a text model rarely serve
+ * an image one. A provider that cannot make pictures (DeepSeek) becomes OpenAI.
  */
 function imageGenFields(source, base, copied) {
     const out = providerFields(source, base);
     if (copied) {
         for (const id of IMAGE_GEN_PROVIDERS) { out[id] = {...out[id], model: IMAGE_GEN_DEFAULT_MODELS[id]}; }
+        out.custom = {...out.custom, thinkingMode: '', thinkingIntensity: '', customThinkingIntensity: '', providerRoutingMode: '', providerSlugs: '', providerAllowFallbacks: true,
+            model: isOpenRouterEndpoint(out.custom.endpoint) ? OPENROUTER_IMAGE_MODEL : ''};
     }
     if (!IMAGE_GEN_PROVIDERS.includes(out.provider)) { out.provider = 'openai'; }
     return out;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-    IMAGE_GEN_PROMPT, generateImages, imageGenCount, imageGenPrompt, imageGenRequests, isImageGenConfigured, parseGeneratedImages,
+    IMAGE_GEN_PROMPT, generateImages, imageGenCount, imageGenMissing, imageGenPrompt, imageGenRequests, isImageGenConfigured, parseGeneratedImages,
 } from '../src/lib/image-gen.js';
 import {aiOptionsFor, defaultAiOptions, normalizeAiOptions} from '../src/lib/ai/defaults.js';
 import {downloadImage} from '../src/lib/images.js';
@@ -127,6 +127,14 @@ test('the prompt, count and provider block of "Imagens IA"', () => {
     assert.equal(saved.imageGenCount, 3);
     assert.equal(saved.sectionProviders['ai-image-gen'].gemini.model, 'imagen-4.0-generate-001');
     assert(!isImageGenConfigured({provider: 'custom', custom: {apiKey: 'k', model: 'm', endpoint: ''}}), 'a custom provider needs its endpoint');
+    assert.equal(imageGenMissing({provider: 'custom', custom: {apiKey: 'k', model: '', endpoint: 'https://openrouter.ai/api/v1/chat/completions'}}), 'o modelo de imagem');
+    assert.equal(imageGenMissing({provider: 'custom', custom: {apiKey: '', model: '', endpoint: ''}}), 'a chave da API, o endpoint e o modelo de imagem');
+    assert.equal(imageGenMissing({provider: 'deepseek', deepseek: {apiKey: 'k'}}), 'um provedor que gere imagens');
+    // The first copy of an OpenRouter card: an image model, and none of the text model's routing.
+    const routed = normalizeAiOptions({provider: 'custom', custom: {apiKey: 'or', model: 'text-model', endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+        providerRoutingMode: 'only', providerSlugs: 'relace', providerAllowFallbacks: false, thinkingMode: 'disabled'}}).sectionProviders['ai-image-gen'].custom;
+    assert.deepEqual([routed.apiKey, routed.model, routed.providerRoutingMode, routed.providerSlugs, routed.providerAllowFallbacks, routed.thinkingMode],
+        ['or', 'google/gemini-2.5-flash-image', '', '', true, '']);
 });
 
 test('a picture answered only as an address is fetched once, so it can be kept; one that cannot be read keeps its address', async () => {

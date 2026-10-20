@@ -741,7 +741,7 @@ async function imageGenFixture({configured = true, imageStore = {}, blobs = fals
     const view = await fixture({
         dictionaries: [{id: 'ai-image-gen', kind: 'ai-image-gen', name: 'AI images', enabled: true}],
         imageGen: {
-            isImageGenConfigured: () => configured,
+            imageGenMissing: () => (configured ? '' : 'o modelo de imagem'),
             generateImages: async (_options, prompt, choice) => {
                 made.push({prompt, count: choice.count});
                 return Array.from({length: choice.count}, () => (blobs ? {blob: new Blob([`picture ${++n}`], {type: 'image/png'})} : {url: `https://gen.example/${++n}.png`}));
@@ -801,10 +801,15 @@ test('"Imagens IA" shows pictures already made for the word at once, and the ref
     assert(again.body.innerHTML.includes('https://gen.example/3.png') && !again.body.innerHTML.includes('https://gen.example/1.png'), 'a new set replaces the old one');
 });
 
-test('"Imagens IA" stays out of the pop-up until its provider can make pictures', async () => {
-    const {view, show} = await imageGenFixture({configured: false});
-    await show();
-    assert(view.document.getElementById('sections').innerHTML.includes('Nenhum resultado'));
+test('"Imagens IA" switched on but not set up says what is missing, and makes nothing', async () => {
+    const {made, show, settle} = await imageGenFixture({configured: false});
+    const {sectionNode, body} = await show();
+    await settle();
+    assert(sectionNode.innerHTML.includes('Imagens IA'), 'the section shows');
+    assert(body.innerHTML.includes('Falta o modelo de imagem em Dicionários › Imagens IA.'));
+    assert(!body.innerHTML.includes('Gerar'));
+    assert.equal(sectionNode.querySelector('.sec-head').children.length, 0, 'no refresh button');
+    assert.equal(made.length, 0);
 });
 
 test('"Imagens IA" pictures made before the app was closed come back from disk, without a click or a new request', async () => {
