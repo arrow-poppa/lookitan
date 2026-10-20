@@ -42,10 +42,12 @@ async function main() {
         }
     }).catch(reportError);
     void listen('settings-changed', async () => {
-        // The back end adds app profiles on its own; keep them without losing local edits.
+        // The back end adds app profiles on its own, and the pop-up switches meme mode; keep
+        // them without losing local edits.
         try {
             const fresh = await api.getSettings();
             store.settings.profiles = fresh.profiles;
+            if (store.ai && typeof fresh.ai?.imageMemeMode === 'boolean') { store.ai.imageMemeMode = fresh.ai.imageMemeMode; }
         } catch (error) { reportError(error); }
     }).catch(reportError);
     await Promise.all([

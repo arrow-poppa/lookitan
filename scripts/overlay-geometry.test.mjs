@@ -43,7 +43,7 @@ async function fixture(userAgent = 'Mozilla/5.0 (X11; Linux x86_64)') {
         for (const [key, value] of Object.entries(stubs[name])) { this.setExport(key, value); }
     }, {context}));
     await module.evaluate();
-    return {root, frame, body, hint: others.hint, dim: others.dim, block: others.block, window, handlers, requests,
+    return {root, frame, body, dim: others.dim, block: others.block, window, handlers, requests,
         emit: (payload) => listeners.overlay({payload}), close: (payload = null) => listeners['overlay-closed']({payload})};
 }
 
@@ -123,7 +123,6 @@ test('a whole-screen lookup keeps the screen as it is and only highlights words,
     const first = {text: 'but', x: 10, y: 20, w: 30, h: 18};
     const second = {text: 'being', x: 60, y: 20, w: 50, h: 18};
     view.emit({id: 1, words: [first, second], spotlight: true, viewportWidth: 1920, viewportHeight: 1080});
-    assert(view.hint.classList.contains('spotlight'), 'the hint pill is hidden');
     assert(!view.frame.classList.contains('spotlight'), 'no frame yet, so nothing is blurred');
     assert.equal(view.root.children[0].style.backgroundImage, undefined, 'no blurred frame or cut-outs');
     assert(!view.root.children[0].classList.contains('sel'));
@@ -260,4 +259,12 @@ test('a closed overlay confirms its empty frame so Linux hides it only then (no 
     const count = view.requests.length;
     view.close();
     assert.equal(view.requests.length, count);
+});
+
+test('the overlay shows no hint pill over the screen, in any lookup', async () => {
+    const html = await readFile(resolve(import.meta.dirname, '../overlay.html'), 'utf8');
+    assert(!html.includes('id="hint"'));
+    assert(!html.includes('Esc para fechar'));
+    const script = await readFile(resolve(import.meta.dirname, '../src/overlay/main.js'), 'utf8');
+    assert(!script.includes("getElementById('hint')"));
 });

@@ -67,19 +67,23 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         AbortController, DOMException, crypto: {subtle: {digest: async (_algorithm, bytes) => createHash('sha256').update(bytes).digest()}},
         TextEncoder, console, Intl, setTimeout, clearTimeout, requestAnimationFrame: (callback) => callback()});
     const modules = new Map();
-    async function get(id) {
-        if (modules.has(id)) { return modules.get(id); }
-        const stub = stubs[id];
-        const module = stub ? new SyntheticModule(Object.keys(stub), function () {
-            for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
-        }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
-            '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
-        {context, identifier: id});
-        modules.set(id, module);
-        await module.link((specifier) => get(specifier.startsWith('.') ? resolve(id, '..', specifier) : specifier));
-        return module;
+    // The promise is kept at once, so a module imported twice at the same time (a diamond in the
+    // import graph) is created and linked only once.
+    function get(id) {
+        if (!modules.has(id)) {
+            modules.set(id, (async () => {
+                const stub = stubs[id];
+                return stub ? new SyntheticModule(Object.keys(stub), function () {
+                    for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
+                }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
+                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+                {context, identifier: id});
+            })());
+        }
+        return modules.get(id);
     }
     const module = await get(entry);
+    await module.link((specifier, owner) => get(specifier.startsWith('.') ? resolve(owner.identifier, '..', specifier) : specifier));
     await module.evaluate();
     const popup = module.namespace;
     const change = (nextLookup = lookup) => popup.contextForTest({lookup: nextLookup, ai, anki: options, settings});
@@ -470,6 +474,17 @@ test('adding an Anki note retains the clicked word across a later lookup', async
     assert.equal(view.document.getElementById('btn-anki').dataset.mode, 'add');
 });
 
+test('an AnkiConnect that is not running gives no notice while looking up words', async () => {
+    const view = await fixture({connection: {canAddNotes: async () => { throw new Error('AnkiConnect connection refused'); }}});
+    view.options.enable = true;
+    view.options.checkForDuplicates = true;
+    await view.popup.refreshAnkiButton();
+    const button = view.document.getElementById('btn-anki');
+    assert.equal(button.dataset.mode, 'add', 'the button stays, to try again');
+    assert.notEqual(view.document.getElementById('anki-status').hidden, false, 'no error notice in the pop-up');
+    assert(button.title.includes('connection refused'), 'the reason is in the tooltip');
+});
+
 test('Anki add failures show an actionable visible message', async () => {
     const view = await fixture({connection: {addNote: async () => { throw new Error('AnkiConnect connection refused'); }}});
     view.options.enable = true;
@@ -532,4 +547,32 @@ test('with automatic pictures on they load at once, and a failed AI query search
     assert(!body.innerHTML.includes('Mostrar imagens'));
     assert.deepEqual(searches, ['corre']);
     assert(body.innerHTML.includes('https://t.example/1'));
+});
+
+test('meme mode adds " meme" to the AI query, and the switch shows it', async () => {
+    const {view, searches, requests, settle} = await imagesFixture({autoShowImages: true, explain: async () => 'to run'});
+    await settle();
+    assert.deepEqual(searches, ['to run']);
+    view.ai.imageMemeMode = true;
+    await view.popup.render({word: 'corre', sentence: 'Ele corre todo dia.', entries: []});
+    await settle();
+    assert.deepEqual(searches, ['to run', 'to run meme']);
+    const [sectionNode] = view.document.getElementById('sections').children;
+    const shown = sectionNode.querySelector('.sec-body');
+    assert(shown.innerHTML.includes('Modo meme') && shown.innerHTML.includes(' checked'), 'the switch shows the mode');
+    assert(shown.innerHTML.includes('Busca: to run meme'));
+    assert.equal(requests.length, 1, 'the AI query is reused from the cache');
+});
+
+test('each AI dictionary sends its requests with its own provider', async () => {
+    const seen = [];
+    const view = await fixture({
+        explain: async (options, _word, _sentence, _request) => { seen.push([options.provider, options[options.provider].model]); return 'ok'; },
+    });
+    Object.assign(view.ai, {customPrompt: 'explain', contextPrompt: 'translate',
+        provider: 'custom', custom: {model: 'word-model'},
+        sectionProviders: {'ai-context': {provider: 'gemini', gemini: {model: 'context-model'}, temperature: 0.2, streamResponse: false, cancelPendingRequests: true, systemPrompt: ''}}});
+    await view.popup.runContext(new Element());
+    await view.popup.runExplain(new Element());
+    assert.deepEqual(seen, [['gemini', 'context-model'], ['custom', 'word-model']]);
 });

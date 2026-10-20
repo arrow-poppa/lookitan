@@ -7,7 +7,47 @@ import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
 export const DEFAULT_PROMPT = EXPLAIN_PROMPT;
 
+const PROVIDER_ACCOUNTS = ['openai', 'gemini', 'deepseek', 'custom'];
+
+/**
+ * What each AI dictionary chooses for itself: the provider and its accounts (key, model, thinking,
+ * routing), temperature, streaming, cancelling and the system prompt. "IA — palavra no contexto"
+ * keeps its own at the top of the AI options; the other AI dictionaries keep theirs in
+ * `sectionProviders[<dictionary id>]`, so a change in one tab never changes another.
+ */
+export const PROVIDER_FIELDS = ['provider', ...PROVIDER_ACCOUNTS, 'temperature', 'streamResponse', 'cancelPendingRequests', 'systemPrompt'];
+
+/** The AI dictionaries with a provider of their own besides the word card ("ai-word"). */
+export const SECTION_PROVIDERS = ['ai-context', 'ai-images'];
+
+const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** A dictionary's provider fields taken from `source`, with defaults for whatever is missing. */
+function providerFields(source, base) {
+    const out = {};
+    for (const key of PROVIDER_FIELDS) {
+        const value = source[key];
+        if (PROVIDER_ACCOUNTS.includes(key)) { out[key] = {...base[key], ...(isObject(value) ? value : {})}; }
+        else if (key === 'temperature') { out[key] = typeof value === 'number' && Number.isFinite(value) ? value : base[key]; }
+        else if (key === 'provider' || key === 'systemPrompt') { out[key] = typeof value === 'string' ? value : base[key]; }
+        else { out[key] = typeof value === 'boolean' ? value : base[key]; }
+    }
+    return out;
+}
+
+/** The AI options one dictionary's requests use: the shared prompts with its own provider fields. */
+export function aiOptionsFor(ai, dictId) {
+    const own = ai?.sectionProviders?.[dictId];
+    return isObject(own) ? {...ai, ...own} : ai;
+}
+
 export function defaultAiOptions() {
+    const options = baseAiOptions();
+    options.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(options, options)]));
+    return options;
+}
+
+function baseAiOptions() {
     return {
         provider: 'openai',
         customPrompt: DEFAULT_PROMPT,
@@ -20,8 +60,13 @@ export function defaultAiOptions() {
         imageQueryPrompt: IMAGE_QUERY_PROMPT,
         imageQueryUseAi: true,
         autoShowImages: false,
+        // Migaku's meme mode, switched in the pop-up's "Imagens" section: " meme" ends the search.
+        imageMemeMode: false,
         systemPrompt: '',
+        // The word card ("IA — palavra no contexto").
         autoGenerateOnLookup: true,
+        // The context translator has its own switch.
+        autoTranslateContext: true,
         autoExplain: false,
         streamResponse: true,
         cancelPendingRequests: true,
@@ -50,17 +95,24 @@ export function defaultAiOptions() {
  * @param {unknown} stored
  */
 export function normalizeAiOptions(stored) {
-    const base = defaultAiOptions();
+    const base = baseAiOptions();
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
-        return base;
+        return defaultAiOptions();
     }
     const out = {...base, ...stored};
-    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi']) {
+    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup']) {
         if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
     }
-    for (const key of ['openai', 'gemini', 'deepseek', 'custom']) {
-        out[key] = {...base[key], ...(typeof stored[key] === 'object' && stored[key] !== null ? stored[key] : {})};
+    // One switch used to start both the word card and the context translation: until the
+    // translator's own switch is set, it keeps what that switch said.
+    if (typeof stored.autoTranslateContext !== 'boolean') { out.autoTranslateContext = out.autoGenerateOnLookup; }
+    for (const key of PROVIDER_ACCOUNTS) {
+        out[key] = {...base[key], ...(isObject(stored[key]) ? stored[key] : {})};
     }
+    // The context translator and the pictures had no provider of their own before: until they get
+    // one, they start from a copy of the word card's, so they keep working as they did.
+    const own = isObject(stored.sectionProviders) ? stored.sectionProviders : {};
+    out.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(isObject(own[id]) ? own[id] : out, base)]));
     for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
         if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
     }

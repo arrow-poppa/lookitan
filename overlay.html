@@ -14,10 +14,9 @@
         .w > .ink { position: absolute; border-radius: 2px; pointer-events: none; transition: background 60ms; }
         .w:hover > .ink, .w.seen > .ink { background: rgba(255, 221, 0, 0.26); }
         .w.sel > .ink, .w.sel:hover > .ink { background: rgba(255, 221, 0, 0.5); }
-        #hint.spotlight { display: none; }
         /* Between lookups, and while a whole-screen lookup is still being read: nothing visible.
            The near-transparent shade stays, so the window still takes the clicks and the wheel. */
-        body.idle #frame, body.idle #dim, body.idle #block, body.idle #words, body.idle #hint { visibility: hidden; }
+        body.idle #frame, body.idle #dim, body.idle #block, body.idle #words { visibility: hidden; }
         /* The block of text the shortcut was pressed on, off its words (automatic capture). */
         #block {
             position: fixed; display: none; pointer-events: none; border-radius: 8px;
@@ -36,12 +35,6 @@
         #words.spotlight .ink::after { content: ""; position: absolute; inset: 0; border-radius: inherit; transition: background 60ms; }
         #words.spotlight .w:hover > .ink::after, #words.spotlight .w.seen > .ink::after { background: rgba(255, 221, 0, 0.26); }
         #words.spotlight .w.sel > .ink::after { background: rgba(255, 221, 0, 0.5); }
-        #hint {
-            position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
-            font: 12.5px system-ui, "Segoe UI", sans-serif; color: #fff;
-            background: rgba(20, 22, 26, 0.78); padding: 6px 12px; border-radius: 999px;
-            pointer-events: none;
-        }
     </style>
 </head>
 <body>
@@ -50,7 +43,6 @@
     <canvas id="dim"></canvas>
     <div id="block"></div>
     <div id="words"></div>
-    <div id="hint">Clique em outra palavra · Esc para fechar</div>
     <script type="module" src="/src/overlay/main.js"></script>
 </body>
 </html>

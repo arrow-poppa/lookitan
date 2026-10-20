@@ -57,6 +57,14 @@ export function cleanQuery(text, fallback) {
     return query && query.length <= 120 ? query : String(fallback || '').trim();
 }
 
+/**
+ * Migaku's meme mode: " meme" at the end of the search. SafeSearch stays strict, but the results
+ * can still be crude, which Migaku warns about too.
+ */
+export function withMemeMode(query, on) {
+    return on ? `${query} meme` : query;
+}
+
 /** Bing Images' results page for a query, with Migaku's parameters (SafeSearch strict). */
 export function bingUrl(query) {
     return `https://www.bing.com/images/async?q=${encodeURIComponent(query)}&first=0&count=100&adlt=strict`;

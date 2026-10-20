@@ -125,3 +125,9 @@ test('{image} uploads the checked pictures to Anki, in order, only when a field 
     assert.equal(notes.suggestMarker('Picture', 3), '{image}');
     assert.equal(notes.suggestMarker('Screenshot', 3), '{screenshot}');
 });
+
+test('meme mode puts " meme" at the end of the search, as Migaku does', async () => {
+    const {withMemeMode} = await import('../src/lib/images.js');
+    assert.equal(withMemeMode('to run', true), 'to run meme');
+    assert.equal(withMemeMode('to run', false), 'to run');
+});

@@ -3,7 +3,7 @@
 
 import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
-import {DEFAULT_PROMPT} from '../lib/ai/defaults.js';
+import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
 import {CARD_PROMPT, CONTEXT_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
@@ -155,34 +155,39 @@ function aiControl(path, label, control) {
     return control;
 }
 
-function providerSection() {
-    const ai = store.ai;
+/**
+ * The AI provider fields of one AI dictionary. "IA — palavra no contexto" keeps its own at the top
+ * of the AI options; the context translator and the pictures keep theirs in
+ * `ai.sectionProviders[<id>]` (see aiOptionsFor), so each tab changes only its own section.
+ */
+function providerSection(ai = store.ai, prefix = '') {
+    const ctl = (path, label, control) => aiControl(`${prefix}${path}`, label, control);
     const cfg = () => ai[ai.provider];
     const wrap = el('div', {class: 'group'});
     const draw = () => {
         wrap.replaceChildren();
         const models = (DEFAULT_MODELS[ai.provider] || []);
-        const modelInput = aiControl(`${ai.provider}.model`, 'Modelo', textInput(cfg().model, (v) => { cfg().model = v.trim(); save(); }, {placeholder: models[0] || 'nome-do-modelo'}));
-        const listId = `models-${ai.provider}`;
+        const modelInput = ctl(`${ai.provider}.model`, 'Modelo', textInput(cfg().model, (v) => { cfg().model = v.trim(); save(); }, {placeholder: models[0] || 'nome-do-modelo'}));
+        const listId = `models-${prefix.replace(/\W/g, '-')}${ai.provider}`;
         modelInput.setAttribute('list', listId);
         const datalist = el('datalist', {id: listId}, ...models.map((m) => el('option', {value: m})));
         wrap.append(...[
             cardRow({icon: 'cloud', title: 'Provedor', wide: true,
-                control: aiControl('provider', 'Provedor', select([
+                control: ctl('provider', 'Provedor', select([
                     {value: 'openai', label: 'OpenAI'},
                     {value: 'gemini', label: 'Google Gemini'},
                     {value: 'deepseek', label: 'DeepSeek'},
                     {value: 'custom', label: 'Personalizado (OpenRouter, Ollama, LM Studio…)'},
                 ], ai.provider, (v) => { ai.provider = v; save(); draw(); }))}),
             ai.provider === 'custom' ? cardRow({icon: 'cloud', title: 'Endpoint', desc: 'URL completa da API compatível com OpenAI. Usada exatamente como informada.', wide: true,
-                control: aiControl('custom.endpoint', 'Endpoint', textInput(ai.custom.endpoint, (v) => { ai.custom.endpoint = v.trim(); save(); }, {placeholder: 'https://openrouter.ai/api/v1/chat/completions'}))}) : null,
+                control: ctl('custom.endpoint', 'Endpoint', textInput(ai.custom.endpoint, (v) => { ai.custom.endpoint = v.trim(); save(); }, {placeholder: 'https://openrouter.ai/api/v1/chat/completions'}))}) : null,
             cardRow({icon: 'settings', title: 'Chave da API', wide: true,
-                control: aiControl(`${ai.provider}.apiKey`, 'Chave da API', textInput(cfg().apiKey, (v) => { cfg().apiKey = v.trim(); save(); }, {type: 'password'}))}),
+                control: ctl(`${ai.provider}.apiKey`, 'Chave da API', textInput(cfg().apiKey, (v) => { cfg().apiKey = v.trim(); save(); }, {type: 'password'}))}),
             cardRow({icon: 'sparkle', title: 'Modelo', wide: true, control: el('div', {style: 'width:100%'}, modelInput, datalist)}),
         ].filter(Boolean));
         if (ai.provider === 'gemini') {
             wrap.append(cardRow({icon: 'sparkle', title: 'Nível de raciocínio (Gemini 3)', wide: true,
-                control: aiControl('gemini.thinkingLevel', 'Nível de raciocínio (Gemini 3)', select([{value: '', label: 'Padrão do modelo'}, ...['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].map((v) => ({value: v, label: v}))],
+                control: ctl('gemini.thinkingLevel', 'Nível de raciocínio (Gemini 3)', select([{value: '', label: 'Padrão do modelo'}, ...['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].map((v) => ({value: v, label: v}))],
                     ai.gemini.thinkingLevel, (v) => { ai.gemini.thinkingLevel = v; save(); }))}));
         }
         if (ai.provider === 'deepseek' || ai.provider === 'custom') {
@@ -196,50 +201,46 @@ function providerSection() {
             wrap.append(
                 cardRow({icon: 'sparkle', title: 'Raciocínio (thinking)', wide: true,
                     desc: 'Use o padrão do modelo ou escolha se o raciocínio deve ficar ligado ou desligado.',
-                    control: aiControl(`${ai.provider}.thinkingMode`, 'Raciocínio (thinking)', select([
+                    control: ctl(`${ai.provider}.thinkingMode`, 'Raciocínio (thinking)', select([
                         {value: '', label: 'Padrão'}, {value: 'enabled', label: 'Ligado'}, {value: 'disabled', label: 'Desligado'},
                     ], cfg().thinkingMode, (v) => { cfg().thinkingMode = v; save(); }))}),
                 cardRow({icon: 'sparkle', title: 'Esforço do raciocínio (thinking)', wide: true,
                     desc: 'O modelo precisa aceitar o nível escolhido. Máxima equivale a xhigh no OpenRouter.',
-                    control: aiControl(`${ai.provider}.thinkingIntensity`, 'Esforço do raciocínio (thinking)', select(intensities, cfg().thinkingIntensity,
+                    control: ctl(`${ai.provider}.thinkingIntensity`, 'Esforço do raciocínio (thinking)', select(intensities, cfg().thinkingIntensity,
                         (v) => { cfg().thinkingIntensity = v; save(); draw(); }))}),
             );
             if (ai.provider === 'custom') {
                 wrap.append(cardRow({icon: 'sparkle', title: 'Valor personalizado de thinking',
                     desc: 'Usado quando o esforço é Personalizada. OpenRouter: medium, 2000 ou {"max_tokens":2000}. Outras APIs: reasoning_effort.', wide: true,
-                    control: aiControl('custom.customThinkingIntensity', 'Valor personalizado de thinking', textInput(ai.custom.customThinkingIntensity,
+                    control: ctl('custom.customThinkingIntensity', 'Valor personalizado de thinking', textInput(ai.custom.customThinkingIntensity,
                         (v) => { ai.custom.customThinkingIntensity = v; save(); }, {placeholder: 'medium, 2000 ou {"max_tokens":2000}'}))}));
             }
         }
         if (ai.provider === 'custom') {
             wrap.append(
                 cardRow({icon: 'list', title: 'Roteamento de provedores (OpenRouter)', wide: true,
-                    control: aiControl('custom.providerRoutingMode', 'Roteamento de provedores (OpenRouter)', select([
+                    control: ctl('custom.providerRoutingMode', 'Roteamento de provedores (OpenRouter)', select([
                         {value: '', label: 'Sem roteamento'}, {value: 'order', label: 'Ordem'}, {value: 'only', label: 'Somente'}, {value: 'ignore', label: 'Ignorar'},
                     ], ai.custom.providerRoutingMode, (v) => { ai.custom.providerRoutingMode = v; save(); }))}),
                 cardRow({icon: 'list', title: 'Provedores do OpenRouter', desc: 'Slugs separados por vírgula, na ordem desejada.', wide: true,
-                    control: aiControl('custom.providerSlugs', 'Provedores do OpenRouter', textInput(ai.custom.providerSlugs,
+                    control: ctl('custom.providerSlugs', 'Provedores do OpenRouter', textInput(ai.custom.providerSlugs,
                         (v) => { ai.custom.providerSlugs = v; save(); }, {placeholder: 'deepinfra/turbo, fireworks'}))}),
                 cardRow({icon: 'list', title: 'Permitir outros provedores se os escolhidos falharem',
-                    control: aiControl('custom.providerAllowFallbacks', 'Permitir outros provedores', toggle(ai.custom.providerAllowFallbacks !== false, (v) => { ai.custom.providerAllowFallbacks = v; save(); }))}),
+                    control: ctl('custom.providerAllowFallbacks', 'Permitir outros provedores', toggle(ai.custom.providerAllowFallbacks !== false, (v) => { ai.custom.providerAllowFallbacks = v; save(); }))}),
                 el('div', {class: 'card-row stack'},
                     el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'JSON extra no corpo da requisição'), el('div', {class: 'd'}, 'Mesclado ao corpo de cada pedido. Ex.: {"top_p": 0.9}'))),
-                    aiControl('custom.requestBodyJson', 'JSON extra no corpo da requisição', textArea(ai.custom.requestBodyJson, (v) => { ai.custom.requestBodyJson = v; save(); }, 3))),
+                    ctl('custom.requestBodyJson', 'JSON extra no corpo da requisição', textArea(ai.custom.requestBodyJson, (v) => { ai.custom.requestBodyJson = v; save(); }, 3))),
             );
         }
         const temp = el('input', {type: 'range', min: '0', max: '2', step: '0.05', style: 'width:220px'});
         temp.value = String(ai.temperature);
-        aiControl('temperature', 'Temperatura', temp);
+        ctl('temperature', 'Temperatura', temp);
         const tempLabel = el('span', {class: 'muted', style: 'width:40px;text-align:right'}, Number(ai.temperature).toFixed(2));
         temp.addEventListener('input', () => { ai.temperature = Number(temp.value); tempLabel.textContent = ai.temperature.toFixed(2); save(); });
         wrap.append(
             cardRow({icon: 'settings', title: 'Temperatura', control: el('div', {style: 'display:flex;gap:10px;align-items:center'}, temp, tempLabel)}),
-            cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', desc: 'Gera o card da palavra e a tradução de contexto.', control: aiControl('autoGenerateOnLookup', 'Gerar automaticamente ao abrir o popup', toggle(ai.autoGenerateOnLookup, (v) => { ai.autoGenerateOnLookup = v; save(); }))}),
-            cardRow({icon: 'sparkle', title: 'Explicar automaticamente ao consultar', desc: 'Desligado: gera a explicação somente ao clicar em Explicar.',
-                control: aiControl('autoExplain', 'Explicar automaticamente ao consultar', toggle(ai.autoExplain, (v) => { ai.autoExplain = v; save(); }))}),
-            cardRow({icon: 'play', title: 'Mostrar a resposta enquanto é gerada (streaming)', control: aiControl('streamResponse', 'Streaming', toggle(ai.streamResponse, (v) => { ai.streamResponse = v; save(); }))}),
-            cardRow({icon: 'close', title: 'Cancelar pedidos pendentes ao consultar outra palavra', control: aiControl('cancelPendingRequests', 'Cancelar pedidos pendentes', toggle(ai.cancelPendingRequests, (v) => { ai.cancelPendingRequests = v; save(); }))}),
-            cardRow({icon: 'book', title: 'Usar a IA quando a palavra não estiver nos dicionários', control: aiControl('unknownWordFallback', 'IA quando a palavra não estiver nos dicionários', toggle(ai.unknownWordFallback, (v) => { ai.unknownWordFallback = v; save(); }))}),
+            cardRow({icon: 'play', title: 'Mostrar a resposta enquanto é gerada (streaming)', control: ctl('streamResponse', 'Streaming', toggle(ai.streamResponse, (v) => { ai.streamResponse = v; save(); }))}),
+            cardRow({icon: 'close', title: 'Cancelar pedidos pendentes ao consultar outra palavra', control: ctl('cancelPendingRequests', 'Cancelar pedidos pendentes', toggle(ai.cancelPendingRequests, (v) => { ai.cancelPendingRequests = v; save(); }))}),
         );
     };
     draw();
@@ -257,16 +258,17 @@ function promptCard(title, desc, get, set, fallback, setting = null) {
         area);
 }
 
-function testButton() {
+/** Tries a dictionary's own provider with one of its prompts. */
+function testButton(dictId = 'ai-word', promptKey = 'customPrompt') {
     const out = el('span', {class: 'muted'});
     const btn = el('button', {class: 'primary', html: `${icon('sparkle', 'sm')}Testar a IA`});
     btn.addEventListener('click', async () => {
         out.className = 'muted';
         out.textContent = 'Testando…';
         try {
-            const text = await explain(store.ai, 'serendipity', 'Finding that old book in the attic was pure serendipity.', {
+            const text = await explain(aiOptionsFor(store.ai, dictId), 'serendipity', 'Finding that old book in the attic was pure serendipity.', {
                 signal: new AbortController().signal,
-                prompt: fillLanguages(store.ai.customPrompt, store.settings),
+                prompt: fillLanguages(store.ai[promptKey], store.settings),
                 onChunk: (_d, full) => { out.textContent = full.slice(0, 200); },
             });
             out.className = 'ok';
@@ -292,7 +294,13 @@ function renderAiWord(root) {
             cardRow({icon: 'eye', title: 'Tradução da palavra', desc: 'Desligada, a IA nem gera a tradução, o que gasta menos tokens.',
                 control: toggle(s.showWordTranslation !== false, (v) => { s.showWordTranslation = v; save(); renderDetail(); })}),
             s.showWordTranslation !== false ? cardRow({icon: 'eyeOff', title: 'Ocultar a tradução da palavra', desc: 'A tradução só aparece quando você clica nela.',
-                control: toggle(s.hideWordTranslation, (v) => { s.hideWordTranslation = v; save(); })}) : null),
+                control: toggle(s.hideWordTranslation, (v) => { s.hideWordTranslation = v; save(); })}) : null,
+            cardRow({icon: 'sparkle', title: 'Gerar o card automaticamente ao abrir o popup', desc: 'Desligado: o card só é gerado quando você clica em Gerar.',
+                control: aiControl('autoGenerateOnLookup', 'Gerar o card automaticamente ao abrir o popup', toggle(ai.autoGenerateOnLookup, (v) => { ai.autoGenerateOnLookup = v; save(); }))}),
+            cardRow({icon: 'sparkle', title: 'Explicar automaticamente ao consultar', desc: 'Desligado: gera a explicação somente ao clicar em Explicar.',
+                control: aiControl('autoExplain', 'Explicar automaticamente ao consultar', toggle(ai.autoExplain, (v) => { ai.autoExplain = v; save(); }))}),
+            cardRow({icon: 'book', title: 'Usar a IA quando a palavra não estiver nos dicionários', desc: 'Gera o card mesmo com a opção acima desligada, quando nenhum dicionário tem a palavra.',
+                control: aiControl('unknownWordFallback', 'IA quando a palavra não estiver nos dicionários', toggle(ai.unknownWordFallback, (v) => { ai.unknownWordFallback = v; save(); }))})),
         el('h3', {}, 'Provedor de IA (sua chave, seu modelo)'),
         providerSection(),
         el('h3', {}, 'Prompts'),
@@ -301,7 +309,7 @@ function renderAiWord(root) {
             promptCard('Prompt da tradução da palavra', `O que a IA põe no campo "translation" do card. Só é enviado com a tradução da palavra ligada. Variáveis: ${vars}.`, () => ai.wordTranslationPrompt, (v) => { ai.wordTranslationPrompt = v; }, WORD_TRANSLATION_PROMPT, 'wordTranslationPrompt'),
             promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT, 'customPrompt'),
             el('div', {class: 'card-row stack'},
-                el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado em todos os pedidos (card, explicação e tradução). Opcional.'))),
+                el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado no card e na explicação. Opcional.'))),
                 aiControl('systemPrompt', 'System prompt', textArea(ai.systemPrompt, (v) => { ai.systemPrompt = v; save(); }, 3)))),
         testButton(),
     );
@@ -309,17 +317,24 @@ function renderAiWord(root) {
 
 function renderAiContext(root) {
     const ai = store.ai;
+    const own = ai.sectionProviders['ai-context'];
     const vars = escapeHtml('{{target}}, {{sentence}} (só a frase da palavra), {{translationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-context']),
-        el('p', {class: 'lead'}, 'Traduz a frase em volta da palavra e destaca a tradução da palavra. Usa o mesmo provedor de IA configurado em "IA — palavra no contexto".'),
+        el('p', {class: 'lead'}, 'Traduz a frase em volta da palavra e destaca a tradução da palavra.'),
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             languageRows()[1],
-            promptCard('Prompt da tradução', `A tradução da palavra deve vir entre **asteriscos duplos** para ser destacada. Variáveis: ${vars}.`, () => ai.contextPrompt, (v) => { ai.contextPrompt = v; }, CONTEXT_PROMPT, 'contextPrompt')),
-        el('h3', {}, 'Provedor de IA (compartilhado com a palavra no contexto)'),
-        providerSection(),
-        testButton(),
+            cardRow({icon: 'sparkle', title: 'Traduzir automaticamente ao abrir o popup', desc: 'Desligado: a frase só é traduzida quando você clica em Traduzir.',
+                control: aiControl('autoTranslateContext', 'Traduzir automaticamente ao abrir o popup', toggle(ai.autoTranslateContext, (v) => { ai.autoTranslateContext = v; save(); }))}),
+            promptCard('Prompt da tradução', `A tradução da palavra deve vir entre **asteriscos duplos** para ser destacada. Variáveis: ${vars}.`, () => ai.contextPrompt, (v) => { ai.contextPrompt = v; }, CONTEXT_PROMPT, 'contextPrompt'),
+            el('div', {class: 'card-row stack'},
+                el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado na tradução da frase. Opcional.'))),
+                aiControl('sectionProviders.ai-context.systemPrompt', 'System prompt', textArea(own.systemPrompt, (v) => { own.systemPrompt = v; save(); }, 3)))),
+        el('h3', {}, 'Provedor de IA (sua chave, seu modelo)'),
+        el('p', {class: 'muted'}, 'Só para o tradutor de contexto. Começa como uma cópia do provedor de "IA — palavra no contexto".'),
+        providerSection(own, 'sectionProviders.ai-context.'),
+        testButton('ai-context', 'contextPrompt'),
     );
 }
 
@@ -335,7 +350,7 @@ function imageTestButton() {
             let query = word;
             if (store.ai.imageQueryUseAi !== false) {
                 const {system, user} = imagePrompts(store.ai, store.settings);
-                query = cleanQuery(await explain(store.ai, word, 'Finding that old book in the attic was pure serendipity.', {
+                query = cleanQuery(await explain(aiOptionsFor(store.ai, 'ai-images'), word, 'Finding that old book in the attic was pure serendipity.', {
                     signal: new AbortController().signal, prompt: user, system,
                 }), word);
             }
@@ -368,8 +383,9 @@ function renderAiImages(root) {
                 () => ai.imageQuerySystemPrompt, (v) => { ai.imageQuerySystemPrompt = v; }, IMAGE_QUERY_SYSTEM_PROMPT, 'imageQuerySystemPrompt'),
             promptCard('User prompt', `A mensagem com a palavra. A primeira linha da resposta vira a busca. Variáveis: ${vars}.`,
                 () => ai.imageQueryPrompt, (v) => { ai.imageQueryPrompt = v; }, IMAGE_QUERY_PROMPT, 'imageQueryPrompt')),
-        el('h3', {}, 'Provedor de IA (compartilhado com a palavra no contexto)'),
-        providerSection(),
+        el('h3', {}, 'Provedor de IA (sua chave, seu modelo)'),
+        el('p', {class: 'muted'}, 'Só para o termo de busca das imagens. Começa como uma cópia do provedor de "IA — palavra no contexto".'),
+        providerSection(ai.sectionProviders['ai-images'], 'sectionProviders.ai-images.'),
         imageTestButton(),
     );
 }

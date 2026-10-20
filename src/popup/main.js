@@ -5,12 +5,13 @@
 import {emit, listen} from '@tauri-apps/api/event';
 import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib/api.js';
 import {explain, isConfigured} from '../lib/ai/explain.js';
+import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
-import {cleanQuery, downloadImage, imagePrompts, searchImages} from '../lib/images.js';
+import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,15 +36,41 @@ function aiText(kind, payload) {
     return (kind === 'context' || kind === 'images' ? payload.sentence : payload.context || payload.sentence) || payload.word;
 }
 
+/** The AI dictionary whose settings (provider, model, cancelling…) each kind of request follows. */
+const KIND_DICTIONARY = {card: 'ai-word', explain: 'ai-word', context: 'ai-context', images: 'ai-images'};
+
+/** The AI options of the dictionary a request kind belongs to: its own provider, the shared prompts. */
+function optionsOf(kind) {
+    return aiOptionsFor(ai, KIND_DICTIONARY[kind]);
+}
+
+/** The kind of each request key seen while the popup lives, to cancel by dictionary. */
+const keyKinds = new Map();
+const KEY_KINDS_KEPT = 400;
+
 /** Cache key: everything that changes the answer, as the fork's options context + term + sentence. */
-async function aiKey(kind, prompt, lookup = state, options = ai) {
+async function aiKey(kind, prompt, lookup = state, options = optionsOf(kind)) {
     // UI switches and credentials do not alter the answer. Never put API keys in persistent cache.
     const {apiKey: _credential, ...config} = options[options.provider] || {};
     const stable = Object.fromEntries(Object.entries(config).sort(([a], [b]) => a.localeCompare(b)));
     const content = responses.key([kind, options.provider, stable, options.temperature ?? 0.7,
         options.systemPrompt || '', prompt, lookup.payload.word, aiText(kind, lookup.payload)]);
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
-    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    const key = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    keyKinds.delete(key);
+    keyKinds.set(key, kind);
+    while (keyKinds.size > KEY_KINDS_KEPT) { keyKinds.delete(keyKinds.keys().next().value); }
+    return key;
+}
+
+const cancels = (kind) => optionsOf(kind).cancelPendingRequests !== false;
+
+/** `keep` plus the requests of the AI dictionaries whose "Cancelar pedidos pendentes" is off. */
+function keepRunning(keep) {
+    for (const [key, kind] of keyKinds) {
+        if (!cancels(kind)) { keep.add(key); }
+    }
+    return keep;
 }
 
 function applyZoom() {
@@ -202,7 +229,7 @@ async function runCard(body, force = false) {
 
 async function runContext(body, force = false) {
     const lookup = state;
-    const options = ai;
+    const options = optionsOf('context');
     const p = lookup.payload;
     if (!p.sentence) { body.innerHTML = '<p class="hint">Sem frase de contexto nesta consulta.</p>'; return; }
     body.innerHTML = '<div class="shimmer w80"></div><div class="shimmer w60"></div>';
@@ -272,13 +299,14 @@ function searchCached(query, force) {
 
 async function runImages(body, force = false) {
     const lookup = state;
-    const options = ai;
+    const options = optionsOf('images');
     const request = {};
     lookup.imagesRequest = request;
     const current = () => state === lookup && lookup.imagesRequest === request;
     body.innerHTML = `<div class="img-strip">${'<div class="img-tile loading"></div>'.repeat(3)}</div>`;
     try {
-        const query = await imageQuery(lookup, options, force);
+        // Meme mode only changes the search, so switching it reuses the AI's query.
+        const query = withMemeMode(await imageQuery(lookup, options, force), options.imageMemeMode === true);
         if (!current()) { return; }
         const items = await searchCached(query, force);
         if (!current()) { return; }
@@ -309,16 +337,24 @@ function setChecked(button, selected) {
  */
 function renderImages(body, lookup) {
     const {query, items} = lookup.images;
-    if (items.length === 0) {
-        body.innerHTML = `<p class="hint">Nenhuma imagem para “${escapeHtml(query)}”.</p>`;
-        return;
-    }
+    // Below the pictures, as in Migaku: the search that was made and the meme mode switch.
+    const foot = `<div class="img-foot">
+            <span class="img-query hint">Busca: ${escapeHtml(query)}</span>
+            <label class="switch img-meme" title="Busca imagens de memes da palavra. Cuidado: os resultados podem ser inadequados ou ofensivos.">
+                <span class="label">Modo meme</span><input type="checkbox"${ai.imageMemeMode === true ? ' checked' : ''}><span class="track"></span>
+            </label>
+        </div>`;
+    const empty = (text) => {
+        body.innerHTML = `<p class="hint">${text}</p>${foot}`;
+        bindMemeMode(body);
+    };
+    if (items.length === 0) { empty(`Nenhuma imagem para “${escapeHtml(query)}”.`); return; }
     body.innerHTML = `<div class="img-strip" role="list">${items.map((item, i) => `
         <div class="img-tile${lookup.images.selected.has(i) ? ' sel' : ''}" role="listitem" data-i="${i}">
             <img src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || query)}" draggable="false" referrerpolicy="no-referrer">
             ${checkButton(lookup.images.selected.has(i))}
-        </div>`).join('')}</div>
-        <div class="img-query hint">Busca: ${escapeHtml(query)}</div>`;
+        </div>`).join('')}</div>${foot}`;
+    bindMemeMode(body);
     const strip = body.querySelector('.img-strip');
     strip?.addEventListener('wheel', (ev) => {
         // The wheel scrolls the strip sideways while it can, then the pop-up again.
@@ -334,7 +370,7 @@ function renderImages(body, lookup) {
         // A picture the site does not serve is left out, as Migaku leaves it out.
         tile.querySelector('img')?.addEventListener('error', () => {
             tile.remove();
-            if (state === lookup && !strip?.querySelector('.img-tile')) { body.innerHTML = `<p class="hint">Nenhuma imagem pôde ser carregada para “${escapeHtml(query)}”.</p>`; }
+            if (state === lookup && !strip?.querySelector('.img-tile')) { empty(`Nenhuma imagem pôde ser carregada para “${escapeHtml(query)}”.`); }
         }, {once: true});
         tile.addEventListener('click', (ev) => {
             if (state !== lookup) { return; }
@@ -351,6 +387,25 @@ function renderImages(body, lookup) {
     }
 }
 
+/** The meme mode switch searches again at once and is kept for the next lookups, as in Migaku. */
+function bindMemeMode(body) {
+    body.querySelector('.img-meme input')?.addEventListener('change', (ev) => {
+        const on = Boolean(ev.target.checked);
+        ai.imageMemeMode = on;
+        void saveMemeMode(on);
+        void runImages(body);
+    });
+}
+
+async function saveMemeMode(on) {
+    try {
+        // Only this key changes; everything else is saved as the backend has it now.
+        const fresh = await api.getSettings();
+        fresh.ai = {...(fresh.ai && typeof fresh.ai === 'object' ? fresh.ai : {}), imageMemeMode: on};
+        await api.saveSettings(fresh);
+    } catch (e) { ankiStatus(`Configurações: ${e?.message || e}`, true); }
+}
+
 function toggleImage(lookup, i) {
     const selected = lookup.images.selected;
     if (selected.has(i)) { selected.delete(i); } else { selected.add(i); }
@@ -365,9 +420,12 @@ function syncTile(lookup, i) {
     setChecked(check, lookup.images.selected.has(i));
 }
 
-// The enlarged picture covers the pop-up. Esc, a click outside the picture or X closes it; the
-// arrows move to the neighbours.
+// The enlarged picture covers the pop-up. The arrows at its sides, ← →, or dragging the picture
+// sideways move to the neighbours; Esc, a click outside the picture or X closes it.
 let viewer = null;
+
+/** How far the picture must be dragged to move to the next one, in CSS pixels. */
+const SWIPE_PX = 60;
 
 function openViewer(lookup, i) {
     closeViewer();
@@ -376,31 +434,39 @@ function openViewer(lookup, i) {
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-label', 'Imagem ampliada');
     $('card').append(box);
-    viewer = {box, lookup, i};
+    viewer = {box, lookup, i, swiped: false};
+    box.addEventListener('click', (ev) => {
+        // The click that ends a drag is not a click outside the picture.
+        if (viewer?.swiped) { viewer.swiped = false; return; }
+        if (ev.target === box || ev.target.classList?.contains('img-frame')) { closeViewer(); }
+    });
     drawViewer();
 }
 
-function drawViewer() {
+function drawViewer(from = '') {
     if (!viewer) { return; }
     const {box, lookup, i} = viewer;
     const items = lookup.images.items;
     const item = items[i];
     const selected = lookup.images.selected.has(i);
+    const several = items.length > 1;
     let host = '';
     try { host = item.page ? new URL(item.page).hostname.replace(/^www\./, '') : ''; } catch (_e) { /* not a URL */ }
     box.innerHTML = `
         <div class="img-frame">
-            <img class="full" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || lookup.images.query)}" draggable="false" referrerpolicy="no-referrer">
+            <img class="full${from ? ` from-${from}` : ''}" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || lookup.images.query)}" draggable="false" referrerpolicy="no-referrer">
+            ${several ? `<button class="img-nav prev" title="Anterior (←)" aria-label="Anterior">${icon('chevronLeft')}</button>
+            <button class="img-nav next" title="Próxima (→)" aria-label="Próxima">${icon('chevronRight')}</button>` : ''}
         </div>
         <div class="img-bar">
-            ${items.length > 1 ? `<button class="ghost icon img-prev" title="Anterior (←)">${icon('chevronLeft')}</button>` : ''}
+            ${several ? `<span class="img-count">${i + 1}/${items.length}</span>` : ''}
             <span class="img-caption">${escapeHtml(item.title || lookup.images.query)}</span>
             ${host ? `<button class="ghost img-page" title="${escapeHtml(item.page)}">${icon('open', 'sm')}${escapeHtml(host)}</button>` : ''}
             <button class="ghost img-pick${selected ? ' on' : ''}" aria-pressed="${selected}" title="${checkLabel(selected)}">${icon('check', 'sm')}${selected ? 'Marcada para o Anki' : 'Marcar para o Anki'}</button>
-            ${items.length > 1 ? `<button class="ghost icon img-next" title="Próxima (→)">${icon('chevronRight')}</button>` : ''}
             <button class="ghost icon img-close" title="Fechar (Esc)">${icon('close')}</button>
         </div>`;
     const full = box.querySelector('.full');
+    if (several) { swipe(box.querySelector('.img-frame'), full); }
     if (full && item.src !== item.thumb && typeof Image === 'function') {
         // Bing's thumbnail shows at once; the full picture replaces it once it arrives, and a site
         // that refuses it leaves the thumbnail.
@@ -415,18 +481,54 @@ function drawViewer() {
         syncTile(lookup, i);
         drawViewer();
     });
-    box.querySelector('.img-prev')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(-1); });
-    box.querySelector('.img-next')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(1); });
+    box.querySelector('.img-nav.prev')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(-1); });
+    box.querySelector('.img-nav.next')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(1); });
     box.querySelector('.img-close')?.addEventListener('click', (ev) => { ev.stopPropagation(); closeViewer(); });
     box.querySelector('.img-page')?.addEventListener('click', (ev) => { ev.stopPropagation(); void api.openExternal(item.page); });
-    box.addEventListener('click', (ev) => { if (ev.target === box || ev.target.classList?.contains('img-frame')) { closeViewer(); } });
+}
+
+/** Dragging the picture sideways (mouse, pen or finger) past SWIPE_PX moves to its neighbour. */
+function swipe(frame, full) {
+    if (!frame || !full) { return; }
+    let drag = null;
+    const reset = () => { full.classList.remove('dragging'); full.style.transform = ''; full.style.opacity = ''; };
+    frame.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0 || ev.target.closest?.('button')) { return; }
+        drag = {id: ev.pointerId, x: ev.clientX, moved: false};
+    });
+    frame.addEventListener('pointermove', (ev) => {
+        if (!drag || ev.pointerId !== drag.id) { return; }
+        const dx = ev.clientX - drag.x;
+        if (!drag.moved && Math.abs(dx) < 6) { return; }
+        // Captured only once it is a drag: a plain click on the picture must stay on the picture.
+        if (!drag.moved) { frame.setPointerCapture?.(ev.pointerId); }
+        drag.moved = true;
+        full.classList.add('dragging');
+        full.style.transform = `translateX(${dx}px)`;
+        full.style.opacity = String(Math.max(0.35, 1 - Math.abs(dx) / 400));
+    });
+    const end = (ev) => {
+        if (!drag || ev.pointerId !== drag.id) { return; }
+        const {moved, x} = drag;
+        drag = null;
+        if (!moved) { return; }
+        const dx = ev.clientX - x;
+        if (viewer) {
+            viewer.swiped = true;
+            setTimeout(() => { if (viewer) { viewer.swiped = false; } }, 0);
+        }
+        if (ev.type === 'pointerup' && Math.abs(dx) >= SWIPE_PX) { stepViewer(dx < 0 ? 1 : -1); } else { reset(); }
+    };
+    frame.addEventListener('pointerup', end);
+    frame.addEventListener('pointercancel', end);
 }
 
 function stepViewer(delta) {
     if (!viewer) { return; }
     const n = viewer.lookup.images.items.length;
     viewer.i = (viewer.i + delta + n) % n;
-    drawViewer();
+    // The next picture slides in from the side it comes from.
+    drawViewer(delta > 0 ? 'right' : 'left');
 }
 
 /** Closes the enlarged picture; false when none was open. */
@@ -576,9 +678,10 @@ async function refreshAnkiButton() {
             lookup.duplicate = true;
         }
     } catch (e) {
+        // AnkiConnect not running: no notice in the pop-up, only the button's tooltip. Clicking
+        // "+" still reports the error.
         if (state !== lookup || lookup.ankiNoteId || lookup.aiPending || lookup.explainPending || $('btn-anki').dataset.mode === 'busy') { return; }
         setAnki('add', `Anki: ${e?.message || e}`);
-        ankiStatus(`Anki: ${e?.message || e}`, true);
     }
 }
 
@@ -647,16 +750,17 @@ async function render(payload) {
     anki = all.anki;
     dicts = dictionaries;
     state = {payload, keys: new Set()};
-    if (ai.cancelPendingRequests !== false) {
-        // Keep a request for this same word and sentence running; drop the others.
+    if (Object.keys(KIND_DICTIONARY).some(cancels)) {
+        // Keep a request for this same word and sentence running, and those of the dictionaries
+        // that do not cancel; drop the others.
         const keep = new Set(await Promise.all([
             aiKey('card', cardPrompt(ai.cardPrompt, settings, ai)),
             aiKey('context', fillLanguages(ai.contextPrompt, settings)),
             aiKey('explain', fillLanguages(ai.customPrompt, settings)),
-            aiKey('images', imagePromptKey(ai)),
+            aiKey('images', imagePromptKey(optionsOf('images'))),
         ]));
         if (sequence !== renderSequence) { return; }
-        responses.cancelPendingExcept(keep);
+        responses.cancelPendingExcept(keepRunning(keep));
     }
     closeViewer();
     $('sections').replaceChildren();
@@ -692,17 +796,17 @@ async function render(payload) {
                 body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Gerar</button>`;
                 body.querySelector('button').addEventListener('click', () => void runCard(body));
             }
-        } else if (d.kind === 'ai-context' && aiReady && payload.sentence && payload.sentence.trim() !== payload.word) {
+        } else if (d.kind === 'ai-context' && isConfigured(optionsOf('context')) && payload.sentence && payload.sentence.trim() !== payload.word) {
             const body = section('Tradutor de contexto', {ai: true, onRegenerate: (b) => void runContext(b, true)});
             shown++;
-            if (ai.autoGenerateOnLookup) {
+            if (ai.autoTranslateContext) {
                 void runContext(body);
             } else {
                 body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Traduzir</button>`;
                 body.querySelector('button').addEventListener('click', () => void runContext(body));
             }
         } else if (d.kind === 'ai-images' && payload.word) {
-            const body = section('Imagens', {ai: aiReady && ai.imageQueryUseAi !== false, onRegenerate: (b) => void runImages(b, true)});
+            const body = section('Imagens', {ai: ai.imageQueryUseAi !== false && isConfigured(optionsOf('images')), onRegenerate: (b) => void runImages(b, true)});
             shown++;
             // Like "Explicar": the pictures come on a click, or at once with the automatic option.
             if (ai.autoShowImages === true) {
@@ -841,7 +945,7 @@ void listen('lookup', (event) => { void render(event.payload); });
 void listen('popup-hidden', () => {
     stopDictionaryAudio();
     closeViewer();
-    if (ai?.cancelPendingRequests !== false) { responses.cancelPending(); }
+    if (ai && Object.keys(KIND_DICTIONARY).some(cancels)) { responses.cancelPendingExcept(keepRunning(new Set())); }
 });
 void listen('settings-changed', async () => {
     try {

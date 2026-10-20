@@ -193,24 +193,47 @@ test('custom thinking effort, manual values, routing and JSON survive provider s
     assert(fixture.saves() >= 6);
 });
 
-test('context translator exposes the shared provider settings without resetting them', async () => {
-    const fixture = await dictionaryFixture({provider: 'custom', custom: {thinkingIntensity: 'low', customThinkingIntensity: '2048'}});
+test('the context translator has its own provider, which changes only the translator', async () => {
+    const fixture = await dictionaryFixture({provider: 'custom', custom: {model: 'word-model', thinkingIntensity: 'low', customThinkingIntensity: '2048'}});
     fixture.list.children[1].dispatch('click');
-    assert.equal(fixture.control('custom.thinkingIntensity').value, 'low');
-    assert.equal(fixture.control('custom.customThinkingIntensity').value, '2048');
+    const own = 'sectionProviders.ai-context.';
     assert(fixture.control('contextPrompt'));
-    assert.equal(fixture.saves(), 0);
+    assert(fixture.control('autoTranslateContext'), 'the translator has its own automatic switch');
+    for (const key of ['provider', 'custom.model', 'temperature', 'streamResponse', 'cancelPendingRequests', 'systemPrompt']) {
+        assert(fixture.control(`${own}${key}`), `the translator has its own ${key}`);
+    }
+    for (const key of ['provider', 'custom.thinkingIntensity', 'autoGenerateOnLookup', 'autoExplain', 'unknownWordFallback', 'streamResponse']) {
+        assert(!fixture.control(key), `${key} belongs to "IA — palavra no contexto"`);
+    }
+    assert.equal(fixture.control(`${own}custom.thinkingIntensity`).value, 'low', 'it starts as a copy of the word card provider');
+    fixture.change(`${own}custom.model`, 'context-model', 'input');
+    fixture.change(`${own}custom.thinkingIntensity`, 'high');
+    fixture.change(`${own}provider`, 'gemini');
+    const section = fixture.ai.sectionProviders['ai-context'];
+    assert.equal(section.provider, 'gemini');
+    assert.equal(section.custom.model, 'context-model');
+    assert.equal(section.custom.thinkingIntensity, 'high');
+    assert.equal(fixture.ai.provider, 'custom', 'the word card keeps its provider');
+    assert.equal(fixture.ai.custom.model, 'word-model');
+    assert.equal(fixture.ai.custom.thinkingIntensity, 'low');
+    assert.equal(fixture.ai.sectionProviders['ai-images'].custom.model, 'word-model', 'and so do the pictures');
 });
 
-test('the images dictionary has its own image query prompts and the on-click switch', async () => {
+test('the images dictionary has its own image query prompts, switch and provider', async () => {
     const fixture = await dictionaryFixture({provider: 'openai', openai: {model: 'kept-model'}});
     fixture.list.children[2].dispatch('click');
-    for (const key of ['autoShowImages', 'imageQueryUseAi', 'imageQuerySystemPrompt', 'imageQueryPrompt', 'provider', 'openai.model']) {
+    for (const key of ['autoShowImages', 'imageQueryUseAi', 'imageQuerySystemPrompt', 'imageQueryPrompt',
+        'sectionProviders.ai-images.provider', 'sectionProviders.ai-images.openai.model']) {
         assert(fixture.control(key), `${key} must be visible`);
+    }
+    for (const key of ['provider', 'openai.model', 'autoGenerateOnLookup', 'autoExplain', 'systemPrompt']) {
+        assert(!fixture.control(key), `${key} belongs to "IA — palavra no contexto"`);
     }
     assert.equal(fixture.control('imageQueryPrompt').value, fixture.ai.imageQueryPrompt);
     fixture.change('imageQueryPrompt', 'Word: {{target}}', 'input');
     assert.equal(fixture.ai.imageQueryPrompt, 'Word: {{target}}');
+    fixture.change('sectionProviders.ai-images.openai.model', 'cheap-model', 'input');
+    assert.equal(fixture.ai.sectionProviders['ai-images'].openai.model, 'cheap-model');
     assert.equal(fixture.ai.openai.model, 'kept-model');
 });
 

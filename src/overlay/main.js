@@ -9,7 +9,6 @@ import {schemeBase} from '../lib/api.js';
 
 const root = document.getElementById('words');
 const frame = document.getElementById('frame');
-const hint = document.getElementById('hint');
 const dim = document.getElementById('dim');
 const block = document.getElementById('block');
 /** Margin around the highlighted block, in CSS pixels. */
@@ -50,10 +49,11 @@ function containsCenter(w, s) {
     return cx >= w.x && cx <= w.x + w.w && cy >= w.y && cy <= w.y + w.h;
 }
 
-function setSpotlight(on, blurred) {
-    for (const [el, active] of [[hint, on], [frame, blurred], [root, blurred]]) {
+/** Blurs the frozen frame of a whole-screen lookup, with the words as sharp cut-outs. */
+function setBlurred(blurred) {
+    for (const el of [frame, root]) {
         if (!el) { continue; }
-        if (active) { el.classList.add('spotlight'); } else { el.classList.remove('spotlight'); }
+        if (blurred) { el.classList.add('spotlight'); } else { el.classList.remove('spotlight'); }
     }
 }
 
@@ -107,7 +107,7 @@ function render() {
         position(frame, current.frameRect, scale);
     }
     const blurred = Boolean(current.spotlight && current.frameRect && frame.src);
-    setSpotlight(Boolean(current.spotlight), blurred);
+    setBlurred(blurred);
     drawDim(Boolean(current.spotlight) && !blurred, scale);
     drawBlock(scale);
     const frag = document.createDocumentFragment();
