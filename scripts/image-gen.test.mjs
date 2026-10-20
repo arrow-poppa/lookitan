@@ -91,6 +91,9 @@ test('generateImages returns blobs, keeps the pictures of the requests that work
     assert.equal(Buffer.from(await pictures[0].blob.arrayBuffer()).toString(), 'fake-png');
     const none = fakeFetch([[429, {error: {message: 'Quota exceeded'}}]]);
     await assert.rejects(generateImages(options('openai', {model: 'gpt-image-1'}), 'a', {fetch: none.request}), /429: Quota exceeded/);
+    const textOnly = fakeFetch([[404, {error: {message: 'No endpoints found that support the requested output modalities: image, text', code: 404}}]]);
+    await assert.rejects(generateImages(options('custom', {model: 'google/gemini-3.1-flash-lite', endpoint: 'https://openrouter.ai/api/v1/chat/completions'}), 'a', {fetch: textOnly.request}),
+        /o modelo "google\/gemini-3.1-flash-lite" não gera imagens, só texto\. Use um modelo de imagem/);
     const refused = fakeFetch([blocked]);
     await assert.rejects(generateImages(options('gemini', {model: 'gemini-2.5-flash-image'}), 'a', {fetch: refused.request}), /IMAGE_SAFETY/);
 });

@@ -455,6 +455,11 @@ function imageProviderSection(own, prefix) {
                 control: ctl(`${own.provider}.apiKey`, 'Chave da API', textInput(cfg.apiKey, (v) => { cfg.apiKey = v.trim(); save(); }, {type: 'password'}))}),
             cardRow({icon: 'sparkle', title: 'Modelo de imagem', desc: modelHelp, wide: true,
                 control: el('div', {style: 'width:100%'}, modelInput, el('datalist', {id: listId}, ...models.map((m) => el('option', {value: m}))))}),
+            // Only OpenAI's Images API takes a quality; the other providers have none.
+            own.provider === 'openai' ? cardRow({icon: 'settings', title: 'Qualidade', desc: 'Baixa é a mais barata e já basta para um card. No DALL·E 3, Alta é "hd".', wide: true,
+                control: aiControl('imageGenQuality', 'Qualidade', select([
+                    {value: 'low', label: 'Baixa'}, {value: 'medium', label: 'Média'}, {value: 'high', label: 'Alta'}, {value: 'auto', label: 'Automática'},
+                ], store.ai.imageGenQuality || 'low', (v) => { store.ai.imageGenQuality = v; save(); }))}) : null,
             // A chat endpoint (OpenRouter) takes the same thinking and routing options as text.
             ...(own.provider === 'custom' ? [
                 ...thinkingRows('custom', own.custom, ctl, draw, 'Para modelos que pensam antes de desenhar, como o Gemini 3 Pro Image. Só no endpoint de chat; a API /images/generations não tem.'),
@@ -516,10 +521,7 @@ function renderAiImageGen(root) {
                     {value: '1:1', label: 'Quadrada (1:1)'}, {value: '16:9', label: 'Paisagem (16:9)'}, {value: '9:16', label: 'Retrato (9:16)'},
                     {value: '4:3', label: 'Paisagem (4:3)'}, {value: '3:4', label: 'Retrato (3:4)'},
                 ], ai.imageGenAspect || '1:1', (v) => { ai.imageGenAspect = v; save(); }))}),
-            cardRow({icon: 'settings', title: 'Qualidade (OpenAI)', desc: 'Baixa é a mais barata e já basta para um card. No DALL·E 3, Alta é "hd".', wide: true,
-                control: aiControl('imageGenQuality', 'Qualidade (OpenAI)', select([
-                    {value: 'low', label: 'Baixa'}, {value: 'medium', label: 'Média'}, {value: 'high', label: 'Alta'}, {value: 'auto', label: 'Automática'},
-                ], ai.imageGenQuality || 'low', (v) => { ai.imageGenQuality = v; save(); }))})),
+        ),
         el('h3', {}, 'Prompt'),
         el('div', {class: 'group'},
             promptCard('Prompt da imagem', `O que o modelo de imagem recebe. Variáveis: ${vars}.`,
