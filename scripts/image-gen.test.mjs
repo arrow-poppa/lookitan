@@ -45,6 +45,13 @@ test('a custom chat endpoint asks for pictures with modalities; an /images/gener
     assert.equal(chat[0].body.seed, 7, 'the extra JSON is merged');
     assert.equal(chat[0].body.stream, false);
     assert.equal(chat[0].headers['X-OpenRouter-Title'], 'Lookitan');
+    const routed = imageGenRequests(options('custom', {model: 'google/gemini-3-pro-image-preview', endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+        thinkingMode: 'enabled', thinkingIntensity: 'low', providerRoutingMode: 'only', providerSlugs: 'google-vertex', providerAllowFallbacks: false}), 'a cat');
+    assert.deepEqual(routed[0].body.reasoning, {effort: 'low', exclude: true}, 'thinking as the text requests send it to OpenRouter');
+    assert.deepEqual(routed[0].body.provider, {only: ['google-vertex'], allow_fallbacks: false}, 'and the provider routing');
+    const elsewhere = imageGenRequests(options('custom', {model: 'm', endpoint: 'https://example.com/v1/chat/completions', thinkingMode: 'disabled'}), 'a cat');
+    assert.deepEqual(elsewhere[0].body.thinking, {type: 'disabled'});
+    assert.equal(elsewhere[0].body.provider, undefined, 'routing is only for OpenRouter');
     const images = imageGenRequests(options('custom', {model: 'grok-2-image', endpoint: 'https://api.x.ai/v1/images/generations'}), 'a cat', {count: 2});
     assert.equal(images.length, 1);
     assert.deepEqual(images[0].body, {model: 'grok-2-image', prompt: 'a cat', n: 2});
