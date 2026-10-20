@@ -1,4 +1,4 @@
-// "Imagens IA": pictures made by an image model from the user's own prompt, with the user's own key
+// "Imagem AI": pictures made by an image model from the user's own prompt, with the user's own key
 // (BYOK). OpenAI and compatible servers use the Images API (`/v1/images/generations`); Gemini uses
 // generateContent with an IMAGE answer, or `:predict` for Imagen; OpenRouter, and other chat
 // servers that answer with pictures, get a chat request with `modalities: ["image", "text"]`.
@@ -279,7 +279,7 @@ export async function generateImages(options, prompt, {signal, fetch: request, .
             let json = null;
             try { json = JSON.parse(text); } catch (_e) { /* not JSON: the status says enough */ }
             const pictures = response.ok ? parseGeneratedImages(r.format, json) : [];
-            if (pictures.length === 0) { throw new Error(`Imagens IA: ${noPictureReason(r.format, json, response.ok ? 0 : response.status)}`); }
+            if (pictures.length === 0) { throw new Error(`Imagem AI: ${noPictureReason(r.format, json, response.ok ? 0 : response.status)}`); }
             return pictures;
         } finally {
             timeout.done();
@@ -287,7 +287,7 @@ export async function generateImages(options, prompt, {signal, fetch: request, .
     }));
     if (signal?.aborted) { throw signal.reason || new DOMException('Request cancelled', 'AbortError'); }
     const pictures = results.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value);
-    if (pictures.length === 0) { throw results.find((r) => r.status === 'rejected')?.reason || new Error('Imagens IA: nenhuma imagem na resposta'); }
+    if (pictures.length === 0) { throw results.find((r) => r.status === 'rejected')?.reason || new Error('Imagem AI: nenhuma imagem na resposta'); }
     return Promise.all(pictures.map((p) => ('url' in p ? download(doFetch, p.url, signal) : {blob: new Blob([fromBase64(p.data)], {type: p.mimeType})})));
 }
 

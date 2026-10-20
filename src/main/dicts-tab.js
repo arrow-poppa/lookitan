@@ -19,7 +19,7 @@ let focusId = null;
 /** Set by a drag that just ended, so its click does not count as choosing the row. */
 let dragEnded = false;
 
-const AI_NAMES = {'ai-word': 'IA — palavra no contexto', 'ai-context': 'Tradutor de contexto', 'ai-images': 'Imagens', 'ai-image-gen': 'Imagens IA'};
+const AI_NAMES = {'ai-word': 'IA — palavra no contexto', 'ai-context': 'Tradutor de contexto', 'ai-images': 'Imagens', 'ai-image-gen': 'Imagem AI'};
 
 function displayName(d) {
     return AI_NAMES[d.id] || d.name || d.path;
@@ -423,7 +423,7 @@ function renderAiImages(root) {
 }
 
 /**
- * The provider of "Imagens IA": only those that make pictures, with image models. It lives in
+ * The provider of "Imagem AI": only those that make pictures, with image models. It lives in
  * `ai.sectionProviders['ai-image-gen']` like the other dictionaries' own blocks.
  */
 function imageProviderSection(own, prefix) {
@@ -525,7 +525,7 @@ function renderAiImageGen(root) {
             promptCard('Prompt da imagem', `O que o modelo de imagem recebe. Variáveis: ${vars}.`,
                 () => ai.imageGenPrompt, (v) => { ai.imageGenPrompt = v; }, IMAGE_GEN_PROMPT, 'imageGenPrompt')),
         el('h3', {}, 'Provedor de imagens (sua chave, seu modelo)'),
-        el('p', {class: 'muted'}, 'Só para as Imagens IA. Começa com a chave de "IA — palavra no contexto" e um modelo de imagem.'),
+        el('p', {class: 'muted'}, 'Só para a Imagem AI. Começa com a chave de "IA — palavra no contexto" e um modelo de imagem.'),
         imageProviderSection(own, 'sectionProviders.ai-image-gen.'),
         imageGenTestButton(),
     );

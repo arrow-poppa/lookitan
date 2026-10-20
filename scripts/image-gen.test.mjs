@@ -101,7 +101,7 @@ test('a made picture goes to Anki from memory, with no download', async () => {
     assert.deepEqual(file, {data: PNG, extension: 'png'});
 });
 
-test('the prompt, count and provider block of "Imagens IA"', () => {
+test('the prompt, count and provider block of "Imagem AI"', () => {
     const prompt = imageGenPrompt('{{target}} | {{sentence}} | {{wordLanguage}} | {{translationLanguage}}', {word: 'corre', sentence: 'Ele corre.'},
         {ocrLanguage: 'pt-BR', translationLanguage: 'en-US'});
     assert(prompt.startsWith('corre | Ele corre. | ') && !prompt.includes('{{'), prompt);

@@ -138,5 +138,5 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .audio-sources.sub > li > .num { padding-top: 0; }
 .audio-sources.sub .name { flex: 1; }
 
-/* Dicionários › Imagens IA: the picture made by "Testar". */
+/* Dicionários › Imagem AI: the picture made by "Testar". */
 .image-gen-test img { display: block; max-width: 256px; max-height: 256px; margin-top: 10px; border-radius: 8px; border: 1px solid var(--border); }
