@@ -41,9 +41,6 @@ export function aiOptionsFor(ai, dictId) {
     return isObject(own) ? {...ai, ...own} : ai;
 }
 
-/** Keys of the removed "Imagem AI" dictionary. */
-const REMOVED_KEYS = ['imageGenPrompt', 'imageGenPrompts', 'imageGenPromptId', 'imageGenCount', 'imageGenAspect', 'imageGenQuality', 'autoGenerateImages'];
-
 export function defaultAiOptions() {
     const options = baseAiOptions();
     options.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(options, options)]));
@@ -105,9 +102,6 @@ export function normalizeAiOptions(stored) {
         return defaultAiOptions();
     }
     const out = {...base, ...stored};
-    // "Imagem AI" was taken out (branch `image-ai-backup`): its keys saved meanwhile are dropped.
-    // Its provider block goes too, since sectionProviders is rebuilt below.
-    for (const key of REMOVED_KEYS) { delete out[key]; }
     for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation']) {
         if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
     }
