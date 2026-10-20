@@ -52,7 +52,8 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         '@tauri-apps/api/event': {listen: async (name, handler) => { calls.listeners.set(name, handler); return () => {}; }, emit: async (...args) => { calls.events.push(args); }},
         [file('src/lib/api.js')]: {
             api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, webviewBlank: async (token) => { calls.blanks.push(token); }, entryHtml, listDictionaries: async () => dictionaries,
-                listWords: async () => words, deleteWord: async (id) => { calls.deleted = id; }, wordImage: async () => null},
+                listWords: async () => words, deleteWord: async (id) => { calls.deleted = id; }, wordImage: async () => null,
+                getSettings: async () => ({ai: {imageMemeMode: false}}), saveSettings: async (value) => { calls.saved = value; }},
             entryUrl: () => '', escapeHtml: (value) => String(value).replace(/[&<>"']/g, (c) =>
                 ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]),
             loadAllSettings: async () => ({settings, ai, anki: options}), renderMarkdown: (text) => String(text),
@@ -750,7 +751,7 @@ test('"Imagens IA" makes its pictures on a click, adds more, and sends the check
     assert(body.innerHTML.includes('Gerar 2 imagens'), 'like Explicar, nothing is made before the click');
     await settle();
     assert.equal(made.length, 0);
-    body.querySelector('button').listeners.click();
+    body.querySelector('.gen-btn').listeners.click();
     await settle();
     assert.deepEqual(made, [{prompt: 'draw corre', count: 2}], 'the prompt is filled, and the count chosen is sent');
     assert(body.innerHTML.includes('https://gen.example/1.png') && body.innerHTML.includes('https://gen.example/2.png'));
@@ -770,7 +771,7 @@ test('"Imagens IA" makes its pictures on a click, adds more, and sends the check
 test('"Imagens IA" shows pictures already made for the word at once, and the refresh button makes a new set', async () => {
     const {made, show, settle} = await imageGenFixture();
     const first = await show();
-    first.body.querySelector('button').listeners.click();
+    first.body.querySelector('.gen-btn').listeners.click();
     await settle();
     const again = await show();
     await settle();
@@ -798,7 +799,7 @@ test('"Imagens IA" pictures made before the app was closed come back from disk, 
     };
     const before = await imageGenFixture({imageStore, blobs: true});
     const first = await before.show();
-    first.body.querySelector('button').listeners.click();
+    first.body.querySelector('.gen-btn').listeners.click();
     await before.settle();
     assert.equal(disk.size, 1, 'the pictures are saved');
     assert.equal(JSON.stringify([...disk.values()][0].map((p) => p.title)), JSON.stringify(['test', 'test']), 'each picture keeps its model name');
@@ -830,4 +831,28 @@ test('a saved card opens whole in the pop-up, as the Palavras tab shows it', asy
         '<summary>Oxford</summary>', 'clean(<b>optimize</b> v.)']) {
         assert(html.includes(part), `the saved card shows ${part}`);
     }
+});
+
+test('"Imagens IA" has a prompt selector in the pop-up; the pictures of every prompt join in one strip', async () => {
+    const {view, made, show, settle} = await imageGenFixture();
+    Object.assign(view.ai, {imageGenPrompts: [{id: 'a', name: 'Ação', prompt: 'act {{target}}'}, {id: 'b', name: 'Objeto', prompt: 'thing {{target}}'}], imageGenPromptId: 'a'});
+    const {body} = await show();
+    assert(body.innerHTML.includes('class="img-prompt"') && body.innerHTML.includes('>Objeto<'), 'the selector lists the prompts');
+    assert(body.innerHTML.includes('value="a" selected'), 'the prompt chosen last is selected');
+    body.querySelector('.gen-btn').listeners.click();
+    await settle();
+    assert.equal(made[0].prompt, 'act corre');
+    body.querySelector('.img-prompt').listeners.change({target: {value: 'b'}});
+    await settle();
+    assert.equal(view.ai.imageGenPromptId, 'b');
+    assert.equal(view.calls.saved.ai.imageGenPromptId, 'b', 'the choice is kept for the next lookups');
+    assert.equal(view.calls.saved.ai.imageMemeMode, false, 'and nothing else changes');
+    assert.equal(made.length, 1, 'choosing a prompt makes nothing by itself');
+    body.querySelector('.img-more').listeners.click();
+    await settle();
+    assert.equal(made[1].prompt, 'thing corre');
+    const items = view.popup.stateForTest().generated.items;
+    assert.equal(items.length, 4, 'the new pictures join the first ones');
+    assert.equal(JSON.stringify(items.map((i) => i.title)), JSON.stringify(['Ação · test', 'Ação · test', 'Objeto · test', 'Objeto · test']),
+        'each picture says which prompt made it');
 });

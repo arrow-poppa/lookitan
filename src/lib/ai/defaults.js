@@ -3,7 +3,7 @@
 
 import {CARD_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
-import {IMAGE_GEN_DEFAULT_MODELS, IMAGE_GEN_PROMPT, IMAGE_GEN_PROVIDERS, imageGenCount} from '../image-gen.js';
+import {IMAGE_GEN_DEFAULT_MODELS, IMAGE_GEN_PROMPT, IMAGE_GEN_PROVIDERS, imageGenCount, normalizeImageGenPrompts} from '../image-gen.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
 export const DEFAULT_PROMPT = EXPLAIN_PROMPT;
@@ -85,6 +85,9 @@ function baseAiOptions() {
         // "Imagens IA": pictures made by an image model from this prompt, on a click unless
         // autoGenerateImages is on; imageGenCount per click.
         imageGenPrompt: IMAGE_GEN_PROMPT,
+        // The named prompts (the pop-up chooses among them) and the one chosen last.
+        imageGenPrompts: normalizeImageGenPrompts([]),
+        imageGenPromptId: 'meaning',
         imageGenCount: 1,
         imageGenAspect: '1:1',
         imageGenQuality: 'low',
@@ -143,6 +146,8 @@ export function normalizeAiOptions(stored) {
     const own = isObject(stored.sectionProviders) ? stored.sectionProviders : {};
     out.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, sectionFields(id, own[id], out, base)]));
     out.imageGenCount = imageGenCount(out.imageGenCount);
+    out.imageGenPrompts = normalizeImageGenPrompts(stored.imageGenPrompts, stored.imageGenPrompt);
+    if (!out.imageGenPrompts.some((p) => p.id === out.imageGenPromptId)) { out.imageGenPromptId = out.imageGenPrompts[0].id; }
     for (const key of ['imageGenAspect', 'imageGenQuality']) {
         if (typeof out[key] !== 'string' || !out[key]) { out[key] = base[key]; }
     }

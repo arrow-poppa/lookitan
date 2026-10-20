@@ -242,7 +242,7 @@ test('the images dictionary has its own image query prompts, switch and provider
 test('"Imagens IA" has its own prompt, count and image provider, without DeepSeek', async () => {
     const fixture = await dictionaryFixture({provider: 'openai', openai: {apiKey: 'sk', model: 'kept-model'}});
     fixture.list.children[3].dispatch('click');
-    for (const key of ['autoGenerateImages', 'imageGenCount', 'imageGenAspect', 'imageGenQuality', 'imageGenPrompt',
+    for (const key of ['autoGenerateImages', 'imageGenCount', 'imageGenAspect', 'imageGenQuality', 'imageGenPromptId', 'imageGenPrompts.0.name', 'imageGenPrompts.0.prompt',
         'sectionProviders.ai-image-gen.provider', 'sectionProviders.ai-image-gen.openai.model', 'sectionProviders.ai-image-gen.openai.apiKey']) {
         assert(fixture.control(key), `${key} must be visible`);
     }
@@ -257,6 +257,31 @@ test('"Imagens IA" has its own prompt, count and image provider, without DeepSee
     assert(fixture.control('sectionProviders.ai-image-gen.custom.endpoint'), 'a custom provider shows its endpoint');
     assert.equal(fixture.ai.provider, 'openai', 'the word card keeps its provider');
     assert.equal(fixture.ai.openai.model, 'kept-model');
+});
+
+test('"Imagens IA" prompts can be added, renamed, moved and deleted, and one is chosen for the pop-up', async () => {
+    const fixture = await dictionaryFixture();
+    fixture.list.children[3].dispatch('click');
+    const ids = () => JSON.stringify(fixture.ai.imageGenPrompts.map((p) => p.id));
+    assert.equal(ids(), JSON.stringify(['meaning', 'action', 'object']), 'new settings start with the examples');
+    const buttons = () => descendants(fixture.root).filter((n) => n.tagName === 'button' || n.tag === 'button');
+    const byLabel = (label) => buttons().filter((b) => b.attributes?.title === label);
+    byLabel('Descer')[0].dispatch('click');
+    assert.equal(ids(), JSON.stringify(['action', 'meaning', 'object']));
+    fixture.change('imageGenPrompts.2.name', 'Coisa', 'input');
+    assert.equal(fixture.ai.imageGenPrompts[2].name, 'Coisa');
+    fixture.change('imageGenPrompts.0.prompt', 'draw {{target}} doing it', 'input');
+    assert.equal(fixture.ai.imageGenPrompts[0].prompt, 'draw {{target}} doing it');
+    fixture.change('imageGenPromptId', 'object');
+    assert.equal(fixture.ai.imageGenPromptId, 'object');
+    byLabel('Apagar este prompt')[2].dispatch('click');
+    assert.equal(ids(), JSON.stringify(['action', 'meaning']));
+    assert.equal(fixture.ai.imageGenPromptId, 'action', 'deleting the chosen prompt chooses the first');
+    buttons().find((b) => String(b.innerHTML).includes('Adicionar prompt')).dispatch('click');
+    assert.equal(fixture.ai.imageGenPrompts.length, 3);
+    assert(fixture.control('imageGenPrompts.2.name'), 'the new prompt shows');
+    buttons().find((b) => String(b.innerHTML).includes('Trazer de volta os exemplos')).dispatch('click');
+    assert(fixture.ai.imageGenPrompts.some((p) => p.id === 'object'), 'a deleted example comes back');
 });
 
 test('the pop-up order is changed by dragging a row or with Alt+arrows, without HTML drag and drop', async () => {

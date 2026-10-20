@@ -135,3 +135,19 @@ test('a picture answered only as an address is fetched once, so it can be kept; 
     assert.equal(Buffer.from(await pictures[0].blob.arrayBuffer()).toString(), 'fake-png');
     assert.deepEqual(pictures[1], {url: 'https://cdn.example/gone.png'});
 });
+
+test('named prompts: examples for new settings, an edited old prompt kept first, and a chosen one that exists', async () => {
+    const {IMAGE_GEN_PRESETS, chosenImageGenPrompt, normalizeImageGenPrompts} = await import('../src/lib/image-gen.js');
+    assert.equal(JSON.stringify(normalizeImageGenPrompts(undefined, IMAGE_GEN_PROMPT).map((p) => p.id)), JSON.stringify(IMAGE_GEN_PRESETS.map((p) => p.id)));
+    const kept = normalizeImageGenPrompts(undefined, 'my own {{target}}');
+    assert.deepEqual(kept[0], {id: 'mine', name: 'Meu prompt', prompt: 'my own {{target}}'}, 'an edited single prompt is not lost');
+    const cleaned = normalizeImageGenPrompts([{id: 'x', name: '', prompt: 'a'}, {id: 'x', name: 'B', prompt: 'b'}, {name: 'no text'}], '');
+    assert.equal(cleaned.length, 2);
+    assert.equal(cleaned[0].name, 'Prompt 1');
+    assert.notEqual(cleaned[1].id, 'x', 'ids stay unique');
+    const old = normalizeAiOptions({imageGenPrompt: 'my own {{target}}', imageGenPromptId: 'gone'});
+    assert.equal(old.imageGenPromptId, 'mine', 'a chosen prompt that no longer exists becomes the first');
+    assert.equal(chosenImageGenPrompt(old).prompt, 'my own {{target}}');
+    assert.equal(chosenImageGenPrompt({...old, imageGenPromptId: 'object'}).name, 'Objeto (substantivos)');
+    assert.equal(chosenImageGenPrompt({imageGenPrompt: 'legacy'}).prompt, 'legacy');
+});

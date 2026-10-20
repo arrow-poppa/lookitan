@@ -140,3 +140,5 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 
 /* Dicionários › Imagens IA: the picture made by "Testar". */
 .image-gen-test img { display: block; max-width: 256px; max-height: 256px; margin-top: 10px; border-radius: 8px; border: 1px solid var(--border); }
+.image-prompt .head .txt input { width: 100%; }
+.image-prompt .num { width: 16px; color: var(--muted); font-size: 13px; text-align: right; }

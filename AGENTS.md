@@ -21,6 +21,7 @@ Since 2026-10-16 the repository has these branches:
 | `tests` | Every agent: Claude Code, Claude in the cloud, Codex | All work is committed and pushed here. |
 | `main` | Only the user | The user merges `tests` into `main` after testing it. |
 | `with-fade` | Snapshot requested by the user | Preserves the overlay fade version at `3dcd0f0`; do not update unless the user asks. |
+| `image-prompts` | Agents, for this feature only | Several named "Imagens IA" prompts with a selector in the pop-up, made from `tests` at `1e432d3` for the user to test apart. Keep that work here until the user says to merge. CI does not run on push: `gh workflow run build.yml --ref image-prompts`. |
 | `without-fade` | Only the user, or an agent the user asks | The user has it updated together with `main` (fast-forwarded to `tests` on 2026-10-20). |
 
 - **Never commit, push, merge or open a PR into `main`.** That includes Claude in the cloud, which by default creates its own `claude/…` branch: check out `tests` instead.
@@ -154,7 +155,12 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Pop-up: like Explicar, the section shows "Mostrar imagens" and loads on click, unless `ai.autoShowImages` is on. Pictures sit in a sideways strip (156×140 tiles; the wheel scrolls it while it can). The check mark in the top-right corner appears on hover and stays on a checked picture. Only a click on it checks the picture; a click anywhere else opens the viewer over the pop-up. The viewer moves to the neighbours with the arrows at the picture's sides, ← →, or by dragging the picture sideways at least `SWIPE_PX` (60 px; pointer events, so mouse, pen and touch). Esc or a click outside closes it, and the click that ends a drag does not count as one. Its bar has the position (2/10), "Marcar para o Anki" and the source page. A picture that fails to load is removed, as in Migaku.
   - Anki: `{image}` holds the checked pictures, each downloaded, scaled to at most 800 px (`ANKI_IMAGE_MAX_SIDE`; Migaku scales to 800 px wide, as webp) as JPEG, and stored as `lookitan_image_<n>_<date>.jpg`. GIFs, and pictures the WebView cannot decode, are stored as they are. Nothing is checked by default, so `{image}` stays empty unless the user checks something. `suggestMarker` gives `{image}` to fields named image/picture/photo, and `{screenshot}` only to "screenshot".
 - **Generated pictures ("Imagens IA", built-in dictionary `ai-image-gen`, `DictionaryKind::AiImageGen`):** asked by the user on 2026-10-20, e.g. to picture what a verb means. `migrate()` adds it after "Imagens".
-  - Prompt: `ai.imageGenPrompt` (default `IMAGE_GEN_PROMPT`), sent straight to the image model, with no text model in between. Variables: `{{target}}`, `{{sentence}}`, `{{wordLanguage}}`, `{{definitionLanguage}}`, `{{translationLanguage}}` (`imageGenPrompt`).
+  - Prompts (branch `image-prompts`): `ai.imageGenPrompts`, a list of `{id, name, prompt}`, and `ai.imageGenPromptId`, the one chosen.
+    - New settings get `IMAGE_GEN_PRESETS`: "Sentido na frase" (`IMAGE_GEN_PROMPT`), "Ação (verbos)" and "Objeto (substantivos)". Older settings with an edited `imageGenPrompt` get it first, as "Meu prompt" (`normalizeImageGenPrompts`). A chosen id that no longer exists becomes the first (`chosenImageGenPrompt`).
+    - Dicionários › Imagens IA edits the list (`imagePromptsEditor`): name, text, ↑/↓, delete (not the last one), "Adicionar prompt", "Trazer de volta os exemplos", and "Prompt escolhido".
+    - The pop-up shows a selector (`promptPicker`) beside "Gerar imagem" and under the strip when there are two or more prompts. Choosing one makes nothing by itself. It is saved like meme mode (`saveImageGenPrompt`: fresh `get_settings`, then only that key), and the main window copies it on `settings-changed`.
+    - The gallery is per word and sentence (`generationKey(payload)`), not per prompt, so pictures from every prompt join in one strip. Each picture's title, shown in the viewer, is "<prompt name> · <model>".
+  - Each prompt is sent straight to the image model, with no text model in between. Variables: `{{target}}`, `{{sentence}}`, `{{wordLanguage}}`, `{{definitionLanguage}}`, `{{translationLanguage}}` (`imageGenPrompt`).
   - Options: `ai.imageGenCount` (pictures per click, 1 by default, at most `IMAGE_GEN_MAX_COUNT` = 4), `imageGenAspect` (1:1 by default), `imageGenQuality` (OpenAI only, `low` by default) and `autoGenerateImages` (off). Every picture costs money, so nothing is made before a click unless that switch is on.
   - Provider: its own block, `ai.sectionProviders['ai-image-gen']`. The first copy takes the word card's keys, but image models (`IMAGE_GEN_DEFAULT_MODELS`: gpt-image-1-mini, gemini-2.5-flash-image). DeepSeek becomes OpenAI, since it makes no pictures. The panel (`imageProviderSection`) offers only OpenAI, Gemini and Personalizado, with no temperature, streaming or thinking.
   - Requests (`imageGenRequests`):
@@ -215,6 +221,10 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-20 (Claude, `image-prompts`): several named "Imagens IA" prompts, with a selector in the pop-up, at the user's request, on a branch of its own to test.
+  - Three examples to start with.
+  - The pictures of every prompt join in one strip per word.
+  - The choice is remembered.
 - 2026-10-20 (Claude, `tests`): Anki marker `{ai-image}` for the checked "Imagens IA" pictures, at the user's request; without it they still go to `{image}`.
 - 2026-10-20 (Claude, `tests`): "Imagens IA" pictures are kept on disk (IndexedDB, 100 pictures), so they come back after the app is closed. The saved cards view in the pop-up shows each card whole; the screenshot was squeezed to 120 px and several fields were missing.
 - 2026-10-20 (Claude, `tests`): new "Imagens IA" dictionary (`ai-image-gen`):

@@ -182,3 +182,9 @@ details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px
 .saved-foot { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 4px; }
 .saved-foot .spacer { flex: 1; }
 .saved-foot button { font-size: 12px; min-height: 26px; padding: 2px 8px; gap: 5px; color: var(--muted); }
+
+/* "Imagens IA": the prompt selector, beside "Gerar imagem" and under the strip. */
+.gen-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 10px; }
+.gen-row .explain-btn { margin: 0; }
+.img-prompt { width: auto; max-width: 200px; min-height: 28px; padding: 2px 6px; font-size: 12px; }
+.img-foot .spacer { flex: 1; }

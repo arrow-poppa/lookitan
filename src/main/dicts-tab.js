@@ -7,7 +7,7 @@ import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
 import {CARD_PROMPT, CONTEXT_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
-import {IMAGE_GEN_MAX_COUNT, IMAGE_GEN_MODELS, IMAGE_GEN_PROMPT, generateImages, imageGenPrompt} from '../lib/image-gen.js';
+import {IMAGE_GEN_MAX_COUNT, IMAGE_GEN_MODELS, IMAGE_GEN_PRESETS, IMAGE_GEN_PROMPT, chosenImageGenPrompt, generateImages, imageGenPrompt, newImageGenPromptId} from '../lib/image-gen.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
 import {cardRow, dropIndex, el, languageOptions, select, sortableRow, textArea, textInput, toggle} from './ui.js';
@@ -457,7 +457,7 @@ function imageProviderSection(own, prefix) {
     return wrap;
 }
 
-/** Makes one picture of a sample word with this dictionary's own provider and prompt. */
+/** Makes one picture of a sample word with this dictionary's own provider and the chosen prompt. */
 function imageGenTestButton() {
     const out = el('span', {class: 'muted'});
     const shot = el('div', {class: 'image-gen-test'});
@@ -469,7 +469,7 @@ function imageGenTestButton() {
         btn.disabled = true;
         try {
             const options = aiOptionsFor(store.ai, 'ai-image-gen');
-            const prompt = imageGenPrompt(store.ai.imageGenPrompt, {word: 'serendipity', sentence: 'Finding that old book in the attic was pure serendipity.'}, store.settings);
+            const prompt = imageGenPrompt(chosenImageGenPrompt(store.ai).prompt, {word: 'serendipity', sentence: 'Finding that old book in the attic was pure serendipity.'}, store.settings);
             const [picture] = await generateImages(options, prompt, {count: 1, aspect: store.ai.imageGenAspect, quality: store.ai.imageGenQuality});
             shot.append(el('img', {src: 'url' in picture ? picture.url : URL.createObjectURL(picture.blob), alt: 'serendipity'}));
             out.className = 'ok';
@@ -508,13 +508,81 @@ function renderAiImageGen(root) {
                 control: aiControl('imageGenQuality', 'Qualidade (OpenAI)', select([
                     {value: 'low', label: 'Baixa'}, {value: 'medium', label: 'Média'}, {value: 'high', label: 'Alta'}, {value: 'auto', label: 'Automática'},
                 ], ai.imageGenQuality || 'low', (v) => { ai.imageGenQuality = v; save(); }))})),
-        el('h3', {}, 'Prompt'),
-        el('div', {class: 'group'},
-            promptCard('Prompt da imagem', `O que o modelo de imagem recebe. Variáveis: ${vars}.`,
-                () => ai.imageGenPrompt, (v) => { ai.imageGenPrompt = v; }, IMAGE_GEN_PROMPT, 'imageGenPrompt')),
+        el('h3', {}, 'Prompts'),
+        el('p', {class: 'muted', html: `Cada prompt é o que o modelo de imagem recebe. As imagens de todos os prompts se juntam na mesma faixa do popup. Variáveis: ${vars}.`}),
+        imagePromptsEditor(ai),
         el('h3', {}, 'Provedor de imagens (sua chave, seu modelo)'),
         el('p', {class: 'muted'}, 'Só para as Imagens IA. Começa com a chave de "IA — palavra no contexto" e um modelo de imagem.'),
         imageProviderSection(own, 'sectionProviders.ai-image-gen.'),
         imageGenTestButton(),
     );
+}
+
+/**
+ * The named prompts of "Imagens IA": the pop-up has a selector among them and remembers the last
+ * one chosen (`imageGenPromptId`), which is also the choice here.
+ */
+function imagePromptsEditor(ai) {
+    const wrap = el('div', {class: 'group image-prompts'});
+    const draw = (focusIndex = null) => {
+        wrap.replaceChildren();
+        const list = ai.imageGenPrompts;
+        const chooser = aiControl('imageGenPromptId', 'Prompt escolhido', select(list.map((p) => ({value: p.id, label: p.name})),
+            ai.imageGenPromptId, (v) => { ai.imageGenPromptId = v; save(); }));
+        wrap.append(cardRow({icon: 'sparkle', title: 'Prompt escolhido', desc: 'O que o popup usa ao abrir. Lá, um seletor ao lado de "Gerar imagem" troca de prompt, e o último escolhido fica valendo.', wide: true, control: chooser}));
+        list.forEach((p, i) => {
+            const name = textInput(p.name, (v) => {
+                p.name = v;
+                save();
+                // The chooser shows the new name at once.
+                const option = [...chooser.children].find((o) => o.value === p.id);
+                if (option) { option.textContent = v || `Prompt ${i + 1}`; }
+            }, {placeholder: 'Nome do prompt'});
+            aiControl(`imageGenPrompts.${i}.name`, `Nome do prompt ${i + 1}`, name);
+            const area = aiControl(`imageGenPrompts.${i}.prompt`, `Prompt ${i + 1}`, textArea(p.prompt, (v) => { p.prompt = v; save(); }, 4));
+            const move = (to) => {
+                const [item] = list.splice(i, 1);
+                list.splice(to, 0, item);
+                save();
+                draw(to);
+            };
+            const button = (iconName, label, onClick, disabled = false) => {
+                const b = el('button', {class: 'ghost icon', type: 'button', title: label, 'aria-label': label, html: icon(iconName, 'sm')});
+                b.disabled = disabled;
+                b.addEventListener('click', onClick);
+                return b;
+            };
+            const remove = button('trash', 'Apagar este prompt', () => {
+                list.splice(i, 1);
+                if (!list.some((x) => x.id === ai.imageGenPromptId)) { ai.imageGenPromptId = list[0].id; }
+                save();
+                draw();
+            }, list.length === 1);
+            const row = el('div', {class: 'card-row stack image-prompt'},
+                el('div', {class: 'head'},
+                    el('span', {class: 'num'}, String(i + 1)),
+                    el('div', {class: 'txt'}, name),
+                    el('span', {class: 'audio-move'}, button('chevronUp', 'Subir', () => move(i - 1), i === 0), button('chevronDown', 'Descer', () => move(i + 1), i === list.length - 1)),
+                    remove),
+                area);
+            wrap.append(row);
+            if (focusIndex === i) { name.focus?.(); }
+        });
+        const add = el('button', {class: 'ghost', type: 'button', html: `${icon('plus', 'sm')}Adicionar prompt`});
+        add.addEventListener('click', () => {
+            list.push({id: newImageGenPromptId(), name: `Prompt ${list.length + 1}`, prompt: IMAGE_GEN_PROMPT});
+            save();
+            draw(list.length - 1);
+        });
+        const missing = IMAGE_GEN_PRESETS.filter((preset) => !list.some((p) => p.id === preset.id));
+        const restore = el('button', {class: 'ghost', type: 'button', html: `${icon('refresh', 'sm')}Trazer de volta os exemplos`});
+        restore.addEventListener('click', () => {
+            list.push(...missing.map((preset) => ({...preset})));
+            save();
+            draw();
+        });
+        wrap.append(el('div', {class: 'actions'}, add, missing.length ? restore : null));
+    };
+    draw();
+    return wrap;
 }

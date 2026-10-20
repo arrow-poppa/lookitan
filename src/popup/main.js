@@ -14,7 +14,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {audioFile, findAudio, normalizeAudioOptions} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
-import {generateImages, imageGenCount, imageGenPrompt, isImageGenConfigured} from '../lib/image-gen.js';
+import {chosenImageGenPrompt, generateImages, imageGenCount, imageGenPrompt, isImageGenConfigured} from '../lib/image-gen.js';
 import {forgetStoredGeneration, loadGeneration, saveGeneration} from '../lib/image-store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -768,9 +768,10 @@ async function checkedImageFiles(...galleries) {
 // ------------------------------------------------------------------ "Imagens IA" (pictures made by an image model)
 
 /**
- * Pictures made per prompt, so looking the word up again shows them without paying for new ones.
- * They are also kept on disk (image-store.js), so they come back after the app is closed.
- * "Gerar mais" adds to them; "Gerar de novo" starts over.
+ * Pictures made per word and sentence, from any of the user's prompts, so looking the word up
+ * again shows them without paying for new ones. They are also kept on disk (image-store.js), so
+ * they come back after the app is closed. "Gerar mais" adds to them with the prompt chosen in the
+ * selector; "Gerar de novo" starts over.
  * @type {Map<string, {items: object[], pending: Promise<void>|null, error: string}>}
  */
 const generations = new Map();
@@ -778,10 +779,44 @@ const GENERATIONS_KEPT = 30;
 
 const imageGenOptions = () => aiOptionsFor(ai, 'ai-image-gen');
 
-function generationKey(options, prompt) {
-    const cfg = options[options.provider] || {};
-    return JSON.stringify([options.provider, cfg.model || '', cfg.endpoint || '', cfg.requestBodyJson || '', prompt,
-        ai.imageGenAspect || '1:1', ai.imageGenQuality || 'low']);
+/** One gallery per word in its sentence: the pictures of every prompt join in it. */
+function generationKey(payload) {
+    return JSON.stringify(['word', payload.word || '', payload.sentence || '']);
+}
+
+/** The prompt selector, shown when there is more than one prompt to choose from. */
+function promptPicker() {
+    const list = Array.isArray(ai.imageGenPrompts) ? ai.imageGenPrompts : [];
+    if (list.length < 2) { return ''; }
+    const chosen = chosenImageGenPrompt(ai).id;
+    return `<select class="img-prompt" title="Prompt das próximas imagens" aria-label="Prompt das imagens">${list.map((p) =>
+        `<option value="${escapeHtml(p.id)}"${p.id === chosen ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select>`;
+}
+
+/** Choosing a prompt only changes the next pictures, and is kept for the next lookups. */
+function bindPromptPicker(body) {
+    body.querySelector('.img-prompt')?.addEventListener('change', (ev) => {
+        ai.imageGenPromptId = String(ev.target.value);
+        void saveImageGenPrompt(ai.imageGenPromptId);
+    });
+}
+
+async function saveImageGenPrompt(id) {
+    try {
+        // Only this key changes, as with meme mode.
+        const fresh = await api.getSettings();
+        fresh.ai = {...(fresh.ai && typeof fresh.ai === 'object' ? fresh.ai : {}), imageGenPromptId: id};
+        await api.saveSettings(fresh);
+    } catch (e) { ankiStatus(`Configurações: ${e?.message || e}`, true); }
+}
+
+/** Before any picture: the selector and "Gerar imagem". */
+function drawGenButton(body, error = '') {
+    const count = imageGenCount(ai.imageGenCount);
+    const label = error ? 'Tentar de novo' : count === 1 ? 'Gerar imagem' : `Gerar ${count} imagens`;
+    body.innerHTML = `${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}<div class="gen-row">${promptPicker()}<button class="ghost explain-btn gen-btn">${icon('sparkle', 'sm')}${label}</button></div>`;
+    bindPromptPicker(body);
+    body.querySelector('.gen-btn')?.addEventListener('click', () => void runImageGen(body, error ? 'more' : 'show'));
 }
 
 /** Lets a set of pictures go from memory: its addresses stop working, its files stay with any lookup that checked them. */
@@ -822,8 +857,9 @@ function generatedItem(picture, title) {
 async function runImageGen(body, mode = 'show') {
     const lookup = state;
     const options = imageGenOptions();
-    const prompt = imageGenPrompt(ai.imageGenPrompt, lookup.payload, settings);
-    const key = generationKey(options, prompt);
+    const chosen = chosenImageGenPrompt(ai);
+    const prompt = imageGenPrompt(chosen.prompt, lookup.payload, settings);
+    const key = generationKey(lookup.payload);
     const count = imageGenCount(ai.imageGenCount);
     if (mode === 'again' && !generations.get(key)?.pending) {
         dropGeneration(key);
@@ -833,11 +869,12 @@ async function runImageGen(body, mode = 'show') {
     let entry = mode === 'again' ? generations.get(key) : await storedGeneration(key);
     if (state !== lookup) { return; }
     entry ||= rememberGeneration(key, {items: [], pending: null, error: ''});
-    if (lookup.generated?.key !== key) { lookup.generated = {kind: 'generated', key, query: prompt, items: entry.items, selected: new Set()}; }
+    if (lookup.generated?.key !== key) { lookup.generated = {kind: 'generated', key, query: lookup.payload.word, items: entry.items, selected: new Set()}; }
     const make = !entry.pending && (mode !== 'show' || entry.items.length === 0);
     if (make) {
         entry.error = '';
-        const title = String(options[options.provider]?.model || '');
+        // Each picture says which prompt and model made it, in the viewer.
+        const title = [chosen.name, String(options[options.provider]?.model || '')].filter(Boolean).join(' · ');
         // Not cancelled by a new lookup: the pictures are paid for, so they are kept for later.
         entry.pending = generateImages(options, prompt, {count, aspect: ai.imageGenAspect, quality: ai.imageGenQuality})
             .then((pictures) => {
@@ -860,20 +897,22 @@ function drawGenerated(body, lookup, entry, loading) {
     const error = entry.error ? `<p class="error">${escapeHtml(entry.error)}</p>` : '';
     const more = entry.items.length > 0 && !loading
         ? `<button class="ghost img-more" title="Faz mais ${count === 1 ? 'uma imagem' : `${count} imagens`} e junta às de cima">${icon('plus', 'sm')}Gerar mais</button>` : '';
-    const foot = `<div class="img-foot"><span class="img-query hint" title="${escapeHtml(gallery.query)}">Prompt: ${escapeHtml(gallery.query)}</span>${more}</div>`;
+    const picker = promptPicker();
+    const chosen = chosenImageGenPrompt(ai);
+    const hint = picker ? '' : `<span class="img-query hint" title="${escapeHtml(chosen.prompt)}">${escapeHtml(chosen.name ? `Prompt: ${chosen.name}` : '')}</span>`;
+    const foot = `<div class="img-foot">${picker}${hint}<span class="spacer"></span>${more}</div>`;
     if (entry.items.length === 0 && !loading) {
-        body.innerHTML = `${error}<button class="ghost explain-btn">${icon('sparkle', 'sm')}Tentar de novo</button>`;
-        body.querySelector('button')?.addEventListener('click', () => void runImageGen(body, 'more'));
+        drawGenButton(body, entry.error || 'Nenhuma imagem foi gerada.');
         return;
     }
     drawStrip(body, lookup, gallery, {foot: `${error}${foot}`, loading});
+    bindPromptPicker(body);
     body.querySelector('.img-more')?.addEventListener('click', () => void runImageGen(body, 'more'));
 }
 
 /** Pictures already made for this word (in memory or on disk) replace the button at once. */
 async function showStoredImages(body, lookup = state) {
-    const options = imageGenOptions();
-    const entry = await storedGeneration(generationKey(options, imageGenPrompt(ai.imageGenPrompt, lookup.payload, settings)));
+    const entry = await storedGeneration(generationKey(lookup.payload));
     if (entry?.items.length && state === lookup) { await runImageGen(body); }
 }
 
@@ -1377,9 +1416,7 @@ async function render(payload) {
             if (ai.autoGenerateImages === true) {
                 void runImageGen(body);
             } else {
-                const count = imageGenCount(ai.imageGenCount);
-                body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}${count === 1 ? 'Gerar imagem' : `Gerar ${count} imagens`}</button>`;
-                body.querySelector('button').addEventListener('click', () => void runImageGen(body));
+                drawGenButton(body);
                 void showStoredImages(body);
             }
         } else if (d.kind === 'mdict' && renderDictionary(d)) { shown++; }

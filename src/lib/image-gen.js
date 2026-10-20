@@ -32,6 +32,62 @@ export const IMAGE_GEN_PROMPT =
     'Plain background. No text, letters, numbers or captions in the picture.';
 
 /**
+ * The named prompts a new install starts with. The pop-up has a selector among the user's prompts;
+ * the first one is the one older settings had in `imageGenPrompt`.
+ */
+export const IMAGE_GEN_PRESETS = [
+    {id: 'meaning', name: 'Sentido na frase', prompt: IMAGE_GEN_PROMPT},
+    {id: 'action', name: 'Ação (verbos)', prompt:
+        'A simple illustration of a person doing the action of the {{wordLanguage}} verb "{{target}}", with the meaning it has in: "{{sentence}}"\n\n' +
+        'Make the action obvious at a glance, as on a vocabulary flashcard. Plain background. No text, letters, numbers or captions.'},
+    {id: 'object', name: 'Objeto (substantivos)', prompt:
+        'A clear picture of the thing the {{wordLanguage}} word "{{target}}" names, with the meaning it has in: "{{sentence}}"\n\n' +
+        'Only that thing, centered on a plain white background, like a dictionary picture. No text, letters, numbers or captions.'},
+];
+
+const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** A new prompt's id, unique enough among a user's prompts. */
+export function newImageGenPromptId() {
+    return `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/**
+ * The user's named prompts: each with an id, a name and its text. Settings from before the list
+ * get the presets, with their own `imageGenPrompt` as the first one when they had changed it.
+ * @param {unknown} list
+ * @param {unknown} legacy the old single `imageGenPrompt`
+ * @returns {{id: string, name: string, prompt: string}[]}
+ */
+export function normalizeImageGenPrompts(list, legacy) {
+    const seen = new Set();
+    const out = [];
+    for (const item of Array.isArray(list) ? list : []) {
+        if (!isObject(item) || typeof item.prompt !== 'string') { continue; }
+        let id = typeof item.id === 'string' && item.id ? item.id : newImageGenPromptId();
+        while (seen.has(id)) { id = newImageGenPromptId(); }
+        seen.add(id);
+        out.push({id, name: typeof item.name === 'string' && item.name.trim() ? item.name : `Prompt ${out.length + 1}`, prompt: item.prompt});
+    }
+    if (out.length > 0) { return out; }
+    const presets = IMAGE_GEN_PRESETS.map((p) => ({...p}));
+    if (typeof legacy === 'string' && legacy.trim() && legacy !== IMAGE_GEN_PROMPT) {
+        presets.unshift({id: 'mine', name: 'Meu prompt', prompt: legacy});
+    }
+    return presets;
+}
+
+/**
+ * The prompt the pop-up uses: the one chosen last (`imageGenPromptId`), else the first; settings
+ * without a list (tests, very old ones) use `imageGenPrompt`.
+ * @returns {{id: string, name: string, prompt: string}}
+ */
+export function chosenImageGenPrompt(ai) {
+    const list = Array.isArray(ai?.imageGenPrompts) ? ai.imageGenPrompts : [];
+    return list.find((p) => p.id === ai.imageGenPromptId) || list[0] || {id: '', name: '', prompt: ai?.imageGenPrompt || IMAGE_GEN_PROMPT};
+}
+
+/**
  * The prompt as sent: {{target}}, {{sentence}}, {{wordLanguage}} (the OCR language),
  * {{definitionLanguage}} and {{translationLanguage}} filled in.
  * @param {string} template
