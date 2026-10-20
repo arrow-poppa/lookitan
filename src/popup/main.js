@@ -240,15 +240,29 @@ async function runContext(body, force = false) {
         lookup.keys.add(key);
         const text = await responses.run(key,
             (signal, onChunk) => explain(options, p.word, p.sentence, {signal, prompt, onChunk}),
-            (_d, full) => { if (state === lookup) { body.innerHTML = `<div class="translation">${highlightStars(full)}</div>`; } },
+            (_d, full) => { if (state === lookup) { showTranslation(body, lookup, full); } },
             {force});
         if (state === lookup) {
             lookup.contextTranslation = text;
-            body.innerHTML = `<div class="translation">${highlightStars(text)}</div>`;
+            showTranslation(body, lookup, text);
         }
     } catch (e) {
         if (state === lookup && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
     }
+}
+
+/**
+ * The context translation, blurred until clicked when "Ocultar a tradução" is on, like the word
+ * translation. Once shown, it stays shown for this lookup, also while it is still streaming.
+ */
+function showTranslation(body, lookup, text) {
+    const hide = ai.hideContextTranslation === true && !lookup.contextRevealed;
+    body.innerHTML = `<div class="translation${hide ? ' hidden-tr' : ''}"${hide ? ' title="Clique para mostrar"' : ''}>${highlightStars(text)}</div>`;
+    body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => {
+        lookup.contextRevealed = true;
+        ev.currentTarget.classList.remove('hidden-tr');
+        ev.currentTarget.removeAttribute('title');
+    });
 }
 
 function highlightStars(text) {

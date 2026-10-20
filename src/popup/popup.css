@@ -59,7 +59,7 @@ html, body { height: 100%; overflow: hidden; background: transparent; }
 .cefr.c1, .cefr.c2 { background: #8a3ffc; }
 .term { font-weight: 600; font-size: 15px; }
 .tr { font-weight: 600; font-size: 15px; color: var(--accent); cursor: default; }
-.tr.hidden-tr { filter: blur(6px); cursor: pointer; user-select: none; }
+.tr.hidden-tr, .translation.hidden-tr { filter: blur(6px); cursor: pointer; user-select: none; }
 .def { margin: 4px 0 8px; font-size: 15px; line-height: 1.5; }
 .ai-text p { margin: 0 0 6px; font-size: 14.5px; line-height: 1.5; }
 .ai-text ul { margin: 0 0 6px; padding-left: 20px; }

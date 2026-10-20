@@ -391,6 +391,8 @@ function renderAiContext(root) {
             languageRows()[1],
             cardRow({icon: 'sparkle', title: 'Traduzir automaticamente ao abrir o popup', desc: 'Desligado: a frase só é traduzida quando você clica em Traduzir.',
                 control: aiControl('autoTranslateContext', 'Traduzir automaticamente ao abrir o popup', toggle(ai.autoTranslateContext, (v) => { ai.autoTranslateContext = v; save(); }))}),
+            cardRow({icon: 'eyeOff', title: 'Ocultar a tradução', desc: 'A tradução da frase só aparece quando você clica nela.',
+                control: aiControl('hideContextTranslation', 'Ocultar a tradução', toggle(ai.hideContextTranslation === true, (v) => { ai.hideContextTranslation = v; save(); }))}),
             promptCard('Prompt da tradução', `A tradução da palavra deve vir entre **asteriscos duplos** para ser destacada. Variáveis: ${vars}.`, () => ai.contextPrompt, (v) => { ai.contextPrompt = v; }, CONTEXT_PROMPT, 'contextPrompt'),
             el('div', {class: 'card-row stack'},
                 el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado na tradução da frase. Opcional.'))),

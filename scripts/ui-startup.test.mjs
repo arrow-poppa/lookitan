@@ -199,6 +199,7 @@ test('the context translator has its own provider, which changes only the transl
     const own = 'sectionProviders.ai-context.';
     assert(fixture.control('contextPrompt'));
     assert(fixture.control('autoTranslateContext'), 'the translator has its own automatic switch');
+    assert(fixture.control('hideContextTranslation'), 'the translator can hide its translation');
     for (const key of ['provider', 'custom.model', 'temperature', 'streamResponse', 'cancelPendingRequests', 'systemPrompt']) {
         assert(fixture.control(`${own}${key}`), `the translator has its own ${key}`);
     }

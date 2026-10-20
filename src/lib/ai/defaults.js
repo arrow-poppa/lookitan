@@ -67,6 +67,8 @@ function baseAiOptions() {
         autoGenerateOnLookup: true,
         // The context translator has its own switch.
         autoTranslateContext: true,
+        // Blurs the context translation until it is clicked, like hideWordTranslation.
+        hideContextTranslation: false,
         autoExplain: false,
         streamResponse: true,
         cancelPendingRequests: true,
@@ -100,7 +102,7 @@ export function normalizeAiOptions(stored) {
         return defaultAiOptions();
     }
     const out = {...base, ...stored};
-    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup']) {
+    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation']) {
         if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
     }
     // One switch used to start both the word card and the context translation: until the

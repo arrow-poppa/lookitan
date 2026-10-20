@@ -576,3 +576,19 @@ test('each AI dictionary sends its requests with its own provider', async () => 
     await view.popup.runExplain(new Element());
     assert.deepEqual(seen, [['gemini', 'context-model'], ['custom', 'word-model']]);
 });
+
+test('the context translation can stay blurred until clicked, like the word translation', async () => {
+    const view = await fixture({explain: async () => 'Eu **corro** todo dia.'});
+    Object.assign(view.ai, {contextPrompt: 'translate', hideContextTranslation: true});
+    const body = new Element();
+    await view.popup.runContext(body);
+    assert(body.innerHTML.includes('translation hidden-tr'), 'blurred at first');
+    assert(body.innerHTML.includes('<mark>corro</mark>'));
+    view.lookup.contextRevealed = true;
+    await view.popup.runContext(body);
+    assert(!body.innerHTML.includes('hidden-tr'), 'once shown it stays shown for the lookup');
+    view.ai.hideContextTranslation = false;
+    view.lookup.contextRevealed = false;
+    await view.popup.runContext(body);
+    assert(!body.innerHTML.includes('hidden-tr'), 'off by default');
+});
