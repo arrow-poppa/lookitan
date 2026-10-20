@@ -898,45 +898,96 @@ struct PopupPlace {
     origin: (f64, f64),
 }
 
-/// As Lookupper's lookup popup, a WinUI TeachingTip, which WinUI centres on its target and moves
-/// around it when it does not fit: below the word, centred on it; else above it; else beside it,
-/// on the left and then the right, centred on the word's height (small screens, where Lookupper
-/// shows it beside the word instead of over it). On a side it moves only as far as the monitor's
-/// edges need. With room nowhere, it takes the side with the most room.
+/// Lookupper's lookup popup is a WinUI TeachingTip aimed at the word, with no placement of its
+/// own: this is WinUI's targeted placement (`DetermineEffectivePlacementTargeted` and
+/// `PositionTargetedPopup` in microsoft-ui-xaml, controls/dev/TeachingTip/TeachingTip.cpp), read
+/// on 2026-10-21. The tip is the card inside a grid with an 8 px strip on every side, where the
+/// 20×10 tail is drawn on the side facing the word; Lookitan has no tail, so the card keeps the
+/// same 8 px gap. WinUI tries the modes in order and takes the first whose fit test passes:
+/// centred above or below only when the whole card fits centred on the word, then centred on
+/// either side, then the shifted variants, where the word's centre is 28 px from the grid's edge.
+/// Its bounds are the overlay window, the whole monitor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Placement { Top, Bottom, Left, Right, TopLeft, TopRight, BottomLeft, BottomRight, LeftTop, LeftBottom, RightTop, RightBottom }
+
+/// WinUI's order for `PreferredPlacement = Auto` starts with Top; with a Bottom preference it
+/// swaps Top and Bottom (and their variants). Lookitan keeps the word visible below it first,
+/// as before, until it is known which one Lookupper sets.
+const PLACEMENT_ORDER: [Placement; 12] = {
+    use Placement::*;
+    [Bottom, Top, Left, Right, BottomLeft, BottomRight, TopLeft, TopRight, LeftTop, LeftBottom, RightTop, RightBottom]
+};
+
 fn popup_position(word: (f64, f64, f64, f64), size: (f64, f64), monitor: Option<platform::geometry::Rect>, scale: f64) -> PopupPlace {
+    use Placement::*;
     let (x0, y0, x1, y1) = word;
     let (w, h) = size;
-    let gap = 10.0 * scale;
-    let edge = 8.0 * scale;
+    // WinUI's sizes (TeachingTip_themeresources.xaml), in logical pixels.
+    let strip = 8.0 * scale; // TeachingTipTailShortSideLength: the tail's depth, the gap to the word
+    let to_tail = 28.0 * scale; // MinimumTipEdgeToTailCenter: 8 + TeachingTipTailMargin 10 + half the tail
+    let (tw, th) = (x1 - x0, y1 - y0);
     let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-    let Some(m) = monitor else {
-        return PopupPlace { x: cx - w / 2.0, y: y1 + gap, origin: (w / 2.0, 0.0) };
+    // The grid around the card, as WinUI measures it, and the tip with its tail.
+    let (gw, gh) = (w + 2.0 * strip, h + 2.0 * strip);
+    let (tip_w, tip_h) = (gw + strip, gh + strip);
+    let grid_at = |mode: Placement| -> (f64, f64) {
+        match mode {
+            Top => (cx - gw / 2.0, y0 - gh),
+            Bottom => (cx - gw / 2.0, y1),
+            Left => (x0 - gw, cy - gh / 2.0),
+            Right => (x1, cy - gh / 2.0),
+            TopLeft => (cx - gw + to_tail, y0 - gh),
+            TopRight => (cx - to_tail, y0 - gh),
+            BottomLeft => (cx - gw + to_tail, y1),
+            BottomRight => (cx - to_tail, y1),
+            LeftTop => (x0 - gw, cy - gh + to_tail),
+            LeftBottom => (x0 - gw, cy - to_tail),
+            RightTop => (x1, cy - gh + to_tail),
+            RightBottom => (x1, cy - to_tail),
+        }
     };
-    let (left, top, right, bottom) = (m.x + edge, m.y + edge, m.x + m.width - edge, m.y + m.height - edge);
-    let across = |x: f64| x.clamp(left, (right - w).max(left));
-    let down = |y: f64| y.clamp(top, (bottom - h).max(top));
-    // Room for the whole pop-up below, above, left and right of the word.
-    let below = bottom - (y1 + gap);
-    let above = (y0 - gap) - top;
-    let on_left = (x0 - gap) - left;
-    let on_right = right - (x1 + gap);
-    let place_below = || { let x = across(cx - w / 2.0); PopupPlace { x, y: y1 + gap, origin: ((cx - x).clamp(0.0, w), 0.0) } };
-    let place_above = || { let x = across(cx - w / 2.0); let y = y0 - gap - h; PopupPlace { x, y, origin: ((cx - x).clamp(0.0, w), h) } };
-    let place_left = || { let y = down(cy - h / 2.0); let x = (x0 - gap - w).max(m.x); PopupPlace { x, y, origin: (w, (cy - y).clamp(0.0, h)) } };
-    let place_right = || { let y = down(cy - h / 2.0); let x = (x1 + gap).min(m.x + m.width - w); PopupPlace { x, y, origin: (0.0, (cy - y).clamp(0.0, h)) } };
-    if below >= h { return place_below(); }
-    if above >= h { return place_above(); }
-    if on_left >= w { return place_left(); }
-    if on_right >= w { return place_right(); }
-    // Nowhere fits whole: the side with the most room, so the word stays as visible as it can.
-    let rooms = [(below / h, 0), (above / h, 1), (on_left / w, 2), (on_right / w, 3)];
-    let best = rooms.iter().fold(rooms[0], |a, &b| if b.0 > a.0 { b } else { a }).1;
-    match best {
-        0 => { let mut p = place_below(); p.y = down(p.y); p }
-        1 => { let mut p = place_above(); p.y = p.y.max(m.y); p }
-        2 => place_left(),
-        _ => place_right(),
+    let place = |mode: Placement| -> PopupPlace {
+        let (gx, gy) = grid_at(mode);
+        let (x, y) = (gx + strip, gy + strip);
+        let origin = match mode {
+            Top | TopLeft | TopRight => ((cx - x).clamp(0.0, w), h),
+            Bottom | BottomLeft | BottomRight => ((cx - x).clamp(0.0, w), 0.0),
+            Left | LeftTop | LeftBottom => (w, (cy - y).clamp(0.0, h)),
+            Right | RightTop | RightBottom => (0.0, (cy - y).clamp(0.0, h)),
+        };
+        PopupPlace { x, y, origin }
+    };
+    let Some(m) = monitor else { return place(Bottom) };
+    // Room between the word and each edge of the monitor.
+    let (above, below) = (y0 - m.y, m.y + m.height - y1);
+    let (left, right) = (x0 - m.x, m.x + m.width - x1);
+    let fits = |mode: Placement| -> bool {
+        let vertical = match mode {
+            Top | TopLeft | TopRight => tip_h <= above,
+            Bottom | BottomLeft | BottomRight => tip_h <= below,
+            Left | Right => gh / 2.0 <= above + th / 2.0 && gh / 2.0 <= below + th / 2.0,
+            LeftTop | RightTop => gh - to_tail <= above + th / 2.0,
+            LeftBottom | RightBottom => gh - to_tail <= below + th / 2.0,
+        };
+        let horizontal = match mode {
+            Left | LeftTop | LeftBottom => tip_w <= left,
+            Right | RightTop | RightBottom => tip_w <= right,
+            Top | Bottom => gw / 2.0 <= left + tw / 2.0 && gw / 2.0 <= right + tw / 2.0,
+            TopLeft | BottomLeft => gw - to_tail <= left + tw / 2.0,
+            TopRight | BottomRight => gw - to_tail <= right + tw / 2.0,
+        };
+        vertical && horizontal
+    };
+    if let Some(&mode) = PLACEMENT_ORDER.iter().find(|&&mode| fits(mode)) {
+        return place(mode);
     }
+    // WinUI would not open the tip at all. Lookitan still shows it: centred below the word, or
+    // above it with more room there, kept on the monitor.
+    let mut p = place(if below >= above { Bottom } else { Top });
+    p.x = p.x.clamp(m.x, (m.x + m.width - w).max(m.x));
+    p.y = p.y.clamp(m.y, (m.y + m.height - h).max(m.y));
+    p.origin = ((cx - p.x).clamp(0.0, w), if p.y >= y1 { 0.0 } else { h });
+    p
 }
 
 /// Sends the result to the popup and shows it next to the word (desktop coordinates).
@@ -1717,47 +1768,56 @@ mod popup_position_tests {
     const POPUP: (f64, f64) = (560.0, 520.0);
 
     #[test]
-    fn the_popup_is_centred_on_the_word_just_below_it() {
+    fn the_popup_is_centred_on_the_word_8_px_below_it() {
         let p = popup_position((900.0, 300.0, 1000.0, 320.0), POPUP, Some(SCREEN), 1.0);
-        assert_eq!(p, PopupPlace { x: 670.0, y: 330.0, origin: (280.0, 0.0) }, "the word's centre is the popup's centre");
-    }
-
-    #[test]
-    fn near_an_edge_it_moves_only_as_far_as_the_screen_needs() {
-        let p = popup_position((10.0, 300.0, 60.0, 320.0), POPUP, Some(SCREEN), 1.0);
-        assert_eq!((p.x, p.origin), (8.0, (27.0, 0.0)), "it still grows from the word");
-        let p = popup_position((1880.0, 300.0, 1910.0, 320.0), POPUP, Some(SCREEN), 1.0);
-        assert_eq!(p.x, 1920.0 - 560.0 - 8.0);
+        assert_eq!(p, PopupPlace { x: 670.0, y: 328.0, origin: (280.0, 0.0) }, "the word's centre is the popup's centre");
     }
 
     #[test]
     fn without_room_below_it_goes_above_the_word() {
         let p = popup_position((900.0, 800.0, 1000.0, 820.0), POPUP, Some(SCREEN), 1.0);
-        assert_eq!((p.y, p.origin.1), (800.0 - 520.0 - 10.0, 520.0));
+        assert_eq!((p.x, p.y, p.origin.1), (670.0, 800.0 - 8.0 - 520.0, 520.0));
+    }
+
+    #[test]
+    fn a_word_too_near_a_side_to_centre_the_popup_gets_it_beside_the_word_first() {
+        // As in Lookupper (the user's screenshot of "passou"): centred above or below does not fit
+        // sideways, so WinUI takes Left before any shifted variant.
+        let p = popup_position((1700.0, 300.0, 1760.0, 320.0), POPUP, Some(SCREEN), 1.0);
+        assert_eq!(p, PopupPlace { x: 1700.0 - 8.0 - 560.0, y: 310.0 - 260.0, origin: (560.0, 260.0) });
+        // Near the left edge: the right side.
+        let p = popup_position((40.0, 300.0, 100.0, 320.0), POPUP, Some(SCREEN), 1.0);
+        assert_eq!((p.x, p.origin.0), (108.0, 0.0));
+    }
+
+    #[test]
+    fn with_no_side_free_either_it_slides_with_the_word_28_px_from_the_tips_edge() {
+        // A narrow screen: no room on the sides, so below and shifted right of the word.
+        let narrow = Rect { x: 0.0, y: 0.0, width: 680.0, height: 1080.0 };
+        let p = popup_position((60.0, 300.0, 100.0, 320.0), POPUP, Some(narrow), 1.0);
+        assert_eq!((p.x, p.y), (80.0 - 28.0 + 8.0, 328.0), "BottomRight: the word's centre 20 px into the card");
+        assert_eq!(p.origin, (20.0, 0.0));
     }
 
     #[test]
     fn on_a_small_screen_it_goes_beside_the_word_instead_of_over_it() {
-        // Room neither below nor above: Lookupper's tip goes to the word's left, centred on its height.
         let small = Rect { x: 0.0, y: 0.0, width: 1366.0, height: 600.0 };
         let p = popup_position((900.0, 280.0, 960.0, 300.0), POPUP, Some(small), 1.0);
-        assert_eq!(p, PopupPlace { x: 900.0 - 10.0 - 560.0, y: 30.0, origin: (560.0, 260.0) });
+        assert_eq!((p.x, p.origin.0), (900.0 - 8.0 - 560.0, 560.0));
         assert!(p.x + POPUP.0 <= 900.0, "the word stays visible");
-        // A word near the left edge: the right side.
-        let p = popup_position((100.0, 280.0, 160.0, 300.0), POPUP, Some(small), 1.0);
-        assert_eq!((p.x, p.origin.0), (170.0, 0.0));
     }
 
     #[test]
-    fn with_room_nowhere_it_takes_the_side_with_the_most_room() {
+    fn with_room_nowhere_it_stays_on_the_screen() {
         let tiny = Rect { x: 0.0, y: 0.0, width: 800.0, height: 500.0 };
         let p = popup_position((380.0, 240.0, 420.0, 260.0), POPUP, Some(tiny), 1.0);
-        assert!(p.y >= 0.0 && p.x >= 0.0 && p.x + POPUP.0 <= 800.0 + 1.0, "{p:?} stays on the screen");
+        assert!(p.y >= 0.0 && p.x >= 0.0 && p.x + POPUP.0 <= 800.0, "{p:?} stays on the screen");
     }
 
     #[test]
-    fn gaps_follow_the_display_scale() {
-        let p = popup_position((10.0, 300.0, 60.0, 320.0), (840.0, 780.0), Some(Rect { x: 0.0, y: 0.0, width: 2880.0, height: 1620.0 }), 1.5);
-        assert_eq!((p.x, p.y), (12.0, 335.0));
+    fn sizes_follow_the_display_scale() {
+        let big = Rect { x: 0.0, y: 0.0, width: 2880.0, height: 1620.0 };
+        let p = popup_position((1400.0, 300.0, 1480.0, 330.0), (840.0, 780.0), Some(big), 1.5);
+        assert_eq!((p.x, p.y), (1440.0 - 420.0, 342.0));
     }
 }
