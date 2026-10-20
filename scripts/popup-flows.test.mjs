@@ -5,6 +5,7 @@ import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {CARD_PROMPT} from '../src/lib/ai/word-card.js';
 import * as realImages from '../src/lib/images.js';
+import * as realImageGen from '../src/lib/image-gen.js';
 import {createContext, SourceTextModule, SyntheticModule} from 'node:vm';
 
 const project = resolve(import.meta.dirname, '..');
@@ -33,7 +34,7 @@ class Element {
     remove() { this.removed = true; }
 }
 
-async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, audioRows = async () => null, words = []} = {}) {
+async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, imageGen = {}, audioRows = async () => null, words = []} = {}) {
     const nodes = new Map();
     const document = {getElementById: (id) => {
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
@@ -69,6 +70,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }},
         [file('src/lib/icons.js')]: {hydrateIcons() {}, icon: (name) => name},
         [file('src/lib/images.js')]: {...realImages, ...images},
+        [file('src/lib/image-gen.js')]: {...realImageGen, ...imageGen},
     };
     const context = createContext({document, window: {addEventListener() {}}, localStorage: {getItem: () => null, setItem() {}},
         AbortController, DOMException, crypto: {subtle: {digest: async (_algorithm, bytes) => createHash('sha256').update(bytes).digest()}},
@@ -83,7 +85,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
                 return stub ? new SyntheticModule(Object.keys(stub), function () {
                     for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
                 }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
-                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries, refreshSavedCount, refreshAnkiNotes, openSavedCards, openAnkiNotes};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries, refreshSavedCount, refreshAnkiNotes, openSavedCards, openAnkiNotes, runImageGen, checkedImageFiles};\nexport function stateForTest() { return state; }\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
                 {context, identifier: id});
             })());
         }
@@ -728,4 +730,74 @@ test('the Anki notes counter queries the note type\'s first field, and nothing w
     await other.popup.refreshAnkiNotes(other.lookup, other.options);
     assert.equal(queried.length, 2, 'not asked');
     assert.equal(other.nodes.get('btn-anki-notes').hidden, true);
+});
+
+async function imageGenFixture({configured = true} = {}) {
+    const made = [];
+    let n = 0;
+    const view = await fixture({
+        dictionaries: [{id: 'ai-image-gen', kind: 'ai-image-gen', name: 'AI images', enabled: true}],
+        imageGen: {
+            isImageGenConfigured: () => configured,
+            generateImages: async (_options, prompt, choice) => {
+                made.push({prompt, count: choice.count});
+                return Array.from({length: choice.count}, () => ({url: `https://gen.example/${++n}.png`}));
+            },
+        },
+        images: {downloadImage: async (item) => ({data: item.src, extension: 'png'})},
+    });
+    Object.assign(view.ai, {customPrompt: 'explain', contextPrompt: 'translate', imageGenPrompt: 'draw {{target}}', imageGenCount: 2});
+    const payload = {word: 'corre', sentence: 'Ele corre todo dia.', entries: []};
+    const show = async () => {
+        await view.popup.render(payload);
+        const [sectionNode] = view.document.getElementById('sections').children;
+        return {sectionNode, body: sectionNode?.querySelector('.sec-body')};
+    };
+    const settle = async () => { for (let i = 0; i < 20; i++) { await flush(); } };
+    return {view, made, show, settle};
+}
+
+test('"Imagens IA" makes its pictures on a click, adds more, and sends the checked ones to Anki', async () => {
+    const {view, made, show, settle} = await imageGenFixture();
+    const {sectionNode, body} = await show();
+    assert(sectionNode.innerHTML.includes('Imagens IA'));
+    assert(body.innerHTML.includes('Gerar 2 imagens'), 'like Explicar, nothing is made before the click');
+    await settle();
+    assert.equal(made.length, 0);
+    body.querySelector('button').listeners.click();
+    await settle();
+    assert.deepEqual(made, [{prompt: 'draw corre', count: 2}], 'the prompt is filled, and the count chosen is sent');
+    assert(body.innerHTML.includes('https://gen.example/1.png') && body.innerHTML.includes('https://gen.example/2.png'));
+    assert(body.innerHTML.includes('img-check'), 'each picture has its check mark');
+    body.querySelector('.img-more').listeners.click();
+    await settle();
+    assert.equal(made.length, 2);
+    assert(body.innerHTML.includes('https://gen.example/1.png') && body.innerHTML.includes('https://gen.example/4.png'), 'more pictures join the first ones');
+    const lookup = view.popup.stateForTest();
+    lookup.generated.selected.add(3);
+    lookup.generated.selected.add(0);
+    assert.equal(JSON.stringify((await view.popup.checkedImageFiles(lookup)).map((f) => f.data)), JSON.stringify(['https://gen.example/1.png', 'https://gen.example/4.png']),
+        'the checked pictures go to {image}, in the strip\'s order');
+});
+
+test('"Imagens IA" shows pictures already made for the word at once, and the refresh button makes a new set', async () => {
+    const {made, show, settle} = await imageGenFixture();
+    const first = await show();
+    first.body.querySelector('button').listeners.click();
+    await settle();
+    const again = await show();
+    await settle();
+    assert.equal(made.length, 1, 'nothing is paid for twice');
+    assert(again.body.innerHTML.includes('https://gen.example/2.png') && !again.body.innerHTML.includes('Gerar 2 imagens'));
+    const [refresh] = again.sectionNode.querySelector('.sec-head').children;
+    refresh.listeners.click();
+    await settle();
+    assert.equal(made.length, 2);
+    assert(again.body.innerHTML.includes('https://gen.example/3.png') && !again.body.innerHTML.includes('https://gen.example/1.png'), 'a new set replaces the old one');
+});
+
+test('"Imagens IA" stays out of the pop-up until its provider can make pictures', async () => {
+    const {view, show} = await imageGenFixture({configured: false});
+    await show();
+    assert(view.document.getElementById('sections').innerHTML.includes('Nenhum resultado'));
 });

@@ -44,6 +44,9 @@ pub enum DictionaryKind {
     /// Built-in: pictures of the word from Bing Images, searched with an AI-made query (as in
     /// Migaku's pop-up). The front end does the search; the backend only keeps its place and switch.
     AiImages,
+    /// Built-in: pictures made by an image model from the user's prompt ("Imagens IA"). Also done
+    /// by the front end.
+    AiImageGen,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -218,6 +221,7 @@ pub fn builtin_dictionaries() -> Vec<DictionaryConfig> {
         DictionaryConfig { id: "ai-word".into(), kind: DictionaryKind::AiWord, name: "AI word in context".into(), ..Default::default() },
         DictionaryConfig { id: "ai-context".into(), kind: DictionaryKind::AiContext, name: "Context translator".into(), ..Default::default() },
         DictionaryConfig { id: "ai-images".into(), kind: DictionaryKind::AiImages, name: "Images".into(), ..Default::default() },
+        DictionaryConfig { id: "ai-image-gen".into(), kind: DictionaryKind::AiImageGen, name: "AI images".into(), ..Default::default() },
     ]
 }
 
@@ -316,18 +320,21 @@ mod tests {
         ]}"#).unwrap();
         let s = migrate(saved);
         let ids: Vec<&str> = s.dictionaries.iter().map(|d| d.id.as_str()).collect();
-        assert_eq!(ids, ["ai-word", "ai-context", "ai-images", "local"]);
+        assert_eq!(ids, ["ai-word", "ai-context", "ai-images", "ai-image-gen", "local"]);
         assert_eq!(s.dictionaries[2].kind, DictionaryKind::AiImages);
+        assert_eq!(s.dictionaries[3].kind, DictionaryKind::AiImageGen);
         assert!(s.dictionaries[2].enabled);
         let moved: Settings = serde_json::from_str(r#"{"dictionaries": [
             {"id": "ai-images", "kind": "ai-images", "enabled": false},
             {"id": "ai-word", "kind": "ai-word"},
-            {"id": "ai-context", "kind": "ai-context"}
+            {"id": "ai-context", "kind": "ai-context"},
+            {"id": "ai-image-gen", "kind": "ai-image-gen", "enabled": false}
         ]}"#).unwrap();
         let s = migrate(moved);
         assert_eq!(s.dictionaries[0].id, "ai-images", "a moved or switched-off images entry stays as the user left it");
         assert!(!s.dictionaries[0].enabled);
-        assert_eq!(s.dictionaries.len(), 3);
+        assert_eq!(s.dictionaries.len(), 4);
+        assert!(!s.dictionaries[3].enabled);
     }
 
     #[test]

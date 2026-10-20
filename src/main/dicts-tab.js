@@ -7,6 +7,7 @@ import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
 import {CARD_PROMPT, CONTEXT_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
+import {IMAGE_GEN_MAX_COUNT, IMAGE_GEN_MODELS, IMAGE_GEN_PROMPT, generateImages, imageGenPrompt} from '../lib/image-gen.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
 import {cardRow, dropIndex, el, languageOptions, select, sortableRow, textArea, textInput, toggle} from './ui.js';
@@ -18,7 +19,7 @@ let focusId = null;
 /** Set by a drag that just ended, so its click does not count as choosing the row. */
 let dragEnded = false;
 
-const AI_NAMES = {'ai-word': 'IA — palavra no contexto', 'ai-context': 'Tradutor de contexto', 'ai-images': 'Imagens'};
+const AI_NAMES = {'ai-word': 'IA — palavra no contexto', 'ai-context': 'Tradutor de contexto', 'ai-images': 'Imagens', 'ai-image-gen': 'Imagens IA'};
 
 function displayName(d) {
     return AI_NAMES[d.id] || d.name || d.path;
@@ -128,6 +129,7 @@ function renderDetail() {
     if (d.id === 'ai-word') { renderAiWord(root); return; }
     if (d.id === 'ai-context') { renderAiContext(root); return; }
     if (d.id === 'ai-images') { renderAiImages(root); return; }
+    if (d.id === 'ai-image-gen') { renderAiImageGen(root); return; }
     renderMdict(root, d);
 }
 
@@ -410,5 +412,109 @@ function renderAiImages(root) {
         el('p', {class: 'muted'}, 'Só para o termo de busca das imagens. Começa como uma cópia do provedor de "IA — palavra no contexto".'),
         providerSection(ai.sectionProviders['ai-images'], 'sectionProviders.ai-images.'),
         imageTestButton(),
+    );
+}
+
+/**
+ * The provider of "Imagens IA": only those that make pictures, with image models. It lives in
+ * `ai.sectionProviders['ai-image-gen']` like the other dictionaries' own blocks.
+ */
+function imageProviderSection(own, prefix) {
+    const ctl = (path, label, control) => aiControl(`${prefix}${path}`, label, control);
+    const wrap = el('div', {class: 'group'});
+    const draw = () => {
+        wrap.replaceChildren();
+        const cfg = own[own.provider];
+        const models = IMAGE_GEN_MODELS[own.provider] || [];
+        const modelInput = ctl(`${own.provider}.model`, 'Modelo de imagem', textInput(cfg.model, (v) => { cfg.model = v.trim(); save(); }, {placeholder: models[0] || 'nome-do-modelo'}));
+        const listId = `image-gen-models-${own.provider}`;
+        modelInput.setAttribute('list', listId);
+        const modelHelp = {
+            openai: 'gpt-image-1-mini é o mais barato. DALL·E 3 faz uma imagem por pedido.',
+            gemini: 'gemini-2.5-flash-image (Nano Banana) ou Imagen 4. Termine com -vertex para usar o Vertex AI Express.',
+            custom: 'OpenRouter: um modelo que gera imagens, como google/gemini-2.5-flash-image.',
+        }[own.provider];
+        wrap.append(...[
+            cardRow({icon: 'cloud', title: 'Provedor', wide: true,
+                control: ctl('provider', 'Provedor de imagens', select([
+                    {value: 'openai', label: 'OpenAI'},
+                    {value: 'gemini', label: 'Google Gemini'},
+                    {value: 'custom', label: 'Personalizado (OpenRouter, xAI, servidor compatível…)'},
+                ], own.provider, (v) => { own.provider = v; save(); draw(); }))}),
+            own.provider === 'custom' ? cardRow({icon: 'cloud', title: 'Endpoint', wide: true,
+                desc: 'Chat (como o do OpenRouter): a resposta traz a imagem. Terminado em /images/generations: a API de imagens da OpenAI, como a da xAI.',
+                control: ctl('custom.endpoint', 'Endpoint', textInput(own.custom.endpoint, (v) => { own.custom.endpoint = v.trim(); save(); }, {placeholder: 'https://openrouter.ai/api/v1/chat/completions'}))}) : null,
+            cardRow({icon: 'settings', title: 'Chave da API', wide: true,
+                control: ctl(`${own.provider}.apiKey`, 'Chave da API', textInput(cfg.apiKey, (v) => { cfg.apiKey = v.trim(); save(); }, {type: 'password'}))}),
+            cardRow({icon: 'sparkle', title: 'Modelo de imagem', desc: modelHelp, wide: true,
+                control: el('div', {style: 'width:100%'}, modelInput, el('datalist', {id: listId}, ...models.map((m) => el('option', {value: m}))))}),
+            own.provider === 'custom' ? el('div', {class: 'card-row stack'},
+                el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'JSON extra no corpo da requisição'), el('div', {class: 'd'}, 'Mesclado ao corpo de cada pedido. Ex.: {"size": "1024x1024"}'))),
+                ctl('custom.requestBodyJson', 'JSON extra no corpo da requisição', textArea(own.custom.requestBodyJson, (v) => { own.custom.requestBodyJson = v; save(); }, 3))) : null,
+        ].filter(Boolean));
+    };
+    draw();
+    return wrap;
+}
+
+/** Makes one picture of a sample word with this dictionary's own provider and prompt. */
+function imageGenTestButton() {
+    const out = el('span', {class: 'muted'});
+    const shot = el('div', {class: 'image-gen-test'});
+    const btn = el('button', {class: 'primary', html: `${icon('image', 'sm')}Testar (gera 1 imagem)`});
+    btn.addEventListener('click', async () => {
+        out.className = 'muted';
+        out.textContent = 'Gerando…';
+        shot.replaceChildren();
+        btn.disabled = true;
+        try {
+            const options = aiOptionsFor(store.ai, 'ai-image-gen');
+            const prompt = imageGenPrompt(store.ai.imageGenPrompt, {word: 'serendipity', sentence: 'Finding that old book in the attic was pure serendipity.'}, store.settings);
+            const [picture] = await generateImages(options, prompt, {count: 1, aspect: store.ai.imageGenAspect, quality: store.ai.imageGenQuality});
+            shot.append(el('img', {src: 'url' in picture ? picture.url : URL.createObjectURL(picture.blob), alt: 'serendipity'}));
+            out.className = 'ok';
+            out.textContent = 'Funcionou.';
+        } catch (e) {
+            out.className = 'error';
+            out.textContent = String(e?.message || e);
+        } finally {
+            btn.disabled = false;
+        }
+    });
+    return el('div', {}, el('div', {class: 'actions'}, btn, out), shot);
+}
+
+function renderAiImageGen(root) {
+    const ai = store.ai;
+    const own = ai.sectionProviders['ai-image-gen'];
+    const vars = escapeHtml('{{target}} (palavra), {{sentence}} (a frase da palavra), {{wordLanguage}} (idioma do OCR), {{definitionLanguage}}, {{translationLanguage}}');
+    const number = (n) => ({value: String(n), label: n === 1 ? '1 imagem' : `${n} imagens`});
+    root.append(
+        el('h2', {}, AI_NAMES['ai-image-gen']),
+        el('p', {class: 'lead'}, 'Gera imagens da palavra no popup com um modelo de imagem e o seu prompt, por exemplo para entender o sentido de um verbo. Usa a sua chave (BYOK). Como na seção Imagens, clique numa imagem para ampliar e na marca do canto para mandá-la ao Anki (marcador {image}).'),
+        el('h3', {}, 'Configurações do dicionário'),
+        el('div', {class: 'group'},
+            cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', desc: 'Desligado: as imagens só são geradas quando você clica em "Gerar imagem", como o botão Explicar. Cada imagem gerada é cobrada pelo provedor.',
+                control: aiControl('autoGenerateImages', 'Gerar automaticamente ao abrir o popup', toggle(ai.autoGenerateImages === true, (v) => { ai.autoGenerateImages = v; save(); }))}),
+            cardRow({icon: 'image', title: 'Imagens por vez', desc: 'Quantas imagens cada clique gera. "Gerar mais", embaixo das imagens, gera outra leva.', wide: true,
+                control: aiControl('imageGenCount', 'Imagens por vez', select(Array.from({length: IMAGE_GEN_MAX_COUNT}, (_v, i) => number(i + 1)),
+                    String(ai.imageGenCount || 1), (v) => { ai.imageGenCount = Number(v); save(); }))}),
+            cardRow({icon: 'image', title: 'Formato', wide: true,
+                control: aiControl('imageGenAspect', 'Formato', select([
+                    {value: '1:1', label: 'Quadrada (1:1)'}, {value: '16:9', label: 'Paisagem (16:9)'}, {value: '9:16', label: 'Retrato (9:16)'},
+                    {value: '4:3', label: 'Paisagem (4:3)'}, {value: '3:4', label: 'Retrato (3:4)'},
+                ], ai.imageGenAspect || '1:1', (v) => { ai.imageGenAspect = v; save(); }))}),
+            cardRow({icon: 'settings', title: 'Qualidade (OpenAI)', desc: 'Baixa é a mais barata e já basta para um card. No DALL·E 3, Alta é "hd".', wide: true,
+                control: aiControl('imageGenQuality', 'Qualidade (OpenAI)', select([
+                    {value: 'low', label: 'Baixa'}, {value: 'medium', label: 'Média'}, {value: 'high', label: 'Alta'}, {value: 'auto', label: 'Automática'},
+                ], ai.imageGenQuality || 'low', (v) => { ai.imageGenQuality = v; save(); }))})),
+        el('h3', {}, 'Prompt'),
+        el('div', {class: 'group'},
+            promptCard('Prompt da imagem', `O que o modelo de imagem recebe. Variáveis: ${vars}.`,
+                () => ai.imageGenPrompt, (v) => { ai.imageGenPrompt = v; }, IMAGE_GEN_PROMPT, 'imageGenPrompt')),
+        el('h3', {}, 'Provedor de imagens (sua chave, seu modelo)'),
+        el('p', {class: 'muted'}, 'Só para as Imagens IA. Começa com a chave de "IA — palavra no contexto" e um modelo de imagem.'),
+        imageProviderSection(own, 'sectionProviders.ai-image-gen.'),
+        imageGenTestButton(),
     );
 }
