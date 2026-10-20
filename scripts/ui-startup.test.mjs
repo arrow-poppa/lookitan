@@ -720,13 +720,15 @@ test('the audio section collapses below its first row and expands again', async 
     assert(fixture.root.children.slice(1).every((node) => node.hidden === false));
 });
 
-test('an Edge source and the context voice list the Edge voices of the OCR language', async () => {
+test('an Edge source and the context voice list every Edge voice, grouped by language', async () => {
     const fixture = await audioPanelFixture({sources: [{type: 'edge-tts'}], context: {type: 'edge-tts', voice: ''}});
     await flush();
     const voiceLists = descendants(fixture.root).filter((node) => node.tagName === 'select' && node.attributes['aria-label'] === 'Voz do Edge');
     assert.equal(voiceLists.length, 2, 'one for the context, one for the source');
-    assert.equal(JSON.stringify(voiceLists[0].children.map((o) => o.attributes.value)), JSON.stringify(['', 'ja-JP-KeitaNeural', 'ja-JP-NanamiNeural']),
-        'automatic first, then only the Japanese voices');
+    const groups = voiceLists[0].children.filter((node) => node.tagName === 'optgroup');
+    assert.equal(voiceLists[0].children[0].attributes.value, '', 'automatic first');
+    assert.equal(JSON.stringify(groups.map((g) => g.children.map((o) => o.attributes.value))),
+        JSON.stringify([['en-US-AriaNeural'], ['ja-JP-KeitaNeural', 'ja-JP-NanamiNeural']]), 'every voice, not only the OCR language, one group per language');
     // The context row comes before the list of sources.
     voiceLists[0].value = 'ja-JP-NanamiNeural';
     voiceLists[0].dispatch('change');

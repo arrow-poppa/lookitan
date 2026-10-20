@@ -29,23 +29,43 @@ const HINTS = {
 
 let edgeVoices = null;
 
+/** "ja-JP" -> "japonês (Japão)", for the groups of the voice list. */
+function localeName(locale) {
+    try { return new Intl.DisplayNames(['pt-BR'], {type: 'language'}).of(locale) || locale; } catch (_e) { return locale; }
+}
+
 /**
- * A choice of Edge neural voice for the OCR language ("" is the language's default voice). The
- * list comes from the app once per window; a voice saved for another language stays listed.
+ * A choice among every Edge neural voice, grouped by language ("" is the OCR language's default
+ * voice). The list comes from the app once per window; a saved voice it no longer has stays listed.
  */
 function edgeVoiceSelect(current, onChange) {
-    const locale = String(store.settings.ocrLanguage || 'en-US');
-    const base = locale.split('-')[0].toLowerCase();
     const box = el('span', {class: 'edge-voice'}, el('span', {class: 'muted'}, 'Carregando as vozes…'));
     edgeVoices ||= invoke('edge_tts_voices');
     edgeVoices.then((voices) => {
-        const own = (voices || []).filter((v) => v.locale.toLowerCase().split('-')[0] === base);
-        if (current && !own.some((v) => v.id === current)) { own.unshift({id: current, locale: current.split('-').slice(0, 2).join('-'), gender: ''}); }
+        const all = [...(voices || [])];
+        if (current && !all.some((v) => v.id === current)) { all.push({id: current, locale: current.split('-').slice(0, 2).join('-'), gender: ''}); }
         const gender = (g) => (g === 'Female' ? ' (feminina)' : g === 'Male' ? ' (masculina)' : '');
-        const list = select([{value: '', label: 'Automática (a padrão do idioma)'},
-            ...own.map((v) => ({value: v.id, label: `${edgeVoiceName(v.id)} · ${v.locale}${gender(v.gender)}`}))], current, onChange);
-        list.setAttribute('aria-label', 'Voz do Edge');
-        box.replaceChildren(list, previewButton(() => list.value));
+        const groups = new Map();
+        for (const v of all) {
+            if (!groups.has(v.locale)) { groups.set(v.locale, []); }
+            groups.get(v.locale).push(v);
+        }
+        const list = el('select', {'aria-label': 'Voz do Edge'});
+        const option = (value, label) => {
+            const o = el('option', {value}, label);
+            if (value === current) { o.selected = true; }
+            return o;
+        };
+        list.append(option('', 'Automática (a padrão do idioma do OCR)'));
+        const named = [...groups.entries()].map(([locale, group]) => [localeName(locale), locale, group]).sort((x, y) => x[0].localeCompare(y[0], 'pt'));
+        for (const [name, locale, group] of named) {
+            const optgroup = el('optgroup', {label: `${name} · ${locale}`});
+            for (const v of group) { optgroup.append(option(v.id, `${edgeVoiceName(v.id)}${gender(v.gender)}`)); }
+            list.append(optgroup);
+        }
+        list.value = current || '';
+        list.addEventListener('change', () => onChange(list.value));
+        box.replaceChildren(el('span', {class: 'muted'}, `${all.length} vozes`), list, previewButton(() => list.value));
     }, (e) => {
         edgeVoices = null;
         box.replaceChildren(el('span', {class: 'error'}, `Não deu para carregar as vozes: ${String(e?.message || e)}`));
@@ -53,13 +73,16 @@ function edgeVoiceSelect(current, onChange) {
     return box;
 }
 
-/** Plays a short sample of the chosen Edge voice. */
+const SAMPLES = {ja: 'こんにちは、今日もいい天気ですね。', pt: 'Olá, como vai você?', es: 'Hola, ¿cómo estás?', fr: 'Bonjour, comment ça va ?',
+    de: 'Hallo, wie geht es dir?', it: 'Ciao, come stai?', zh: '你好，今天天气很好。', ko: '안녕하세요, 오늘 날씨가 좋네요.', ru: 'Привет, как дела?'};
+
+/** Plays a short sample of the chosen Edge voice, in the voice's own language. */
 function previewButton(voice) {
     const b = el('button', {class: 'ghost icon', type: 'button', title: 'Ouvir esta voz', 'aria-label': 'Ouvir esta voz', html: icon('speaker', 'sm')});
     b.addEventListener('click', async () => {
-        const sample = {ja: 'こんにちは、今日もいい天気ですね。', pt: 'Olá, como vai você?', es: 'Hola, ¿cómo estás?', fr: 'Bonjour, comment ça va ?', de: 'Hallo, wie geht es dir?'};
-        const locale = String(store.settings.ocrLanguage || 'en-US');
-        const file = await audioFile(edgeEntry(sample[locale.split('-')[0]] || 'Hello, how are you today?', voice(), locale), {invoke}).catch(() => null);
+        const id = voice();
+        const locale = id ? id.split('-').slice(0, 2).join('-') : String(store.settings.ocrLanguage || 'en-US');
+        const file = await audioFile(edgeEntry(SAMPLES[locale.split('-')[0]] || 'Hello, how are you today?', id, locale), {invoke}).catch(() => null);
         if (file) { void playFile(file); }
     });
     return b;
