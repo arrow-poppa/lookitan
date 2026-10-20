@@ -765,7 +765,7 @@ test('"Imagem AI" makes its pictures on a click, adds more, and sends the checke
     const {view, made, show, settle} = await imageGenFixture();
     const {sectionNode, body} = await show();
     assert(sectionNode.innerHTML.includes('Imagem AI'));
-    assert(body.innerHTML.includes('Gerar 2 imagens'), 'like Explicar, nothing is made before the click');
+    assert(body.innerHTML.includes('Gerar 2 imagens AI'), 'like Explicar, nothing is made before the click');
     await settle();
     assert.equal(made.length, 0);
     body.querySelector('button').listeners.click();
@@ -793,7 +793,7 @@ test('"Imagem AI" shows pictures already made for the word at once, and the refr
     const again = await show();
     await settle();
     assert.equal(made.length, 1, 'nothing is paid for twice');
-    assert(again.body.innerHTML.includes('https://gen.example/2.png') && !again.body.innerHTML.includes('Gerar 2 imagens'));
+    assert(again.body.innerHTML.includes('https://gen.example/2.png') && !again.body.innerHTML.includes('Gerar 2 imagens AI'));
     const [refresh] = again.sectionNode.querySelector('.sec-head').children;
     refresh.listeners.click();
     await settle();
