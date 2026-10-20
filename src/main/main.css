@@ -118,7 +118,9 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .audio-source .head { align-items: center; }
 .audio-source .num { width: 16px; color: var(--muted); font-size: 13px; text-align: right; }
 .audio-source .txt select { max-width: 280px; margin-bottom: 4px; }
-.audio-field { display: flex; gap: 8px; width: 100%; }
+.audio-field { display: flex; gap: 8px; width: 100%; align-items: center; flex-wrap: wrap; }
+.edge-voice { display: inline-flex; gap: 4px; align-items: center; min-width: 0; }
+.edge-voice select { max-width: 320px; }
 .audio-test { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .audio-test input { width: 120px; }
 

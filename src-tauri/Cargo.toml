@@ -58,6 +58,10 @@ prost = "0.14"
 # Local word audio databases (audio.rs): local-audio-yomichan's entries.db / android.db, read-only.
 rusqlite = { version = "0.37", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "gzip"] }
+# Edge's neural voices (edge_tts.rs): a websocket with the Edge client's headers, which a WebView
+# cannot set, and the Sec-MS-GEC hash. rustls here uses reqwest's ring provider.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 # Tests write the archives they unpack: RAR4/RAR5 volume sets, 7z and xz.

@@ -10,6 +10,8 @@
 //   custom            Yomitan's "Custom URL": a URL template that answers with the audio itself
 //   custom-json       Yomitan's "Custom URL (JSON)": answers {"type": "audioSourceList",
 //                     "audioSources": [{"name", "url"}]}
+//   edge-tts          a Microsoft Edge neural voice ("Read aloud", unofficial; edge_tts.rs), as
+//                     Fushi offers it. Always "finds" something while the service answers
 //   tts               the system voice (speechSynthesis), which always "finds" something
 // Templates take {term}, {reading} and {language}, as in Yomitan. Every request goes through the app
 // (no CORS), and the sources are asked at the same time; the results keep the list order.
@@ -23,7 +25,14 @@ export const AUDIO_SOURCE_TYPES = [
     {value: 'wiktionary', label: 'Wiktionary'},
     {value: 'custom', label: 'URL personalizada'},
     {value: 'custom-json', label: 'URL personalizada (JSON)'},
+    {value: 'edge-tts', label: 'Vozes neurais do Edge'},
     {value: 'tts', label: 'Voz do sistema'},
+];
+
+/** Who reads the context sentence aloud: the system voice or an Edge neural voice. */
+export const CONTEXT_VOICE_TYPES = [
+    {value: 'tts', label: 'Voz do sistema'},
+    {value: 'edge-tts', label: 'Voz neural do Edge'},
 ];
 
 const TYPES = new Set(AUDIO_SOURCE_TYPES.map((t) => t.value));
@@ -37,7 +46,9 @@ const JPOD101_MISSING_SHA256 = 'ae6398b5a27bc8c0a771df6c907ade794be15518174773c5
 export function defaultAudioOptions() {
     // others: how the pop-up shows the recordings after the first, 'menu' (right click on the
     // speaker) or 'buttons' (one button each).
-    return {autoPlay: false, others: 'menu', sources: [{type: 'tts', enabled: true, path: '', url: '', subsources: []}]};
+    // context: the voice that reads the context sentence (the speaker beside it).
+    return {autoPlay: false, others: 'menu', sources: [{type: 'tts', enabled: true, path: '', url: '', voice: '', subsources: []}],
+        context: {type: 'tts', voice: ''}};
 }
 
 /**
@@ -57,10 +68,11 @@ export function normalizeAudioOptions(stored) {
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) { return base; }
     const sources = Array.isArray(stored.sources) ? stored.sources
         .filter((s) => s && TYPES.has(s.type))
-        .map((s) => ({type: s.type, enabled: s.enabled !== false, path: String(s.path || ''), url: String(s.url || ''),
+        .map((s) => ({type: s.type, enabled: s.enabled !== false, path: String(s.path || ''), url: String(s.url || ''), voice: String(s.voice || ''),
             subsources: Array.isArray(s.subsources) ? s.subsources.filter((x) => x && typeof x.name === 'string' && x.name)
                 .map((x) => ({name: x.name, enabled: x.enabled !== false})) : []})) : base.sources;
-    return {autoPlay: stored.autoPlay === true, others: stored.others === 'buttons' ? 'buttons' : 'menu', sources};
+    const context = {type: stored.context?.type === 'edge-tts' ? 'edge-tts' : 'tts', voice: String(stored.context?.voice || '')};
+    return {autoPlay: stored.autoPlay === true, others: stored.others === 'buttons' ? 'buttons' : 'menu', sources, context};
 }
 
 /** A Yomitan URL template with the word filled in (each value URL-encoded). */
@@ -227,6 +239,17 @@ async function wiktionary(io, term, iso) {
         });
 }
 
+/** "ja-JP-NanamiNeural" -> "Nanami"; "ja-JP-Masaru:DragonHDLatestNeural" -> "Masaru". */
+export function edgeVoiceName(id) {
+    const m = String(id || '').match(/^[a-z]{2,3}-[A-Za-z0-9]+(?:-[A-Za-z]+)?-([^:]+?)(?::.*)?(?:Multilingual)?Neural$/);
+    return m ? m[1].replace(/Multilingual$/, '') : String(id || '');
+}
+
+/** An Edge neural voice reading `text` (no voice: the language's default one, chosen by the app). */
+export function edgeEntry(text, voice, language) {
+    return {kind: 'edge', name: voice ? `Edge · ${edgeVoiceName(voice)}` : 'Edge', text, voice: voice || '', language: language || ''};
+}
+
 /** The recordings one source has for a word. */
 async function fromSource(source, word, io) {
     const {term} = word;
@@ -276,6 +299,8 @@ async function fromSource(source, word, io) {
             if (!response.ok) { return []; }
             return parseAudioList(await response.json()).map((item) => ({kind: 'url', name: item.name || hostOf(item.url), url: item.url}));
         }
+        case 'edge-tts':
+            return [edgeEntry(term, source.voice, word.locale || language)];
         case 'tts':
             return [{kind: 'tts', name: 'Voz do sistema'}];
         default:
@@ -327,6 +352,10 @@ export async function audioFile(entry, io) {
         if (!found) { return null; }
         const [data, extension] = found;
         return {data, extension, mime: MIME[extension] || 'audio/mpeg'};
+    }
+    if (entry.kind === 'edge') {
+        const data = await io.invoke('edge_tts_speak', {text: entry.text, voice: entry.voice, language: entry.language});
+        return data ? {data, extension: 'mp3', mime: 'audio/mpeg'} : null;
     }
     if (entry.kind === 'url') {
         const response = await request(io, entry.url);

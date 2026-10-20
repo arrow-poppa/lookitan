@@ -5,6 +5,7 @@
 // GNU General Public License version 3 as published by the Free Software Foundation.
 
 mod audio;
+mod edge_tts;
 mod block;
 mod cards;
 mod dict;
@@ -1441,6 +1442,24 @@ async fn audio_data(app: AppHandle, path: String, source: String, file: String) 
     .map_err(|e| e.to_string())?
 }
 
+/// Edge's neural voices, for Configurações › Áudio.
+#[tauri::command]
+async fn edge_tts_voices() -> std::result::Result<Vec<edge_tts::Voice>, String> {
+    tauri::async_runtime::spawn_blocking(|| edge_tts::voices().map_err(|e| format!("{e:#}")))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// `text` read by an Edge neural voice (empty: the language's default voice), as base64 MP3.
+#[tauri::command]
+async fn edge_tts_speak(text: String, voice: String, language: String) -> std::result::Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        edge_tts::speak(&text, &voice, &language).map(|mp3| base64::engine::general_purpose::STANDARD.encode(mp3)).map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn word_image(state: tauri::State<'_, AppState>, name: String) -> Option<String> {
     state.cards.media(&name).map(|b| base64::engine::general_purpose::STANDARD.encode(b))
@@ -1639,6 +1658,8 @@ pub fn run() {
             word_image,
             audio_lookup,
             audio_db_sources,
+            edge_tts_voices,
+            edge_tts_speak,
             audio_data,
             write_text_file,
             read_text_file

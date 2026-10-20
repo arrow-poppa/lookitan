@@ -4,7 +4,7 @@
 
 import {invoke} from '@tauri-apps/api/core';
 import {open} from '@tauri-apps/plugin-dialog';
-import {AUDIO_SOURCE_TYPES, audioFile, findAudio, mergeSubsources, normalizeAudioOptions} from '../lib/audio.js';
+import {AUDIO_SOURCE_TYPES, CONTEXT_VOICE_TYPES, audioFile, edgeEntry, edgeVoiceName, findAudio, mergeSubsources, normalizeAudioOptions} from '../lib/audio.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
 import {cardRow, collapser, el, select, textInput, toggle} from './ui.js';
@@ -23,14 +23,60 @@ const HINTS = {
     'wiktionary': 'As gravações do Wikcionário (Wikimedia Commons), em vários idiomas, com a região de quem fala.',
     'custom': 'Uma URL que responde com o próprio áudio. Variáveis: {term}, {reading}, {language}.',
     'custom-json': 'Uma URL que responde com uma lista de áudios no formato do Yomitan, como o servidor de áudio local do Anki. Variáveis: {term}, {reading}, {language}.',
+    'edge-tts': 'As vozes neurais do "Ler em voz alta" do Microsoft Edge, como no Fushi. Serviço online não oficial: envia a palavra à Microsoft e pode parar se ela mudar o protocolo.',
     'tts': 'A voz do sistema, no idioma do OCR. Sempre encontra algo, por isso fica bem por último.',
 };
+
+let edgeVoices = null;
+
+/**
+ * A choice of Edge neural voice for the OCR language ("" is the language's default voice). The
+ * list comes from the app once per window; a voice saved for another language stays listed.
+ */
+function edgeVoiceSelect(current, onChange) {
+    const locale = String(store.settings.ocrLanguage || 'en-US');
+    const base = locale.split('-')[0].toLowerCase();
+    const box = el('span', {class: 'edge-voice'}, el('span', {class: 'muted'}, 'Carregando as vozes…'));
+    edgeVoices ||= invoke('edge_tts_voices');
+    edgeVoices.then((voices) => {
+        const own = (voices || []).filter((v) => v.locale.toLowerCase().split('-')[0] === base);
+        if (current && !own.some((v) => v.id === current)) { own.unshift({id: current, locale: current.split('-').slice(0, 2).join('-'), gender: ''}); }
+        const gender = (g) => (g === 'Female' ? ' (feminina)' : g === 'Male' ? ' (masculina)' : '');
+        const list = select([{value: '', label: 'Automática (a padrão do idioma)'},
+            ...own.map((v) => ({value: v.id, label: `${edgeVoiceName(v.id)} · ${v.locale}${gender(v.gender)}`}))], current, onChange);
+        list.setAttribute('aria-label', 'Voz do Edge');
+        box.replaceChildren(list, previewButton(() => list.value));
+    }, (e) => {
+        edgeVoices = null;
+        box.replaceChildren(el('span', {class: 'error'}, `Não deu para carregar as vozes: ${String(e?.message || e)}`));
+    });
+    return box;
+}
+
+/** Plays a short sample of the chosen Edge voice. */
+function previewButton(voice) {
+    const b = el('button', {class: 'ghost icon', type: 'button', title: 'Ouvir esta voz', 'aria-label': 'Ouvir esta voz', html: icon('speaker', 'sm')});
+    b.addEventListener('click', async () => {
+        const sample = {ja: 'こんにちは、今日もいい天気ですね。', pt: 'Olá, como vai você?', es: 'Hola, ¿cómo estás?', fr: 'Bonjour, comment ça va ?', de: 'Hallo, wie geht es dir?'};
+        const locale = String(store.settings.ocrLanguage || 'en-US');
+        const file = await audioFile(edgeEntry(sample[locale.split('-')[0]] || 'Hello, how are you today?', voice(), locale), {invoke}).catch(() => null);
+        if (file) { void playFile(file); }
+    });
+    return b;
+}
+
+function playFile(file) {
+    const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+    return new Audio(URL.createObjectURL(new Blob([bytes], {type: file.mime}))).play();
+}
 
 /** The audio options, normalized once and then edited in place (rows keep references to them). */
 function options() {
     if (!store.settings.audio || store.settings.audio.normalized !== true) {
         store.settings.audio = {...normalizeAudioOptions(store.settings.audio), normalized: true};
     }
+    // Saved before the context voice existed.
+    store.settings.audio.context ||= {type: 'tts', voice: ''};
     return store.settings.audio;
 }
 
@@ -110,6 +156,8 @@ function sourceRow(redraw, source, i) {
             if (chosen) { source.path = String(chosen); save(); redraw(); }
         });
         field = el('div', {}, el('div', {class: 'audio-field'}, path, pick), source.path ? subsourceList(source) : null);
+    } else if (source.type === 'edge-tts') {
+        field = el('div', {class: 'audio-field'}, edgeVoiceSelect(source.voice, (v) => { source.voice = v; save(); }));
     } else if (source.type === 'custom' || source.type === 'custom-json') {
         const url = textInput(source.url, (v) => { source.url = v.trim(); save(); }, {placeholder: PLACEHOLDERS[source.type]});
         url.setAttribute('data-setting', `audio.sources.${i}.url`);
@@ -148,8 +196,7 @@ function testRow() {
                 if (file) { break; }
             }
             if (file) {
-                const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
-                void new Audio(URL.createObjectURL(new Blob([bytes], {type: file.mime}))).play();
+                void playFile(file);
             } else if ('speechSynthesis' in window) {
                 const u = new SpeechSynthesisUtterance(term);
                 u.lang = store.settings.ocrLanguage || 'en-US';
@@ -172,7 +219,7 @@ export function renderAudioSection(root, focusIndex = null) {
     audio.sources.forEach((source, i) => list.append(sourceRow(redraw, source, i)));
     const add = el('button', {html: `${icon('plus', 'sm')}Adicionar fonte`});
     add.addEventListener('click', () => {
-        audio.sources.push({type: 'local-db', enabled: true, path: '', url: '', subsources: []});
+        audio.sources.push({type: 'local-db', enabled: true, path: '', url: '', voice: '', subsources: []});
         save();
         redraw(audio.sources.length - 1);
     });
@@ -189,6 +236,10 @@ export function renderAudioSection(root, focusIndex = null) {
                 {value: 'menu', label: 'Menu no clique direito do botão de áudio'},
                 {value: 'buttons', label: 'Um botão para cada áudio'},
             ], audio.others, (v) => { audio.others = v; save(); })}),
+        cardRow({icon: 'speaker', title: 'Voz para ler o contexto', desc: 'O botão de áudio ao lado do contexto e do tradutor de contexto lê a frase com esta voz. Se a do Edge falhar, a do sistema lê.', wide: true,
+            control: el('div', {class: 'audio-field'},
+                select(CONTEXT_VOICE_TYPES, audio.context.type, (v) => { audio.context.type = v; save(); redraw(); }),
+                audio.context.type === 'edge-tts' ? edgeVoiceSelect(audio.context.voice, (v) => { audio.context.voice = v; save(); }) : null)}),
         el('div', {class: 'card-row stack'},
             el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('list')}),
                 el('div', {class: 'txt'}, el('div', {class: 't'}, 'Fontes de áudio'),

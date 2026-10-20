@@ -11,7 +11,7 @@ import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai
 import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {invoke} from '@tauri-apps/api/core';
-import {audioFile, findAudio, normalizeAudioOptions} from '../lib/audio.js';
+import {audioFile, edgeEntry, findAudio, normalizeAudioOptions} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
 
@@ -129,17 +129,24 @@ function speak(text) {
     window.speechSynthesis.speak(u);
 }
 
-/** The speaker beside a context: reads the original text aloud with the system voice. */
+/**
+ * The speaker beside a context: reads the original text aloud with the voice chosen in
+ * Configurações › Áudio, the system voice or an Edge neural voice (the system voice if Edge fails).
+ */
 function sentenceButton() {
-    return `<button class="ghost icon speak-sentence" title="Ouvir o contexto (voz do sistema)" aria-label="Ouvir o contexto">${icon('speaker', 'sm')}</button>`;
+    const edge = normalizeAudioOptions(settings.audio).context.type === 'edge-tts';
+    return `<button class="ghost icon speak-sentence" title="Ouvir o contexto (${edge ? 'voz neural do Edge' : 'voz do sistema'})" aria-label="Ouvir o contexto">${icon('speaker', 'sm')}</button>`;
 }
 
 function bindSentence(body, text) {
-    body.querySelector('.speak-sentence')?.addEventListener('click', () => {
+    body.querySelector('.speak-sentence')?.addEventListener('click', async () => {
         // A second click while it is still reading stops it.
-        const speaking = 'speechSynthesis' in window && window.speechSynthesis.speaking;
+        const speaking = Boolean(playing && !playing.paused) || ('speechSynthesis' in window && window.speechSynthesis.speaking);
         stopAudio();
-        if (!speaking) { speak(text); }
+        if (speaking || !text) { return; }
+        const voice = normalizeAudioOptions(settings.audio).context;
+        if (voice.type === 'edge-tts' && await playRecording(edgeEntry(text, voice.voice, settings.ocrLanguage || 'en-US'), text)) { return; }
+        speak(text);
     });
 }
 
@@ -149,7 +156,7 @@ const audioIo = {invoke};
 let playing = null;
 
 function audioWord(term) {
-    return {term, reading: '', language: String(settings.ocrLanguage || 'en').split('-')[0]};
+    return {term, reading: '', language: String(settings.ocrLanguage || 'en').split('-')[0], locale: settings.ocrLanguage || 'en-US'};
 }
 
 /** The recordings of `term` from the configured sources, found once per lookup. */

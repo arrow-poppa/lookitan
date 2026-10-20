@@ -142,7 +142,7 @@ test('word audio sources: Yomitan URL templates, the JSON list, order and defaul
         [{name: 'NHK16', url: 'http://127.0.0.1:5050/nhk16/a.ogg'}, {name: '', url: 'https://b/c.mp3'}]);
     assert.deepEqual(parseAudioList({type: 'other'}), []);
     assert.deepEqual(normalizeAudioOptions({sources: [{type: 'bogus'}, {type: 'custom', url: 'u', enabled: false}]}).sources,
-        [{type: 'custom', enabled: false, path: '', url: 'u', subsources: []}]);
+        [{type: 'custom', enabled: false, path: '', url: 'u', voice: '', subsources: []}]);
     const options = {sources: [
         {type: 'custom-json', url: 'http://127.0.0.1:5050/?term={term}'},
         {type: 'local-db', path: 'a.db'},
@@ -222,4 +222,24 @@ test('a JapanesePod101 "not available" clip counts as no audio, and application/
     assert.equal((await audioFile({kind: 'url', url: 'https://x/a', check: 'jpod101'}, io)).extension, 'mp3');
     const ogg = {fetch: async () => ({ok: true, headers: {get: () => 'application/ogg'}, arrayBuffer: async () => bytes.buffer})};
     assert.equal((await audioFile({kind: 'url', url: 'https://x/a.ogg'}, ogg)).extension, 'ogg', 'Wikimedia serves .ogg as application/ogg');
+});
+
+test('Edge neural voices: a source that reads the word, voice names, and the context voice', async () => {
+    const audio = await import('../src/lib/audio.js');
+    assert.equal(audio.edgeVoiceName('ja-JP-NanamiNeural'), 'Nanami');
+    assert.equal(audio.edgeVoiceName('en-US-AndrewMultilingualNeural'), 'Andrew');
+    assert.equal(audio.edgeVoiceName('zh-CN-liaoning-XiaobeiNeural'), 'Xiaobei');
+    assert.equal(audio.edgeVoiceName('pt-BR-FranciscaNeural'), 'Francisca');
+    assert.equal(JSON.stringify(audio.defaultAudioOptions().context), JSON.stringify({type: 'tts', voice: ''}), 'the system voice reads the context by default');
+    assert.equal(audio.normalizeAudioOptions({context: {type: 'edge-tts', voice: 'ja-JP-KeitaNeural'}}).context.voice, 'ja-JP-KeitaNeural');
+    assert.equal(audio.normalizeAudioOptions({context: {type: 'bogus'}}).context.type, 'tts');
+    const calls = [];
+    const io = {invoke: async (command, args) => { calls.push([command, args]); return 'SUQz'; }};
+    const found = await audio.findAudio({sources: [{type: 'edge-tts', voice: 'ja-JP-NanamiNeural'}, {type: 'tts'}]}, {term: '読む', language: 'ja', locale: 'ja-JP'}, io);
+    assert.deepEqual(found.map((f) => f.name), ['Edge · Nanami', 'Voz do sistema']);
+    const file = await audio.audioFile(found[0], io);
+    assert.equal(file.extension, 'mp3');
+    assert.equal(JSON.stringify(calls[0]), JSON.stringify(['edge_tts_speak', {text: '読む', voice: 'ja-JP-NanamiNeural', language: 'ja-JP'}]));
+    const automatic = await audio.findAudio({sources: [{type: 'edge-tts'}]}, {term: 'livro', language: 'pt', locale: 'pt-BR'}, io);
+    assert.equal(automatic[0].name, 'Edge', 'no voice chosen: the app picks the language default');
 });

@@ -655,7 +655,9 @@ async function audioPanelFixture(audio) {
     let saves = 0;
     const settings = {ocrLanguage: 'ja-JP', audio};
     const panel = await load('src/main/audio-panel.js', {document: view.document}, {
-        '@tauri-apps/api/core': {invoke: async (command) => (command === 'audio_db_sources' ? ['nhk16', 'forvo'] : [])},
+        '@tauri-apps/api/core': {invoke: async (command) => (command === 'audio_db_sources' ? ['nhk16', 'forvo']
+            : command === 'edge_tts_voices' ? [{id: 'en-US-AriaNeural', locale: 'en-US', gender: 'Female'}, {id: 'ja-JP-KeitaNeural', locale: 'ja-JP', gender: 'Male'},
+                {id: 'ja-JP-NanamiNeural', locale: 'ja-JP', gender: 'Female'}] : [])},
         '@tauri-apps/plugin-dialog': {open: async () => null},
         [file('src/lib/api.js')]: {escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
@@ -695,7 +697,7 @@ test('every Yomitan audio source can be chosen, and a new custom URL source show
     const fixture = await audioPanelFixture({sources: [{type: 'tts'}]});
     const select = descendants(fixture.root).find((node) => node.attributes['data-setting'] === 'audio.sources.0.type');
     assert.deepEqual(select.children.map((o) => o.attributes.value),
-        ['local-db', 'jpod101', 'language-pod-101', 'jisho', 'lingua-libre', 'wiktionary', 'custom', 'custom-json', 'tts']);
+        ['local-db', 'jpod101', 'language-pod-101', 'jisho', 'lingua-libre', 'wiktionary', 'custom', 'custom-json', 'edge-tts', 'tts']);
     const add = descendants(fixture.root).find((node) => node.tagName === 'button' && String(node.innerHTML).includes('Adicionar fonte'));
     add.dispatch('click');
     assert.deepEqual(fixture.types(), ['tts', 'local-db']);
@@ -716,4 +718,26 @@ test('the audio section collapses below its first row and expands again', async 
     assert.notEqual(head.hidden, true);
     button.dispatch('click');
     assert(fixture.root.children.slice(1).every((node) => node.hidden === false));
+});
+
+test('an Edge source and the context voice list the Edge voices of the OCR language', async () => {
+    const fixture = await audioPanelFixture({sources: [{type: 'edge-tts'}], context: {type: 'edge-tts', voice: ''}});
+    await flush();
+    const voiceLists = descendants(fixture.root).filter((node) => node.tagName === 'select' && node.attributes['aria-label'] === 'Voz do Edge');
+    assert.equal(voiceLists.length, 2, 'one for the context, one for the source');
+    assert.equal(JSON.stringify(voiceLists[0].children.map((o) => o.attributes.value)), JSON.stringify(['', 'ja-JP-KeitaNeural', 'ja-JP-NanamiNeural']),
+        'automatic first, then only the Japanese voices');
+    // The context row comes before the list of sources.
+    voiceLists[0].value = 'ja-JP-NanamiNeural';
+    voiceLists[0].dispatch('change');
+    assert.equal(fixture.settings.audio.context.voice, 'ja-JP-NanamiNeural');
+    voiceLists[1].value = 'ja-JP-KeitaNeural';
+    voiceLists[1].dispatch('change');
+    assert.equal(fixture.settings.audio.sources[0].voice, 'ja-JP-KeitaNeural');
+});
+
+test('settings saved before the context voice existed still open', async () => {
+    const fixture = await audioPanelFixture({normalized: true, autoPlay: false, others: 'menu', sources: [{type: 'tts', enabled: true, path: '', url: '', subsources: []}]});
+    assert.equal(fixture.settings.audio.context.type, 'tts');
+    assert(fixture.root.textContent.includes('Voz para ler o contexto'));
 });
