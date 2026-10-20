@@ -1,4 +1,4 @@
-// "Imagens IA" pictures kept on disk, so a word looked up again after the app was closed shows the
+// "Imagem AI" pictures kept on disk, so a word looked up again after the app was closed shows the
 // pictures already paid for. They live in the WebView's IndexedDB (in the app's data folder on
 // Windows and Linux), newest first, up to STORED_PICTURES pictures; older sets are dropped.
 // Without IndexedDB (tests, a private profile) nothing is stored and nothing breaks.

@@ -184,7 +184,7 @@ async function shrink(blob, type) {
  */
 export async function downloadImage(item, {signal, fetch: request} = {}) {
     if (item.blob instanceof Blob) {
-        // A picture made by "Imagens IA": already here, only shrunk.
+        // A picture made by "Imagem AI": already here, only shrunk.
         const type = (item.blob.type || '').toLowerCase();
         const small = await shrink(item.blob, type);
         if (small) { return {data: toBase64(small.bytes), extension: small.extension}; }

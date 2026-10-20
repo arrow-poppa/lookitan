@@ -240,7 +240,7 @@ test('the images dictionary has its own image query prompts, switch and provider
     assert.equal(fixture.ai.openai.model, 'kept-model');
 });
 
-test('"Imagens IA" has its own prompt, count and image provider, without DeepSeek', async () => {
+test('"Imagem AI" has its own prompt, count and image provider, without DeepSeek', async () => {
     const fixture = await dictionaryFixture({provider: 'openai', openai: {apiKey: 'sk', model: 'kept-model'}});
     fixture.list.children[3].dispatch('click');
     for (const key of ['autoGenerateImages', 'imageGenCount', 'imageGenAspect', 'imageGenQuality', 'imageGenPromptId', 'imageGenPrompts.0.name', 'imageGenPrompts.0.prompt',
@@ -266,7 +266,7 @@ test('"Imagens IA" has its own prompt, count and image provider, without DeepSee
     assert.equal(fixture.ai.openai.model, 'kept-model');
 });
 
-test('"Imagens IA" prompts can be added, renamed, moved and deleted, and one is chosen for the pop-up', async () => {
+test('"Imagem AI" prompts can be added, renamed, moved and deleted, and one is chosen for the pop-up', async () => {
     const fixture = await dictionaryFixture();
     fixture.list.children[3].dispatch('click');
     const ids = () => JSON.stringify(fixture.ai.imageGenPrompts.map((p) => p.id));

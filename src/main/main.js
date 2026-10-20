@@ -43,13 +43,13 @@ async function main() {
     }).catch(reportError);
     void listen('settings-changed', async () => {
         // The back end adds app profiles on its own, and the pop-up switches meme mode and the
-        // "Imagens IA" prompt; keep
+        // "Imagem AI" prompt; keep
         // them without losing local edits.
         try {
             const fresh = await api.getSettings();
             store.settings.profiles = fresh.profiles;
             if (store.ai && typeof fresh.ai?.imageMemeMode === 'boolean') { store.ai.imageMemeMode = fresh.ai.imageMemeMode; }
-            // The "Imagens IA" prompt chosen in the pop-up, likewise.
+            // The "Imagem AI" prompt chosen in the pop-up, likewise.
             if (store.ai && typeof fresh.ai?.imageGenPromptId === 'string') { store.ai.imageGenPromptId = fresh.ai.imageGenPromptId; }
         } catch (error) { reportError(error); }
     }).catch(reportError);
