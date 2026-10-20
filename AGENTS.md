@@ -40,7 +40,8 @@ Since 2026-10-16 the repository has these branches:
 ```
 index.html, popup.html, overlay.html   three webviews (main window, pop-up, click-other-words overlay)
 src/main/      main window: Palavras / Dicionários / Configurações tabs, Anki panel, store.js (settings)
-src/popup/     pop-up: AI word card, context translator, Explain, MDict iframes, Anki and save buttons
+src/popup/     pop-up: AI word card, context translator, Explain, pictures, MDict iframes, Anki and save buttons
+src/lib/images.js  the "Imagens" dictionary: image query prompts, Bing Images search and parsing, picture download for Anki
 src/overlay/   word rectangles over a frozen frame; a click calls `overlay_pick`
 src/lib/ai/    ai-provider.js (ported from the fork), explain.js, word-card.js (prompts), response-cache.js
 src/lib/anki/  AnkiConnect client and note building (ported from Yomitan)
@@ -143,6 +144,11 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Capture uses `org.kde.KWin.ScreenShot2.CaptureArea`, which is authorized only when Lookitan runs from the installed `.desktop` entry.
   - The windows run under XWayland.
   - On Wayland, the global shortcut is a system shortcut that runs `lookitan --scan`.
+- **Pictures ("Imagens", built-in dictionary `ai-images`, `DictionaryKind::AiImages`):** Migaku's pop-up image tab, by behavior (its extension was read, no code or text copied).
+  - The AI turns the word into an English search query with its own prompts, `ai.imageQuerySystemPrompt` and `ai.imageQueryPrompt` (Migaku's "Image query" system/user pair). The system prompt replaces the shared `systemPrompt` for this request only (`explain(..., {system})`). Variables: `{{target}}`, `{{sentence}}` (the sentence, not the paragraph), `{{wordLanguage}}` (the OCR language), `{{definitionLanguage}}`, `{{translationLanguage}}`. `cleanQuery` keeps the answer's first line. If the AI fails, is not configured, or `ai.imageQueryUseAi` is off, the word itself is searched, as Migaku does on failure. The answer is cached like the other AI answers (kind `images`).
+  - Search: `GET https://www.bing.com/images/async?q=…&first=0&count=100&adlt=strict` through tauri-plugin-http (Bing sends no CORS headers), Migaku's exact parameters. Bing has had no free image API since 2025. Each result's `m` attribute is JSON: `murl` (the picture), `turl` (Bing's thumbnail), `t`, `purl`. The strip shows `turl`; the viewer and Anki use `murl`, falling back to `turl`. Migaku itself keeps only `murl` (regex `murl&quot;:&quot;(.*?)&quot;`), which `parseBingImages` still uses as a fallback. The first 10 are shown. An empty answer is asked once more, because Bing now and then answers with nothing. No User-Agent spoofing: Migaku rotates five browser UAs, and that was not needed in tests on 2026-10-20. Migaku's `IMAGE_QUERY_PREFIX`/`SUFFIX` are hidden env keys and its "meme mode" toggle appends " meme"; neither is ported.
+  - Pop-up: like Explicar, the section shows "Mostrar imagens" and loads on click, unless `ai.autoShowImages` is on. Pictures sit in a sideways strip (156×140 tiles; the wheel scrolls it while it can). The check mark in the top-right corner appears on hover and stays on a checked picture. Only a click on it checks the picture; a click anywhere else opens the viewer over the pop-up (← → to move, Esc or a click outside closes, and the bar has "Marcar para o Anki" and the source page). A picture that fails to load is removed, as in Migaku.
+  - Anki: `{image}` holds the checked pictures, each downloaded, scaled to at most 800 px (`ANKI_IMAGE_MAX_SIDE`; Migaku scales to 800 px wide, as webp) as JPEG, and stored as `lookitan_image_<n>_<date>.jpg`. GIFs, and pictures the WebView cannot decode, are stored as they are. Nothing is checked by default, so `{image}` stays empty unless the user checks something. `suggestMarker` gives `{image}` to fields named image/picture/photo, and `{screenshot}` only to "screenshot".
 - **AI cache:** same semantics as the fork. It has a 60 s TTL, joins in-flight requests and never caches partial or failed answers. `cancelPendingExcept` drops requests the pop-up no longer shows.
 - **Anki:** uses Yomitan's `anki` options shape and field markers, through AnkiConnect.
   - tauri-plugin-http always sends `Origin: http://tauri.localhost` (Windows) or `tauri://localhost` (Linux). AnkiConnect allows only `http://localhost`, 127.0.0.1 and browser-extension origins by default (that is why Yomitan works) and answers 403 to anything else.
@@ -162,6 +168,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-20 (Claude, `tests`): built-in "Imagens" dictionary (`ai-images`), Migaku's image tab by behavior. The AI image query uses its own system and user prompts; pictures come from Bing Images, shown on click or automatically. On hover a check mark appears in the corner and checks the picture for Anki (`{image}`); a click enlarges the picture. `migrate()` adds the entry after the AI ones. The ui-startup test loader now caches module promises: the new diamond import (dicts-tab → images.js and defaults.js → images.js) made it link a module twice now and then.
 
 - 2026-10-16 (Codex, `tests`): restore the Linux overlay no-fade change from `4b3aa31`, confirmed by the user to fix the flicker. Preserve the previous fade version at `3dcd0f0` in the user-requested `with-fade` branch; Windows keeps its fade.
 

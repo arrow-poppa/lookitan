@@ -2,6 +2,7 @@
 // for the word card and the context translator.
 
 import {CARD_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
 export const DEFAULT_PROMPT = EXPLAIN_PROMPT;
@@ -13,6 +14,12 @@ export function defaultAiOptions() {
         cardPrompt: CARD_PROMPT,
         wordTranslationPrompt: WORD_TRANSLATION_PROMPT,
         contextPrompt: CONTEXT_PROMPT,
+        // The "Imagens" dictionary: its own system and user prompts for the search query (as
+        // Migaku's "Image query"), shown on click unless autoShowImages is on.
+        imageQuerySystemPrompt: IMAGE_QUERY_SYSTEM_PROMPT,
+        imageQueryPrompt: IMAGE_QUERY_PROMPT,
+        imageQueryUseAi: true,
+        autoShowImages: false,
         systemPrompt: '',
         autoGenerateOnLookup: true,
         autoExplain: false,
@@ -48,11 +55,13 @@ export function normalizeAiOptions(stored) {
         return base;
     }
     const out = {...base, ...stored};
-    if (typeof out.autoExplain !== 'boolean') { out.autoExplain = base.autoExplain; }
+    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi']) {
+        if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
+    }
     for (const key of ['openai', 'gemini', 'deepseek', 'custom']) {
         out[key] = {...base[key], ...(typeof stored[key] === 'object' && stored[key] !== null ? stored[key] : {})};
     }
-    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt']) {
+    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
         if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
     }
     // Card prompts saved before the translation had its own field: move the default translation

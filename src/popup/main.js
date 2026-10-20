@@ -1,5 +1,6 @@
 // Lookup popup. Sections follow the dictionary order from the Dictionaries tab: the AI word card,
-// the context translator and the MDict dictionaries. Top-right: save the word and add it to Anki.
+// the context translator, the pictures and the MDict dictionaries. Top-right: save the word and add
+// it to Anki.
 
 import {emit, listen} from '@tauri-apps/api/event';
 import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib/api.js';
@@ -9,6 +10,7 @@ import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai
 import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
+import {cleanQuery, downloadImage, imagePrompts, searchImages} from '../lib/images.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -26,10 +28,11 @@ const responses = new AiResponseCache(undefined, {storage: localStorage});
 
 /**
  * The text the AI reads with the word. As in Lookupper, the word card and the explanation get the
- * whole paragraph, and the context translation gets only the sentence.
+ * whole paragraph, and the context translation gets only the sentence. The image query also gets
+ * the sentence: it only has to tell which meaning to picture.
  */
 function aiText(kind, payload) {
-    return (kind === 'context' ? payload.sentence : payload.context || payload.sentence) || payload.word;
+    return (kind === 'context' || kind === 'images' ? payload.sentence : payload.context || payload.sentence) || payload.word;
 }
 
 /** Cache key: everything that changes the answer, as the fork's options context + term + sentence. */
@@ -225,6 +228,224 @@ function highlightStars(text) {
     return escapeHtml(text.trim()).replace(/\*\*([^*]+)\*\*/g, '<mark>$1</mark>');
 }
 
+// ------------------------------------------------------------------ pictures (the "Imagens" dictionary)
+
+/** Bing results per query while the popup lives; a failed search is not kept. */
+const imageSearches = new Map();
+const IMAGE_SEARCHES_KEPT = 40;
+
+function imagePromptKey(options) {
+    const {system, user} = imagePrompts(options, settings);
+    return `${system}\n\n${user}`;
+}
+
+/** The search query: the AI's (cached like the other AI answers), or the word itself. */
+async function imageQuery(lookup, options, force) {
+    const word = lookup.payload.word;
+    if (options.imageQueryUseAi === false || !isConfigured(options)) { return word; }
+    const {system, user} = imagePrompts(options, settings);
+    const key = await aiKey('images', `${system}\n\n${user}`, lookup, options);
+    lookup.keys.add(key);
+    try {
+        const text = await responses.run(key,
+            (signal, onChunk) => explain(options, word, aiText('images', lookup.payload), {signal, prompt: user, system, onChunk}),
+            undefined, {force});
+        return cleanQuery(text, word);
+    } catch (e) {
+        if (e?.name === 'AbortError') { throw e; }
+        // As in Migaku: when the AI fails, the word itself is searched.
+        return word;
+    }
+}
+
+function searchCached(query, force) {
+    if (force) { imageSearches.delete(query); }
+    let search = imageSearches.get(query);
+    if (!search) {
+        search = searchImages(query);
+        search.catch(() => { if (imageSearches.get(query) === search) { imageSearches.delete(query); } });
+        imageSearches.set(query, search);
+        while (imageSearches.size > IMAGE_SEARCHES_KEPT) { imageSearches.delete(imageSearches.keys().next().value); }
+    }
+    return search;
+}
+
+async function runImages(body, force = false) {
+    const lookup = state;
+    const options = ai;
+    const request = {};
+    lookup.imagesRequest = request;
+    const current = () => state === lookup && lookup.imagesRequest === request;
+    body.innerHTML = `<div class="img-strip">${'<div class="img-tile loading"></div>'.repeat(3)}</div>`;
+    try {
+        const query = await imageQuery(lookup, options, force);
+        if (!current()) { return; }
+        const items = await searchCached(query, force);
+        if (!current()) { return; }
+        lookup.images = {query, items, selected: new Set()};
+        renderImages(body, lookup);
+    } catch (e) {
+        if (current() && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
+    }
+}
+
+const checkLabel = (selected) => (selected ? 'Desmarcar (não enviar ao Anki)' : 'Marcar para enviar ao Anki');
+
+function checkButton(selected) {
+    const label = checkLabel(selected);
+    return `<button class="img-check${selected ? ' on' : ''}" title="${label}" aria-label="${label}" aria-pressed="${selected}">${icon('check', 'sm')}</button>`;
+}
+
+function setChecked(button, selected) {
+    button.classList.toggle('on', selected);
+    button.title = checkLabel(selected);
+    button.setAttribute('aria-label', checkLabel(selected));
+    button.setAttribute('aria-pressed', String(selected));
+}
+
+/**
+ * A horizontal strip, as in Migaku. The check mark shows on hover (and stays on a checked
+ * picture); only a click on it checks the picture for Anki. A click anywhere else enlarges it.
+ */
+function renderImages(body, lookup) {
+    const {query, items} = lookup.images;
+    if (items.length === 0) {
+        body.innerHTML = `<p class="hint">Nenhuma imagem para “${escapeHtml(query)}”.</p>`;
+        return;
+    }
+    body.innerHTML = `<div class="img-strip" role="list">${items.map((item, i) => `
+        <div class="img-tile${lookup.images.selected.has(i) ? ' sel' : ''}" role="listitem" data-i="${i}">
+            <img src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || query)}" draggable="false" referrerpolicy="no-referrer">
+            ${checkButton(lookup.images.selected.has(i))}
+        </div>`).join('')}</div>
+        <div class="img-query hint">Busca: ${escapeHtml(query)}</div>`;
+    const strip = body.querySelector('.img-strip');
+    strip?.addEventListener('wheel', (ev) => {
+        // The wheel scrolls the strip sideways while it can, then the pop-up again.
+        if (Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) { return; }
+        const max = strip.scrollWidth - strip.clientWidth;
+        const next = Math.min(max, Math.max(0, strip.scrollLeft + ev.deltaY));
+        if (max <= 0 || next === strip.scrollLeft) { return; }
+        ev.preventDefault();
+        strip.scrollLeft = next;
+    }, {passive: false});
+    for (const tile of body.querySelectorAll?.('.img-tile') || []) {
+        const i = Number(tile.dataset.i);
+        // A picture the site does not serve is left out, as Migaku leaves it out.
+        tile.querySelector('img')?.addEventListener('error', () => {
+            tile.remove();
+            if (state === lookup && !strip?.querySelector('.img-tile')) { body.innerHTML = `<p class="hint">Nenhuma imagem pôde ser carregada para “${escapeHtml(query)}”.</p>`; }
+        }, {once: true});
+        tile.addEventListener('click', (ev) => {
+            if (state !== lookup) { return; }
+            const check = ev.target.closest?.('.img-check');
+            if (check) {
+                ev.stopPropagation();
+                toggleImage(lookup, i);
+                setChecked(check, lookup.images.selected.has(i));
+                tile.classList.toggle('sel', lookup.images.selected.has(i));
+                return;
+            }
+            openViewer(lookup, i);
+        });
+    }
+}
+
+function toggleImage(lookup, i) {
+    const selected = lookup.images.selected;
+    if (selected.has(i)) { selected.delete(i); } else { selected.add(i); }
+}
+
+/** Shows a checked or unchecked picture the same way in the strip, after a change in the viewer. */
+function syncTile(lookup, i) {
+    const tile = document.querySelector?.(`.img-tile[data-i="${i}"]`);
+    const check = tile?.querySelector('.img-check');
+    if (!tile || !check) { return; }
+    tile.classList.toggle('sel', lookup.images.selected.has(i));
+    setChecked(check, lookup.images.selected.has(i));
+}
+
+// The enlarged picture covers the pop-up. Esc, a click outside the picture or X closes it; the
+// arrows move to the neighbours.
+let viewer = null;
+
+function openViewer(lookup, i) {
+    closeViewer();
+    const box = document.createElement('div');
+    box.className = 'img-viewer';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Imagem ampliada');
+    $('card').append(box);
+    viewer = {box, lookup, i};
+    drawViewer();
+}
+
+function drawViewer() {
+    if (!viewer) { return; }
+    const {box, lookup, i} = viewer;
+    const items = lookup.images.items;
+    const item = items[i];
+    const selected = lookup.images.selected.has(i);
+    let host = '';
+    try { host = item.page ? new URL(item.page).hostname.replace(/^www\./, '') : ''; } catch (_e) { /* not a URL */ }
+    box.innerHTML = `
+        <div class="img-frame">
+            <img class="full" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || lookup.images.query)}" draggable="false" referrerpolicy="no-referrer">
+        </div>
+        <div class="img-bar">
+            ${items.length > 1 ? `<button class="ghost icon img-prev" title="Anterior (←)">${icon('chevronLeft')}</button>` : ''}
+            <span class="img-caption">${escapeHtml(item.title || lookup.images.query)}</span>
+            ${host ? `<button class="ghost img-page" title="${escapeHtml(item.page)}">${icon('open', 'sm')}${escapeHtml(host)}</button>` : ''}
+            <button class="ghost img-pick${selected ? ' on' : ''}" aria-pressed="${selected}" title="${checkLabel(selected)}">${icon('check', 'sm')}${selected ? 'Marcada para o Anki' : 'Marcar para o Anki'}</button>
+            ${items.length > 1 ? `<button class="ghost icon img-next" title="Próxima (→)">${icon('chevronRight')}</button>` : ''}
+            <button class="ghost icon img-close" title="Fechar (Esc)">${icon('close')}</button>
+        </div>`;
+    const full = box.querySelector('.full');
+    if (full && item.src !== item.thumb && typeof Image === 'function') {
+        // Bing's thumbnail shows at once; the full picture replaces it once it arrives, and a site
+        // that refuses it leaves the thumbnail.
+        const whole = new Image();
+        whole.referrerPolicy = 'no-referrer';
+        whole.addEventListener('load', () => { if (viewer?.box === box && viewer.i === i) { full.src = item.src; } }, {once: true});
+        whole.src = item.src;
+    }
+    box.querySelector('.img-pick')?.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleImage(lookup, i);
+        syncTile(lookup, i);
+        drawViewer();
+    });
+    box.querySelector('.img-prev')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(-1); });
+    box.querySelector('.img-next')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(1); });
+    box.querySelector('.img-close')?.addEventListener('click', (ev) => { ev.stopPropagation(); closeViewer(); });
+    box.querySelector('.img-page')?.addEventListener('click', (ev) => { ev.stopPropagation(); void api.openExternal(item.page); });
+    box.addEventListener('click', (ev) => { if (ev.target === box || ev.target.classList?.contains('img-frame')) { closeViewer(); } });
+}
+
+function stepViewer(delta) {
+    if (!viewer) { return; }
+    const n = viewer.lookup.images.items.length;
+    viewer.i = (viewer.i + delta + n) % n;
+    drawViewer();
+}
+
+/** Closes the enlarged picture; false when none was open. */
+function closeViewer() {
+    if (!viewer) { return false; }
+    viewer.box.remove();
+    viewer = null;
+    return true;
+}
+
+/** The checked pictures as files for {image}, in the strip's order; unreadable ones are skipped. */
+async function checkedImageFiles(lookup) {
+    const images = lookup.images;
+    if (!images || images.selected.size === 0) { return []; }
+    const order = [...images.selected].sort((a, b) => a - b);
+    const files = await Promise.all(order.map((i) => downloadImage(images.items[i]).catch(() => null)));
+    return files.filter(Boolean);
+}
+
 // ------------------------------------------------------------------ dictionaries
 
 function renderDictionary(d) {
@@ -307,6 +528,7 @@ function noteContext(lookup = state, options = anki) {
         popupSelection: popupSelection(),
         dictionaryOrder: glossaryDictionaryNames(dicts),
         screenshot: async () => (lookup.payload.recognition ? api.captureImage(lookup.payload.recognition, options.screenshotArea || 'sentence') : null),
+        images: () => checkedImageFiles(lookup),
     };
 }
 
@@ -431,10 +653,12 @@ async function render(payload) {
             aiKey('card', cardPrompt(ai.cardPrompt, settings, ai)),
             aiKey('context', fillLanguages(ai.contextPrompt, settings)),
             aiKey('explain', fillLanguages(ai.customPrompt, settings)),
+            aiKey('images', imagePromptKey(ai)),
         ]));
         if (sequence !== renderSequence) { return; }
         responses.cancelPendingExcept(keep);
     }
+    closeViewer();
     $('sections').replaceChildren();
     $('sections').scrollTop = 0;
     $('query').value = payload.word || '';
@@ -476,6 +700,16 @@ async function render(payload) {
             } else {
                 body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Traduzir</button>`;
                 body.querySelector('button').addEventListener('click', () => void runContext(body));
+            }
+        } else if (d.kind === 'ai-images' && payload.word) {
+            const body = section('Imagens', {ai: aiReady && ai.imageQueryUseAi !== false, onRegenerate: (b) => void runImages(b, true)});
+            shown++;
+            // Like "Explicar": the pictures come on a click, or at once with the automatic option.
+            if (ai.autoShowImages === true) {
+                void runImages(body);
+            } else {
+                body.innerHTML = `<button class="ghost explain-btn">${icon('image', 'sm')}Mostrar imagens</button>`;
+                body.querySelector('button').addEventListener('click', () => void runImages(body));
             }
         } else if (d.kind === 'mdict' && renderDictionary(d)) { shown++; }
     }
@@ -567,6 +801,7 @@ function closePopup() {
 // because a hidden WebKitGTK window shows its last painted frame again when it reappears.
 void listen('popup-blank', (event) => {
     stopDictionaryAudio();
+    closeViewer();
     if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
     const card = $('card');
     card.classList.remove('tip-open', 'tip-close');
@@ -592,7 +827,9 @@ $('btn-pin').addEventListener('click', () => {
 $('btn-save').addEventListener('click', () => { void saveWord(); });
 $('btn-anki').addEventListener('click', () => { void onAnkiClick(); });
 document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') { closePopup(); }
+    if (viewer && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) { stepViewer(ev.key === 'ArrowLeft' ? -1 : 1); return; }
+    // Esc closes an enlarged picture first, then the pop-up.
+    if (ev.key === 'Escape') { if (!closeViewer()) { closePopup(); } }
     if (ev.ctrlKey && (ev.key === '+' || ev.key === '=')) { zoom = Math.min(2, zoom + 0.1); applyZoom(); }
     if (ev.ctrlKey && ev.key === '-') { zoom = Math.max(0.6, zoom - 0.1); applyZoom(); }
     if (ev.ctrlKey && ev.key === '0') { zoom = 1; applyZoom(); }
@@ -603,6 +840,7 @@ void listen('lookup', (event) => { void render(event.payload); });
 // drop the AI requests nobody will see.
 void listen('popup-hidden', () => {
     stopDictionaryAudio();
+    closeViewer();
     if (ai?.cancelPendingRequests !== false) { responses.cancelPending(); }
 });
 void listen('settings-changed', async () => {

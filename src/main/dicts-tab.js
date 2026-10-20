@@ -1,11 +1,12 @@
 // Dictionaries tab: the pop-up order on the left (drag to reorder, switch to enable) and the selected
-// dictionary's details on the right. The two AI dictionaries carry the BYOK provider settings.
+// dictionary's details on the right. The built-in AI dictionaries carry the BYOK provider settings.
 
 import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {DEFAULT_PROMPT} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
 import {CARD_PROMPT, CONTEXT_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
+import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
 import {cardRow, el, languageOptions, select, textArea, textInput, toggle} from './ui.js';
@@ -14,7 +15,7 @@ let dicts = [];
 let selectedId = null;
 let dragId = null;
 
-const AI_NAMES = {'ai-word': 'IA — palavra no contexto', 'ai-context': 'Tradutor de contexto'};
+const AI_NAMES = {'ai-word': 'IA — palavra no contexto', 'ai-context': 'Tradutor de contexto', 'ai-images': 'Imagens'};
 
 function displayName(d) {
     return AI_NAMES[d.id] || d.name || d.path;
@@ -105,6 +106,7 @@ function renderDetail() {
     }
     if (d.id === 'ai-word') { renderAiWord(root); return; }
     if (d.id === 'ai-context') { renderAiContext(root); return; }
+    if (d.id === 'ai-images') { renderAiImages(root); return; }
     renderMdict(root, d);
 }
 
@@ -318,5 +320,56 @@ function renderAiContext(root) {
         el('h3', {}, 'Provedor de IA (compartilhado com a palavra no contexto)'),
         providerSection(),
         testButton(),
+    );
+}
+
+/** Runs the image query and the Bing search for a sample word, as the pop-up does. */
+function imageTestButton() {
+    const out = el('span', {class: 'muted'});
+    const btn = el('button', {class: 'primary', html: `${icon('image', 'sm')}Testar a busca`});
+    btn.addEventListener('click', async () => {
+        out.className = 'muted';
+        out.textContent = 'Testando…';
+        const word = 'serendipity';
+        try {
+            let query = word;
+            if (store.ai.imageQueryUseAi !== false) {
+                const {system, user} = imagePrompts(store.ai, store.settings);
+                query = cleanQuery(await explain(store.ai, word, 'Finding that old book in the attic was pure serendipity.', {
+                    signal: new AbortController().signal, prompt: user, system,
+                }), word);
+            }
+            const items = await searchImages(query);
+            out.className = items.length ? 'ok' : 'error';
+            out.textContent = `Busca: "${query}" · ${items.length} imagens`;
+        } catch (e) {
+            out.className = 'error';
+            out.textContent = String(e?.message || e);
+        }
+    });
+    return el('div', {class: 'actions'}, btn, out);
+}
+
+function renderAiImages(root) {
+    const ai = store.ai;
+    const vars = escapeHtml('{{target}} (palavra), {{sentence}} (a frase da palavra), {{wordLanguage}} (idioma do OCR), {{definitionLanguage}}, {{translationLanguage}}');
+    root.append(
+        el('h2', {}, AI_NAMES['ai-images']),
+        el('p', {class: 'lead'}, 'Mostra imagens da palavra no popup, como o Migaku: a IA transforma a palavra num termo de busca em inglês, e o Lookitan procura esse termo no Bing Imagens. Sem IA, busca a palavra como está na tela. Passe o mouse numa imagem e clique na marca do canto para mandá-la ao Anki (marcador {image}); clique na imagem para ampliar.'),
+        el('h3', {}, 'Configurações do dicionário'),
+        el('div', {class: 'group'},
+            cardRow({icon: 'image', title: 'Mostrar imagens automaticamente', desc: 'Desligado: as imagens só aparecem quando você clica em "Mostrar imagens" no popup, como o botão Explicar.',
+                control: aiControl('autoShowImages', 'Mostrar imagens automaticamente', toggle(ai.autoShowImages === true, (v) => { ai.autoShowImages = v; save(); }))}),
+            cardRow({icon: 'sparkle', title: 'Criar o termo de busca com a IA', desc: 'Desligado: busca a palavra como ela aparece na tela, sem gastar tokens.',
+                control: aiControl('imageQueryUseAi', 'Criar o termo de busca com a IA', toggle(ai.imageQueryUseAi !== false, (v) => { ai.imageQueryUseAi = v; save(); }))})),
+        el('h3', {}, 'Image query (termo de busca)'),
+        el('div', {class: 'group'},
+            promptCard('System prompt', `As regras do termo de busca. Substitui o system prompt geral só neste pedido. Variáveis: ${vars}.`,
+                () => ai.imageQuerySystemPrompt, (v) => { ai.imageQuerySystemPrompt = v; }, IMAGE_QUERY_SYSTEM_PROMPT, 'imageQuerySystemPrompt'),
+            promptCard('User prompt', `A mensagem com a palavra. A primeira linha da resposta vira a busca. Variáveis: ${vars}.`,
+                () => ai.imageQueryPrompt, (v) => { ai.imageQueryPrompt = v; }, IMAGE_QUERY_PROMPT, 'imageQueryPrompt')),
+        el('h3', {}, 'Provedor de IA (compartilhado com a palavra no contexto)'),
+        providerSection(),
+        imageTestButton(),
     );
 }

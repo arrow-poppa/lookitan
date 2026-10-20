@@ -46,7 +46,7 @@ export const MARKERS = [
     'expression', 'reading', 'glossary', 'glossary-brief', 'glossary-no-dictionary', 'glossary-plain',
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
-    'screenshot', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
+    'screenshot', 'image', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
     'translation', 'context-translation', 'cefr', 'part-of-speech', 'tags', 'document-title', 'search-query',
 ];
 
@@ -96,7 +96,8 @@ export function suggestMarker(fieldName, index) {
         [/(reading|ipa|pronunciation|transcription|phonetic)/, '{reading}'],
         [/(cloze)/, '{cloze-prefix}<b>{cloze-body}</b>{cloze-suffix}'],
         [/(sentence|context|example)/, '{sentence}'],
-        [/(screenshot|image|picture|photo)/, '{screenshot}'],
+        [/(screenshot)/, '{screenshot}'],
+        [/(image|picture|photo)/, '{image}'],
         [/(translation)/, '{translation}'],
         [/(meaning|definition|glossary|back|gloss)/, '{glossary}'],
         [/(explanation|notes?)$/, '{ai-explanation}'],
@@ -238,6 +239,8 @@ function cloze(sentence, word) {
  * @property {string} [aiExplanation]
  * @property {string} [contextTranslation]
  * @property {() => Promise<string|null>} [screenshot] Base64 PNG of the capture.
+ * @property {() => Promise<{data: string, extension: string}[]>} [images] The pictures checked in the
+ *   pop-up's "Imagens" section, as base64 files, for {image}.
  * @property {string} [title] Source window title.
  * @property {string} [query]
  * @property {string} [popupSelection] Text selected in the pop-up when the note was added.
@@ -292,6 +295,7 @@ export async function buildNote(ctx, anki, conn) {
         'document-title': escapeHtml(ctx.title || ''),
         'search-query': escapeHtml(ctx.query || ctx.word),
         'screenshot': '',
+        'image': '',
     };
     for (const name of new Set(defs.map((d) => d.dictionary))) {
         const id = getKebabCase(name);
@@ -305,19 +309,30 @@ export async function buildNote(ctx, anki, conn) {
     }
 
     const fields = {};
-    let usesScreenshot = false;
+    const used = new Set();
     for (const [name, field] of Object.entries(format.fields)) {
         const template = fieldValue(field);
-        if (getFieldMarkers(template).includes('screenshot')) { usesScreenshot = true; }
+        for (const marker of getFieldMarkers(template)) { used.add(marker); }
         fields[name] = template;
     }
-    if (usesScreenshot && conn && ctx.screenshot) {
+    if (used.has('screenshot') && conn && ctx.screenshot) {
         const data = await ctx.screenshot();
         if (data) {
             const fileName = generateAnkiNoteMediaFileName('lookitan_screenshot', '.png', Date.now());
             const stored = await conn.storeMediaFile(fileName, data);
             values.screenshot = `<img src="${escapeHtml(stored || fileName)}">`;
         }
+    }
+    if (used.has('image') && conn && ctx.images) {
+        const files = await ctx.images();
+        const time = Date.now();
+        const tags = [];
+        for (const [i, file] of files.entries()) {
+            const fileName = generateAnkiNoteMediaFileName(`lookitan_image_${i + 1}`, `.${file.extension}`, time);
+            const stored = await conn.storeMediaFile(fileName, file.data);
+            tags.push(`<img src="${escapeHtml(stored || fileName)}">`);
+        }
+        values.image = tags.join('');
     }
     for (const name of Object.keys(fields)) {
         // A dictionary marker for a dictionary with no entry for this word becomes empty, as in Yomitan.

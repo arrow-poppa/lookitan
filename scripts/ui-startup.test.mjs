@@ -70,17 +70,22 @@ function dom() {
 async function load(path, globals, stubs) {
     const context = createContext({...globals, Node: Element, console: {error() {}}, Intl});
     const modules = new Map();
-    async function get(id) {
-        if (modules.has(id)) { return modules.get(id); }
-        const exports = stubs[id];
-        const module = exports ? new SyntheticModule(Object.keys(exports), function () {
-            for (const [name, value] of Object.entries(exports)) { this.setExport(name, value); }
-        }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8'), {context, identifier: id});
-        modules.set(id, module);
-        await module.link((specifier) => get(specifier.startsWith('.') ? resolve(id, '..', specifier) : specifier));
-        return module;
+    // The promise is kept at once, so a module imported twice at the same time (a diamond in the
+    // import graph) is created and linked only once.
+    function get(id) {
+        if (!modules.has(id)) {
+            modules.set(id, (async () => {
+                const exports = stubs[id];
+                const module = exports ? new SyntheticModule(Object.keys(exports), function () {
+                    for (const [name, value] of Object.entries(exports)) { this.setExport(name, value); }
+                }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8'), {context, identifier: id});
+                return module;
+            })());
+        }
+        return modules.get(id);
     }
     const module = await get(file(path));
+    await module.link((specifier, owner) => get(specifier.startsWith('.') ? resolve(owner.identifier, '..', specifier) : specifier));
     await module.evaluate();
     return module.namespace;
 }
@@ -121,6 +126,7 @@ async function dictionaryFixture(overrides = {}) {
         '@tauri-apps/plugin-dialog': {open: async () => null, ask: async () => true},
         [file('src/lib/api.js')]: {api: {listDictionaries: async () => [
             {id: 'ai-word', kind: 'ai-word', enabled: true}, {id: 'ai-context', kind: 'ai-context', enabled: true},
+            {id: 'ai-images', kind: 'ai-images', enabled: true},
         ]}, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => 'test answer'},
@@ -194,6 +200,18 @@ test('context translator exposes the shared provider settings without resetting 
     assert.equal(fixture.control('custom.customThinkingIntensity').value, '2048');
     assert(fixture.control('contextPrompt'));
     assert.equal(fixture.saves(), 0);
+});
+
+test('the images dictionary has its own image query prompts and the on-click switch', async () => {
+    const fixture = await dictionaryFixture({provider: 'openai', openai: {model: 'kept-model'}});
+    fixture.list.children[2].dispatch('click');
+    for (const key of ['autoShowImages', 'imageQueryUseAi', 'imageQuerySystemPrompt', 'imageQueryPrompt', 'provider', 'openai.model']) {
+        assert(fixture.control(key), `${key} must be visible`);
+    }
+    assert.equal(fixture.control('imageQueryPrompt').value, fixture.ai.imageQueryPrompt);
+    fixture.change('imageQueryPrompt', 'Word: {{target}}', 'input');
+    assert.equal(fixture.ai.imageQueryPrompt, 'Word: {{target}}');
+    assert.equal(fixture.ai.openai.model, 'kept-model');
 });
 
 test('settings render and GPU toggle work while OCR status is pending', async () => {

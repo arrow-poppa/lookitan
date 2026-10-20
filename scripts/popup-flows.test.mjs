@@ -4,6 +4,7 @@ import {resolve} from 'node:path';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {CARD_PROMPT} from '../src/lib/ai/word-card.js';
+import * as realImages from '../src/lib/images.js';
 import {createContext, SourceTextModule, SyntheticModule} from 'node:vm';
 
 const project = resolve(import.meta.dirname, '..');
@@ -30,7 +31,7 @@ class Element {
     }
 }
 
-async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = []} = {}) {
+async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}} = {}) {
     const nodes = new Map();
     const document = {getElementById: (id) => {
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
@@ -60,6 +61,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         },
         [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }},
         [file('src/lib/icons.js')]: {hydrateIcons() {}, icon: (name) => name},
+        [file('src/lib/images.js')]: {...realImages, ...images},
     };
     const context = createContext({document, window: {addEventListener() {}}, localStorage: {getItem: () => null, setItem() {}},
         AbortController, DOMException, crypto: {subtle: {digest: async (_algorithm, bytes) => createHash('sha256').update(bytes).digest()}},
@@ -485,4 +487,49 @@ test('the pop-up empties itself before Linux hides it, and says so', async () =>
     assert.deepEqual(view.calls.blanks, [3]);
     view.calls.listeners.get('popup-blank')({payload: null});
     assert.deepEqual(view.calls.blanks, [3]);
+});
+
+async function imagesFixture({explain, autoShowImages = false}) {
+    const searches = [];
+    const requests = [];
+    const view = await fixture({
+        explain: async (_options, word, text, request) => { requests.push({word, text, prompt: request.prompt, system: request.system}); return explain(); },
+        dictionaries: [{id: 'ai-images', kind: 'ai-images', name: 'Images', enabled: true}],
+        images: {searchImages: async (query) => {
+            searches.push(query);
+            return [{src: 'https://p.example/1.jpg', thumb: 'https://t.example/1', title: 'a picture', page: 'https://p.example/page'}];
+        }},
+    });
+    Object.assign(view.ai, {customPrompt: 'explain', contextPrompt: 'translate', autoShowImages, imageQuerySystemPrompt: 'SYS {{wordLanguage}}', imageQueryPrompt: 'USER {{target}}'});
+    await view.popup.render({word: 'corre', sentence: 'Ele corre todo dia.', context: 'Um parágrafo longo. Ele corre todo dia.', entries: []});
+    const [sectionNode] = view.document.getElementById('sections').children;
+    const body = sectionNode.querySelector('.sec-body');
+    const settle = async () => { for (let i = 0; i < 20; i++) { await flush(); } };
+    return {view, sectionNode, body, searches, requests, settle};
+}
+
+test('pictures come on a click, searched with the AI query made by their own prompts', async () => {
+    const {sectionNode, body, searches, requests, settle} = await imagesFixture({explain: async () => '"to run"\n'});
+    assert(sectionNode.innerHTML.includes('Imagens'));
+    assert(body.innerHTML.includes('Mostrar imagens'), 'like Explicar, nothing is fetched before the click');
+    await settle();
+    assert.equal(searches.length, 0);
+    body.querySelector('button').listeners.click();
+    await settle();
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].prompt, 'USER {{target}}');
+    assert(requests[0].system.startsWith('SYS ') && !requests[0].system.includes('{{'), 'the image query sends its own system prompt');
+    assert.equal(requests[0].text, 'Ele corre todo dia.', 'the query reads the sentence, not the whole paragraph');
+    assert.deepEqual(searches, ['to run']);
+    assert(body.innerHTML.includes('https://t.example/1'), 'the strip shows Bing\'s thumbnail');
+    assert(body.innerHTML.includes('img-check'), 'each picture has its check mark');
+    assert(body.innerHTML.includes('Busca: to run'));
+});
+
+test('with automatic pictures on they load at once, and a failed AI query searches the word itself', async () => {
+    const {body, searches, settle} = await imagesFixture({autoShowImages: true, explain: async () => { throw new Error('quota'); }});
+    await settle();
+    assert(!body.innerHTML.includes('Mostrar imagens'));
+    assert.deepEqual(searches, ['corre']);
+    assert(body.innerHTML.includes('https://t.example/1'));
 });
