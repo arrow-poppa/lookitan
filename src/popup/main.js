@@ -8,13 +8,14 @@ import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
-import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
+import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {invoke} from '@tauri-apps/api/core';
 import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
 import {generateImages, imageGenCount, imageGenPrompt, isImageGenConfigured} from '../lib/image-gen.js';
+import {forgetStoredGeneration, loadGeneration, saveGeneration} from '../lib/image-store.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -774,8 +775,9 @@ async function checkedImageFiles(lookup) {
 // ------------------------------------------------------------------ "Imagens IA" (pictures made by an image model)
 
 /**
- * Pictures made per prompt while the popup lives, so looking the word up again shows them without
- * paying for new ones. "Gerar mais" adds to them; "Gerar de novo" starts over.
+ * Pictures made per prompt, so looking the word up again shows them without paying for new ones.
+ * They are also kept on disk (image-store.js), so they come back after the app is closed.
+ * "Gerar mais" adds to them; "Gerar de novo" starts over.
  * @type {Map<string, {items: object[], pending: Promise<void>|null, error: string}>}
  */
 const generations = new Map();
@@ -789,12 +791,28 @@ function generationKey(options, prompt) {
         ai.imageGenAspect || '1:1', ai.imageGenQuality || 'low']);
 }
 
-/** Lets a set of pictures go: its addresses stop working, its files stay with any lookup that checked them. */
-function forgetGeneration(key) {
+/** Lets a set of pictures go from memory: its addresses stop working, its files stay with any lookup that checked them. */
+function dropGeneration(key) {
     for (const item of generations.get(key)?.items || []) {
         if (item.blob && item.src.startsWith('blob:')) { URL.revokeObjectURL?.(item.src); }
     }
     generations.delete(key);
+}
+
+function rememberGeneration(key, entry) {
+    generations.set(key, entry);
+    // Only memory is trimmed here; the disk keeps its own limit.
+    while (generations.size > GENERATIONS_KEPT) { dropGeneration(generations.keys().next().value); }
+    return entry;
+}
+
+/** The pictures of a prompt: in memory, or read back from disk when they were made before. */
+async function storedGeneration(key) {
+    if (generations.has(key)) { return generations.get(key); }
+    const saved = await loadGeneration(key);
+    if (generations.has(key)) { return generations.get(key); }
+    if (!saved?.length) { return null; }
+    return rememberGeneration(key, {items: saved.map((p) => generatedItem(p, p.title)), pending: null, error: ''});
 }
 
 function generatedItem(picture, title) {
@@ -815,15 +833,13 @@ async function runImageGen(body, mode = 'show') {
     const key = generationKey(options, prompt);
     const count = imageGenCount(ai.imageGenCount);
     if (mode === 'again' && !generations.get(key)?.pending) {
-        forgetGeneration(key);
+        dropGeneration(key);
+        void forgetStoredGeneration(key);
         lookup.generated = null;
     }
-    let entry = generations.get(key);
-    if (!entry) {
-        entry = {items: [], pending: null, error: ''};
-        generations.set(key, entry);
-        while (generations.size > GENERATIONS_KEPT) { forgetGeneration(generations.keys().next().value); }
-    }
+    let entry = mode === 'again' ? generations.get(key) : await storedGeneration(key);
+    if (state !== lookup) { return; }
+    entry ||= rememberGeneration(key, {items: [], pending: null, error: ''});
     if (lookup.generated?.key !== key) { lookup.generated = {kind: 'generated', key, query: prompt, items: entry.items, selected: new Set()}; }
     const make = !entry.pending && (mode !== 'show' || entry.items.length === 0);
     if (make) {
@@ -831,7 +847,10 @@ async function runImageGen(body, mode = 'show') {
         const title = String(options[options.provider]?.model || '');
         // Not cancelled by a new lookup: the pictures are paid for, so they are kept for later.
         entry.pending = generateImages(options, prompt, {count, aspect: ai.imageGenAspect, quality: ai.imageGenQuality})
-            .then((pictures) => { entry.items.push(...pictures.map((p) => generatedItem(p, title))); })
+            .then((pictures) => {
+                entry.items.push(...pictures.map((p) => generatedItem(p, title)));
+                void saveGeneration(key, entry.items.filter((item) => item.blob).map((item) => ({blob: item.blob, title: item.title})));
+            })
             .catch((e) => { entry.error = e?.message || String(e); })
             .finally(() => { entry.pending = null; });
     }
@@ -858,10 +877,11 @@ function drawGenerated(body, lookup, entry, loading) {
     body.querySelector('.img-more')?.addEventListener('click', () => void runImageGen(body, 'more'));
 }
 
-/** Whether this word already has pictures made, so they are shown without a click. */
-function hasGenerated(payload) {
+/** Pictures already made for this word (in memory or on disk) replace the button at once. */
+async function showStoredImages(body, lookup = state) {
     const options = imageGenOptions();
-    return (generations.get(generationKey(options, imageGenPrompt(ai.imageGenPrompt, payload, settings)))?.items.length || 0) > 0;
+    const entry = await storedGeneration(generationKey(options, imageGenPrompt(ai.imageGenPrompt, lookup.payload, settings)));
+    if (entry?.items.length && state === lookup) { await runImageGen(body); }
 }
 
 // ------------------------------------------------------------------ dictionaries
@@ -1073,17 +1093,7 @@ async function drawSavedCards() {
         </div>
         <div class="saved-list">${cards.length ? cards.map((c, i) => `
             <article class="saved-card${c.id === lookup.savedId ? ' current' : ''}" data-i="${i}">
-                <div class="saved-head">
-                    <span class="word">${escapeHtml(c.dictionaryForm || c.word)}</span>
-                    ${c.ipa ? `<span class="ipa">/${escapeHtml(c.ipa)}/</span>` : ''}
-                    ${c.cefr && /^[ABC][12]$/.test(c.cefr) ? `<span class="cefr ${c.cefr.toLowerCase()}">${c.cefr}</span>` : ''}
-                    ${c.id === lookup.savedId ? '<span class="chip">esta consulta</span>' : ''}
-                </div>
-                ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
-                ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
-                ${c.sentence ? `<blockquote>${markWord(c.sentence, c.word)}</blockquote>` : ''}
-                ${c.contextTranslation ? `<p class="ctx-tr">${highlightStars(c.contextTranslation)}</p>` : ''}
-                <div class="saved-shot" hidden></div>
+${savedCardHtml(c, c.id === lookup.savedId)}
                 <div class="saved-foot">
                     <span class="muted">${escapeHtml([date(c.createdAt), c.windowTitle].filter(Boolean).join(' · '))}</span>
                     <span class="spacer"></span>
@@ -1118,6 +1128,33 @@ async function drawSavedCards() {
             }, () => {});
         }
     });
+}
+
+/**
+ * The whole saved card, as the Palavras tab shows it: the word with IPA, CEFR, part of speech and
+ * labels, the translation, definition and explanation, the paragraph (or sentence) with its
+ * translation, the screenshot and the dictionaries' entries, folded.
+ */
+function savedCardHtml(c, current) {
+    const chips = [
+        c.ipa ? `<span class="ipa">/${escapeHtml(c.ipa)}/</span>` : '',
+        c.cefr && /^[ABC][12]$/.test(c.cefr) ? `<span class="cefr ${c.cefr.toLowerCase()}">${c.cefr}</span>` : '',
+        ...[...(c.partOfSpeech || []), ...(c.labels || [])].map((t) => `<span class="chip">${escapeHtml(t)}</span>`),
+        current ? '<span class="chip">esta consulta</span>' : '',
+    ].join('');
+    const text = c.context && c.context.includes(c.sentence || '') ? c.context : c.sentence;
+    const glossaries = (c.glossaries || []).filter((g) => g?.html).map((g) => `
+        <details class="saved-gloss"><summary>${escapeHtml(g.name || 'Dicionário')}</summary><div class="gloss">${cleanGlossaryHtml(g.html)}</div></details>`).join('');
+    return `
+        <div class="saved-head"><span class="word">${escapeHtml(c.dictionaryForm || c.word)}</span>${chips}</div>
+        ${c.dictionaryForm && c.word && c.dictionaryForm.toLowerCase() !== c.word.toLowerCase() ? `<div class="muted saved-form">Na tela: ${escapeHtml(c.word)}</div>` : ''}
+        ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
+        ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
+        ${c.explanation ? `<div class="explanation ai-text">${renderMarkdown(c.explanation)}</div>` : ''}
+        ${text ? `<blockquote>${markWord(text, c.word)}</blockquote>` : ''}
+        ${c.contextTranslation ? `<p class="ctx-tr">${highlightStars(c.contextTranslation)}</p>` : ''}
+        <div class="saved-shot" hidden></div>
+        ${glossaries}`;
 }
 
 /** Closes the saved cards; false when they were not open. */
@@ -1344,12 +1381,13 @@ async function render(payload) {
             shown++;
             // Like "Explicar": made on a click, or at once with the automatic option. Pictures
             // already made for this word show at once.
-            if (ai.autoGenerateImages === true || hasGenerated(payload)) {
+            if (ai.autoGenerateImages === true) {
                 void runImageGen(body);
             } else {
                 const count = imageGenCount(ai.imageGenCount);
                 body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}${count === 1 ? 'Gerar imagem' : `Gerar ${count} imagens`}</button>`;
                 body.querySelector('button').addEventListener('click', () => void runImageGen(body));
+                void showStoredImages(body);
             }
         } else if (d.kind === 'mdict' && renderDictionary(d)) { shown++; }
     }

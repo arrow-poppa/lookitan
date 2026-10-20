@@ -244,8 +244,8 @@ function fromBase64(data) {
 }
 
 /**
- * Makes the pictures. Each is {blob} (made here) or {url} (kept by the server, for some
- * OpenAI-compatible ones). Requests that fail are skipped while another one gives a picture;
+ * Makes the pictures. Each is {blob}, or {url} when the server answered with an address it would
+ * not serve. Requests that fail are skipped while another one gives a picture;
  * when none does, the first error is thrown.
  * @param {object} options
  * @param {string} prompt
@@ -272,5 +272,23 @@ export async function generateImages(options, prompt, {signal, fetch: request, .
     if (signal?.aborted) { throw signal.reason || new DOMException('Request cancelled', 'AbortError'); }
     const pictures = results.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value);
     if (pictures.length === 0) { throw results.find((r) => r.status === 'rejected')?.reason || new Error('Imagens IA: nenhuma imagem na resposta'); }
-    return pictures.map((p) => ('url' in p ? {url: p.url} : {blob: new Blob([fromBase64(p.data)], {type: p.mimeType})}));
+    return Promise.all(pictures.map((p) => ('url' in p ? download(doFetch, p.url, signal) : {blob: new Blob([fromBase64(p.data)], {type: p.mimeType})})));
+}
+
+/**
+ * A picture the server keeps at an address (some answer only that, and OpenAI's addresses expire
+ * in an hour): fetched once, so it can be kept. When it cannot be read, the address stays.
+ */
+async function download(doFetch, url, signal) {
+    const timeout = deadline(REQUEST_TIMEOUT_MS, signal);
+    try {
+        const response = await doFetch(url, {method: 'GET', signal: timeout.signal});
+        const type = (response.headers?.get?.('content-type') || '').split(';')[0].trim().toLowerCase();
+        if (response.ok && type.startsWith('image/')) { return {blob: new Blob([await response.arrayBuffer()], {type})}; }
+    } catch (_e) {
+        // The address is shown as it is.
+    } finally {
+        timeout.done();
+    }
+    return {url};
 }
