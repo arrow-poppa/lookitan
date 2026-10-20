@@ -173,6 +173,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-20 (Claude, `tests`): the enlarged picture zooms, up to 8×, keeping the point under the pointer in place (`zoomBy`, `applyPictureZoom`). Ways to zoom: the mouse wheel, a double click (toggles 2.5×), the − / + buttons in its bar, and the + − 0 keys. With a picture enlarged, those keys zoom the picture instead of the pop-up. While zoomed, a drag moves the picture around instead of going to the next one (`gestures`, which replaced `swipe`).
+
 - 2026-10-20 (Claude, `tests`): the context translator has "Ocultar a tradução" (`ai.hideContextTranslation`, off by default). The translation is blurred until clicked, like `hideWordTranslation`, and stays shown for that lookup once clicked (`lookup.contextRevealed`), including while it streams.
 
 - 2026-10-20 (Claude, `tests`): the pop-up order in the Dicionários tab can be changed again: the rows are dragged with pointer events (HTML drag and drop never reached the WebView, because of Tauri's native drop handler), or moved with Alt+↑/↓.

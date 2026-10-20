@@ -109,6 +109,10 @@ details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px
 .img-frame { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 14px 14px 0; cursor: zoom-out; touch-action: none; }
 .img-frame .full { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; cursor: grab; user-select: none; transition: transform 160ms ease-out, opacity 160ms ease-out; }
 .img-frame .full.dragging { cursor: grabbing; transition: none; }
+/* Zoomed in: the picture may grow past the frame, and a drag moves it around. */
+.img-frame { overflow: hidden; }
+.img-frame .full.zoomed { cursor: move; }
+.img-frame .full.zoomed.dragging { cursor: grabbing; }
 .img-frame .full.from-right { animation: img-from-right 180ms ease-out; }
 .img-frame .full.from-left { animation: img-from-left 180ms ease-out; }
 @keyframes img-from-right { from { transform: translateX(40px); opacity: 0.2; } to { transform: none; opacity: 1; } }

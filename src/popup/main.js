@@ -475,12 +475,17 @@ function drawViewer(from = '') {
         <div class="img-bar">
             ${several ? `<span class="img-count">${i + 1}/${items.length}</span>` : ''}
             <span class="img-caption">${escapeHtml(item.title || lookup.images.query)}</span>
+            <button class="ghost icon img-zoom-out" title="Diminuir (−)" aria-label="Diminuir">${icon('zoomOut')}</button>
+            <button class="ghost icon img-zoom-in" title="Ampliar (+, roda do mouse ou clique duplo)" aria-label="Ampliar">${icon('zoomIn')}</button>
             ${host ? `<button class="ghost img-page" title="${escapeHtml(item.page)}">${icon('open', 'sm')}${escapeHtml(host)}</button>` : ''}
             <button class="ghost img-pick${selected ? ' on' : ''}" aria-pressed="${selected}" title="${checkLabel(selected)}">${icon('check', 'sm')}${selected ? 'Marcada para o Anki' : 'Marcar para o Anki'}</button>
             <button class="ghost icon img-close" title="Fechar (Esc)">${icon('close')}</button>
         </div>`;
     const full = box.querySelector('.full');
-    if (several) { swipe(box.querySelector('.img-frame'), full); }
+    viewer.zoom = {scale: 1, x: 0, y: 0, full, frame: box.querySelector('.img-frame')};
+    gestures(viewer.zoom.frame, full, several);
+    box.querySelector('.img-zoom-in')?.addEventListener('click', (ev) => { ev.stopPropagation(); zoomBy(ZOOM_STEP); });
+    box.querySelector('.img-zoom-out')?.addEventListener('click', (ev) => { ev.stopPropagation(); zoomBy(1 / ZOOM_STEP); });
     if (full && item.src !== item.thumb && typeof Image === 'function') {
         // Bing's thumbnail shows at once; the full picture replaces it once it arrives, and a site
         // that refuses it leaves the thumbnail.
@@ -501,29 +506,87 @@ function drawViewer(from = '') {
     box.querySelector('.img-page')?.addEventListener('click', (ev) => { ev.stopPropagation(); void api.openExternal(item.page); });
 }
 
-/** Dragging the picture sideways (mouse, pen or finger) past SWIPE_PX moves to its neighbour. */
-function swipe(frame, full) {
+const ZOOM_STEP = 1.25;
+const ZOOM_MAX = 8;
+/** Scale a double click toggles to (and back to 1). */
+const ZOOM_DOUBLE = 2.5;
+
+function applyPictureZoom(z) {
+    if (z.scale <= 1) { z.scale = 1; z.x = 0; z.y = 0; }
+    z.full.style.transform = z.scale === 1 ? '' : `translate(${z.x}px, ${z.y}px) scale(${z.scale})`;
+    z.full.classList.toggle('zoomed', z.scale > 1);
+}
+
+/**
+ * Zooms the enlarged picture by `factor`, keeping the point under (clientX, clientY) in place;
+ * without a point, around the picture's centre.
+ */
+function zoomBy(factor, clientX = null, clientY = null) {
+    const z = viewer?.zoom;
+    if (!z?.full) { return; }
+    const next = Math.min(ZOOM_MAX, Math.max(1, z.scale * factor));
+    if (clientX !== null && typeof z.full.getBoundingClientRect === 'function') {
+        // The picture's centre without the zoom's translation, then the pointer relative to it.
+        const r = z.full.getBoundingClientRect();
+        const cx = r.left + r.width / 2 - z.x;
+        const cy = r.top + r.height / 2 - z.y;
+        const px = (clientX - cx - z.x) / z.scale;
+        const py = (clientY - cy - z.y) / z.scale;
+        z.x = clientX - cx - px * next;
+        z.y = clientY - cy - py * next;
+    } else {
+        z.x *= next / z.scale;
+        z.y *= next / z.scale;
+    }
+    z.scale = next;
+    applyPictureZoom(z);
+}
+
+/**
+ * The picture's gestures: the wheel and a double click zoom; a drag moves a zoomed picture
+ * around, and otherwise, past SWIPE_PX sideways (mouse, pen or finger), goes to its neighbour.
+ */
+function gestures(frame, full, several) {
     if (!frame || !full) { return; }
     let drag = null;
-    const reset = () => { full.classList.remove('dragging'); full.style.transform = ''; full.style.opacity = ''; };
+    const reset = () => { full.classList.remove('dragging'); full.style.opacity = ''; applyPictureZoom(viewer.zoom); };
+    frame.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        zoomBy(ev.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP, ev.clientX, ev.clientY);
+    }, {passive: false});
+    full.addEventListener('dblclick', (ev) => {
+        ev.stopPropagation();
+        const z = viewer?.zoom;
+        if (z) { zoomBy(z.scale > 1 ? 1 / z.scale : ZOOM_DOUBLE, ev.clientX, ev.clientY); }
+    });
     frame.addEventListener('pointerdown', (ev) => {
         if (ev.button !== 0 || ev.target.closest?.('button')) { return; }
-        drag = {id: ev.pointerId, x: ev.clientX, moved: false};
+        const z = viewer?.zoom;
+        drag = {id: ev.pointerId, x: ev.clientX, y: ev.clientY, moved: false, panning: Boolean(z && z.scale > 1), startX: z?.x || 0, startY: z?.y || 0};
     });
     frame.addEventListener('pointermove', (ev) => {
         if (!drag || ev.pointerId !== drag.id) { return; }
         const dx = ev.clientX - drag.x;
-        if (!drag.moved && Math.abs(dx) < 6) { return; }
+        const dy = ev.clientY - drag.y;
+        if (!drag.moved && Math.hypot(dx, dy) < 6) { return; }
+        if (!drag.panning && !several) { return; }
         // Captured only once it is a drag: a plain click on the picture must stay on the picture.
         if (!drag.moved) { frame.setPointerCapture?.(ev.pointerId); }
         drag.moved = true;
         full.classList.add('dragging');
-        full.style.transform = `translateX(${dx}px)`;
-        full.style.opacity = String(Math.max(0.35, 1 - Math.abs(dx) / 400));
+        if (drag.panning) {
+            const z = viewer.zoom;
+            z.x = drag.startX + dx;
+            z.y = drag.startY + dy;
+            applyPictureZoom(z);
+        } else {
+            full.style.transform = `translateX(${dx}px)`;
+            full.style.opacity = String(Math.max(0.35, 1 - Math.abs(dx) / 400));
+        }
     });
     const end = (ev) => {
         if (!drag || ev.pointerId !== drag.id) { return; }
-        const {moved, x} = drag;
+        const {moved, x, panning} = drag;
         drag = null;
         if (!moved) { return; }
         const dx = ev.clientX - x;
@@ -531,7 +594,7 @@ function swipe(frame, full) {
             viewer.swiped = true;
             setTimeout(() => { if (viewer) { viewer.swiped = false; } }, 0);
         }
-        if (ev.type === 'pointerup' && Math.abs(dx) >= SWIPE_PX) { stepViewer(dx < 0 ? 1 : -1); } else { reset(); }
+        if (!panning && ev.type === 'pointerup' && Math.abs(dx) >= SWIPE_PX) { stepViewer(dx < 0 ? 1 : -1); } else { reset(); }
     };
     frame.addEventListener('pointerup', end);
     frame.addEventListener('pointercancel', end);
@@ -946,6 +1009,10 @@ $('btn-save').addEventListener('click', () => { void saveWord(); });
 $('btn-anki').addEventListener('click', () => { void onAnkiClick(); });
 document.addEventListener('keydown', (ev) => {
     if (viewer && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) { stepViewer(ev.key === 'ArrowLeft' ? -1 : 1); return; }
+    // With a picture enlarged, + − 0 zoom the picture instead of the pop-up.
+    if (viewer && (ev.key === '+' || ev.key === '=')) { ev.preventDefault?.(); zoomBy(ZOOM_STEP); return; }
+    if (viewer && ev.key === '-') { ev.preventDefault?.(); zoomBy(1 / ZOOM_STEP); return; }
+    if (viewer && ev.key === '0') { ev.preventDefault?.(); zoomBy(1 / (viewer.zoom?.scale || 1)); return; }
     // Esc closes an enlarged picture first, then the pop-up.
     if (ev.key === 'Escape') { if (!closeViewer()) { closePopup(); } }
     if (ev.ctrlKey && (ev.key === '+' || ev.key === '=')) { zoom = Math.min(2, zoom + 0.1); applyZoom(); }
