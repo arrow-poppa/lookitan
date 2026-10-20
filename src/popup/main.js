@@ -1152,7 +1152,16 @@ async function onAnkiClick() {
     ankiStatus();
     try {
         await glossaries(lookup);
-        const note = await buildNote({...noteContext(lookup, options), popupSelection: selection}, options, conn);
+        const context = {...noteContext(lookup, options), popupSelection: selection};
+        // {sentence-audio} is read aloud now, by the Edge voice; when it fails the field stays empty.
+        let noSentenceAudio = false;
+        const readSentence = context.sentenceAudio;
+        context.sentenceAudio = async () => {
+            const file = await readSentence();
+            noSentenceAudio = !file && Boolean(String(lookup.payload.sentence || '').trim());
+            return file;
+        };
+        const note = await buildNote(context, options, conn);
         const id = await conn.addNote(note);
         if (id === null) { throw new Error('o Anki recusou a nota'); }
         if (options.suspendNewCards) {
@@ -1160,7 +1169,10 @@ async function onAnkiClick() {
             await conn.suspendCards(cards);
         }
         lookup.ankiNoteId = id;
-        if (state === lookup) { setAnki('added', 'Adicionada ao Anki — clique para abrir'); }
+        if (state === lookup) {
+            setAnki('added', 'Adicionada ao Anki — clique para abrir');
+            if (noSentenceAudio) { ankiStatus('Adicionada sem o áudio da frase: a voz do Edge não respondeu. Tente de novo mais tarde.', true); }
+        }
         void refreshAnkiNotes(lookup, options);
         if (lookup.savedId) { void saveWord(lookup, lookupSettings); }
     } catch (e) {

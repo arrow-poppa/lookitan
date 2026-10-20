@@ -62,7 +62,12 @@ async function fixture({explain = async () => '', ready = true, connection = {},
             glossaryDictionaryNames: () => [],
             cleanGlossaryHtml: (html) => `clean(${html})`,
             isFormatReady: () => typeof ready === 'function' ? ready() : ready,
-            buildNote: async (ctx) => { calls.notes.push(ctx); return {fields: {Word: ctx.word}, options: {}}; },
+            buildNote: async (ctx, _options, conn) => {
+                calls.notes.push(ctx);
+                // As notes.js does with a connection and {sentence-audio} in a field.
+                if (conn?.withSentenceAudio) { await ctx.sentenceAudio(); }
+                return {fields: {Word: ctx.word}, options: {}};
+            },
             // As notes.js does: the note type's fields first, in its order (tested in images.test.mjs).
             orderNoteFields: (note, names) => (names?.length ? {...note, fields: Object.fromEntries([
                 ...names.map((n) => [n, note.fields[n] ?? '']), ...Object.entries(note.fields).filter(([n]) => !names.includes(n))])} : note),
@@ -706,6 +711,19 @@ test('{sentence-audio} reads only the sentence, with the Edge voice of the conte
     await ctx.sentenceAudio();
     const last = view.calls.invokes.filter(([command]) => command === 'edge_tts_speak').at(-1);
     assert.equal(last[1].voice, '', 'with the system voice, the language default Edge voice');
+});
+
+test('a note added without the sentence audio says so: the Edge voice did not answer', async () => {
+    const view = await fixture({audioRows: async (command) => { if (command === 'edge_tts_speak') { throw new Error('403'); } return null; },
+        connection: {withSentenceAudio: true, addNote: async () => 7}});
+    view.settings.audio = {sources: [{type: 'tts'}], context: {type: 'edge-tts', voice: 'en-US-AriaNeural'}};
+    view.options.enable = true;
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    await view.popup.onAnkiClick();
+    const status = view.document.getElementById('anki-status');
+    assert.equal(status.hidden, false);
+    assert(status.textContent.includes('sem o áudio da frase'), status.textContent);
+    assert.equal(view.lookup.ankiNoteId, 7, 'the note is still added');
 });
 
 test('the Anki notes counter queries the note type\'s first field, and nothing when it would be empty', async () => {
