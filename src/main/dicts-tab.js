@@ -506,7 +506,7 @@ function renderAiImageGen(root) {
         el('p', {class: 'lead'}, 'Gera imagens da palavra no popup com um modelo de imagem e o seu prompt, por exemplo para entender o sentido de um verbo. Usa a sua chave (BYOK). Como na seção Imagens, clique numa imagem para ampliar e na marca do canto para mandá-la ao Anki: vai para o marcador {ai-image} ou, se o tipo de nota não o usa, para o {image}.'),
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
-            cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', desc: 'Desligado: as imagens só são geradas quando você clica em "Gerar imagem", como o botão Explicar. Cada imagem gerada é cobrada pelo provedor.',
+            cardRow({icon: 'sparkle', title: 'Gerar automaticamente ao abrir o popup', desc: 'Desligado: as imagens só são geradas quando você clica em "Gerar imagem AI", como o botão Explicar. Cada imagem gerada é cobrada pelo provedor.',
                 control: aiControl('autoGenerateImages', 'Gerar automaticamente ao abrir o popup', toggle(ai.autoGenerateImages === true, (v) => { ai.autoGenerateImages = v; save(); }))}),
             cardRow({icon: 'image', title: 'Imagens por vez', desc: 'Quantas imagens cada clique gera. "Gerar mais", embaixo das imagens, gera outra leva.', wide: true,
                 control: aiControl('imageGenCount', 'Imagens por vez', select(Array.from({length: IMAGE_GEN_MAX_COUNT}, (_v, i) => number(i + 1)),
@@ -541,7 +541,7 @@ function imagePromptsEditor(ai) {
         const list = ai.imageGenPrompts;
         const chooser = aiControl('imageGenPromptId', 'Prompt escolhido', select(list.map((p) => ({value: p.id, label: p.name})),
             ai.imageGenPromptId, (v) => { ai.imageGenPromptId = v; save(); }));
-        wrap.append(cardRow({icon: 'sparkle', title: 'Prompt escolhido', desc: 'O que o popup usa ao abrir. Lá, um seletor ao lado de "Gerar imagem" troca de prompt, e o último escolhido fica valendo.', wide: true, control: chooser}));
+        wrap.append(cardRow({icon: 'sparkle', title: 'Prompt escolhido', desc: 'No popup, "Gerar imagem AI" abre um menu com os prompts, com este marcado; o que você escolher lá passa a ser este. Também é o usado na geração automática.', wide: true, control: chooser}));
         list.forEach((p, i) => {
             const name = textInput(p.name, (v) => {
                 p.name = v;

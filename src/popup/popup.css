@@ -183,8 +183,8 @@ details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px
 .saved-foot .spacer { flex: 1; }
 .saved-foot button { font-size: 12px; min-height: 26px; padding: 2px 8px; gap: 5px; color: var(--muted); }
 
-/* "Imagem AI": the prompt selector, beside "Gerar imagem" and under the strip. */
+/* "Imagem AI": "Gerar imagem AI" and "Gerar mais imagens AI" open a menu of prompts. */
 .gen-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 10px; }
 .gen-row .explain-btn { margin: 0; }
-.img-prompt { width: auto; max-width: 200px; min-height: 28px; padding: 2px 6px; font-size: 12px; }
+.prompt-menu button.on { color: var(--accent); }
 .img-foot .spacer { flex: 1; }

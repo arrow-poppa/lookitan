@@ -21,7 +21,7 @@ Since 2026-10-16 the repository has these branches:
 | `tests` | Every agent: Claude Code, Claude in the cloud, Codex | All work is committed and pushed here. |
 | `main` | Only the user | The user merges `tests` into `main` after testing it. |
 | `with-fade` | Snapshot requested by the user | Preserves the overlay fade version at `3dcd0f0`; do not update unless the user asks. |
-| `image-prompts` | Agents, for this feature only | Several named "Imagem AI" prompts with a selector in the pop-up, made from `tests` at `1e432d3` for the user to test apart. Keep that work here until the user says to merge. CI does not run on push: `gh workflow run build.yml --ref image-prompts`. |
+| `image-prompts` | Agents, for this feature only | Several named "Imagem AI" prompts, chosen from a menu in the pop-up, made from `tests` at `1e432d3` for the user to test apart. Keep that work here until the user says to merge. CI does not run on push: `gh workflow run build.yml --ref image-prompts`. |
 | `without-fade` | Only the user, or an agent the user asks | The user has it updated together with `main` (fast-forwarded to `tests` on 2026-10-20). |
 
 - **Never commit, push, merge or open a PR into `main`.** That includes Claude in the cloud, which by default creates its own `claude/…` branch: check out `tests` instead.
@@ -158,7 +158,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Prompts (branch `image-prompts`): `ai.imageGenPrompts`, a list of `{id, name, prompt}`, and `ai.imageGenPromptId`, the one chosen.
     - New settings get `IMAGE_GEN_PRESETS`: "Sentido na frase" (`IMAGE_GEN_PROMPT`), "Ação (verbos)" and "Objeto (substantivos)". Older settings with an edited `imageGenPrompt` get it first, as "Meu prompt" (`normalizeImageGenPrompts`). A chosen id that no longer exists becomes the first (`chosenImageGenPrompt`).
     - Dicionários › Imagem AI edits the list (`imagePromptsEditor`): name, text, ↑/↓, delete (not the last one), "Adicionar prompt", "Trazer de volta os exemplos", and "Prompt escolhido".
-    - The pop-up shows a selector (`promptPicker`) beside "Gerar imagem" and under the strip when there are two or more prompts. Choosing one makes nothing by itself. It is saved like meme mode (`saveImageGenPrompt`: fresh `get_settings`, then only that key), and the main window copies it on `settings-changed`.
+    - In the pop-up, "Gerar imagem AI" (or "Gerar N imagens AI") and "Gerar mais imagens AI" open a menu of the prompts (`pickPrompt`, styled and closed like the audio menu), with the one used last marked. Choosing one makes the pictures at once. The user asked for this instead of a selector beside the button, and for "AI" in the labels. With a single prompt there is no menu. The choice is saved like meme mode (`saveImageGenPrompt`: fresh `get_settings`, then only that key, and only when it changed); the main window copies it on `settings-changed`. Automatic pictures use it too.
     - The gallery is per word and sentence (`generationKey(payload)`), not per prompt, so pictures from every prompt join in one strip. Each picture's title, shown in the viewer, is "<prompt name> · <model>".
   - Each prompt is sent straight to the image model, with no text model in between. Variables: `{{target}}`, `{{sentence}}`, `{{wordLanguage}}`, `{{definitionLanguage}}`, `{{translationLanguage}}` (`imageGenPrompt`).
   - Options: `ai.imageGenCount` (pictures per click, 1 by default, at most `IMAGE_GEN_MAX_COUNT` = 4), `imageGenAspect` (1:1 by default), `imageGenQuality` (OpenAI only, `low` by default) and `autoGenerateImages` (off). Every picture costs money, so nothing is made before a click unless that switch is on.
@@ -221,6 +221,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-20 (Claude, `image-prompts`): the prompt is chosen from a menu that "Gerar imagem AI" opens, instead of a selector beside it, as the user asked. The pop-up's buttons say "imagem AI".
 - 2026-10-20 (Claude, `image-prompts`): several named "Imagem AI" prompts, with a selector in the pop-up, at the user's request, on a branch of its own to test.
   - Three examples to start with.
   - The pictures of every prompt join in one strip per word.

@@ -748,7 +748,7 @@ test('"Imagem AI" makes its pictures on a click, adds more, and sends the checke
     const {view, made, show, settle} = await imageGenFixture();
     const {sectionNode, body} = await show();
     assert(sectionNode.innerHTML.includes('Imagem AI'));
-    assert(body.innerHTML.includes('Gerar 2 imagens'), 'like Explicar, nothing is made before the click');
+    assert(body.innerHTML.includes('Gerar 2 imagens AI'), 'like Explicar, nothing is made before the click');
     await settle();
     assert.equal(made.length, 0);
     body.querySelector('.gen-btn').listeners.click();
@@ -776,7 +776,7 @@ test('"Imagem AI" shows pictures already made for the word at once, and the refr
     const again = await show();
     await settle();
     assert.equal(made.length, 1, 'nothing is paid for twice');
-    assert(again.body.innerHTML.includes('https://gen.example/2.png') && !again.body.innerHTML.includes('Gerar 2 imagens'));
+    assert(again.body.innerHTML.includes('https://gen.example/2.png') && !again.body.innerHTML.includes('Gerar 2 imagens AI'));
     const [refresh] = again.sectionNode.querySelector('.sec-head').children;
     refresh.listeners.click();
     await settle();
@@ -838,26 +838,40 @@ test('a saved card opens whole in the pop-up, as the Palavras tab shows it', asy
     }
 });
 
-test('"Imagem AI" has a prompt selector in the pop-up; the pictures of every prompt join in one strip', async () => {
+test('"Imagem AI": the button asks which prompt to use, and the pictures of every prompt join in one strip', async () => {
     const {view, made, show, settle} = await imageGenFixture();
     Object.assign(view.ai, {imageGenPrompts: [{id: 'a', name: 'Ação', prompt: 'act {{target}}'}, {id: 'b', name: 'Objeto', prompt: 'thing {{target}}'}], imageGenPromptId: 'a'});
     const {body} = await show();
-    assert(body.innerHTML.includes('class="img-prompt"') && body.innerHTML.includes('>Objeto<'), 'the selector lists the prompts');
-    assert(body.innerHTML.includes('value="a" selected'), 'the prompt chosen last is selected');
+    assert(body.innerHTML.includes('Gerar 2 imagens AI'), 'the button says the pictures are made by AI');
+    const card = view.document.getElementById('card');
+    const menu = () => card.children.at(-1);
     body.querySelector('.gen-btn').listeners.click();
+    assert.equal(made.length, 0, 'a click only opens the menu');
+    assert.equal(menu().className, 'audio-menu prompt-menu');
+    assert.equal(JSON.stringify(menu().children.map((b) => b.innerHTML.replace(/^(check|sparkle)/, ''))), JSON.stringify(['Ação', 'Objeto']), 'it lists the prompts');
+    assert(menu().children[0].className.includes('on'), 'the prompt used last is marked');
+    menu().children[0].listeners.click();
     await settle();
-    assert.equal(made[0].prompt, 'act corre');
-    body.querySelector('.img-prompt').listeners.change({target: {value: 'b'}});
+    assert.equal(made[0].prompt, 'act corre', 'choosing a prompt makes the pictures at once');
+    assert.equal(view.calls.saved, undefined, 'the same prompt again saves nothing');
+    assert(body.innerHTML.includes('Gerar mais imagens AI'));
+    body.querySelector('.img-more').listeners.click();
+    menu().children[1].listeners.click();
     await settle();
+    assert.equal(made[1].prompt, 'thing corre');
     assert.equal(view.ai.imageGenPromptId, 'b');
     assert.equal(view.calls.saved.ai.imageGenPromptId, 'b', 'the choice is kept for the next lookups');
     assert.equal(view.calls.saved.ai.imageMemeMode, false, 'and nothing else changes');
-    assert.equal(made.length, 1, 'choosing a prompt makes nothing by itself');
-    body.querySelector('.img-more').listeners.click();
-    await settle();
-    assert.equal(made[1].prompt, 'thing corre');
     const items = view.popup.stateForTest().generated.items;
-    assert.equal(items.length, 4, 'the new pictures join the first ones');
     assert.equal(JSON.stringify(items.map((i) => i.title)), JSON.stringify(['Ação · test', 'Ação · test', 'Objeto · test', 'Objeto · test']),
-        'each picture says which prompt made it');
+        'the new pictures join the first ones, each saying which prompt made it');
+});
+
+test('"Imagem AI" with a single prompt makes the pictures on the first click, with no menu', async () => {
+    const {view, made, show, settle} = await imageGenFixture();
+    Object.assign(view.ai, {imageGenPrompts: [{id: 'a', name: 'Ação', prompt: 'act {{target}}'}], imageGenPromptId: 'a'});
+    const {body} = await show();
+    body.querySelector('.gen-btn').listeners.click();
+    await settle();
+    assert.equal(made[0].prompt, 'act corre');
 });
