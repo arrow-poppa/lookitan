@@ -754,11 +754,11 @@ function closeViewer() {
 }
 
 /**
- * The checked pictures as files for {image}: Bing's, then the generated ones, each in its strip's
- * order; unreadable ones are skipped.
+ * The checked pictures of some galleries as files, each in its strip's order; unreadable ones are
+ * skipped. Bing's go to {image}, the generated ones to {ai-image}.
  */
-async function checkedImageFiles(lookup) {
-    const picked = [lookup.images, lookup.generated].filter(Boolean)
+async function checkedImageFiles(...galleries) {
+    const picked = galleries.filter(Boolean)
         .flatMap((g) => [...g.selected].sort((a, b) => a - b).map((i) => g.items[i]).filter(Boolean));
     if (picked.length === 0) { return []; }
     const files = await Promise.all(picked.map((item) => downloadImage(item).catch(() => null)));
@@ -1173,7 +1173,8 @@ function noteContext(lookup = state, options = anki) {
         popupSelection: popupSelection(),
         dictionaryOrder: glossaryDictionaryNames(dicts),
         screenshot: async () => (lookup.payload.recognition ? api.captureImage(lookup.payload.recognition, options.screenshotArea || 'sentence') : null),
-        images: () => checkedImageFiles(lookup),
+        images: () => checkedImageFiles(lookup.images),
+        aiImages: () => checkedImageFiles(lookup.generated),
         audio: () => audioForAnki(lookup, lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word),
     };
 }

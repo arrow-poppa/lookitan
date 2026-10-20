@@ -46,7 +46,7 @@ export const MARKERS = [
     'expression', 'reading', 'glossary', 'glossary-brief', 'glossary-no-dictionary', 'glossary-plain',
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
-    'screenshot', 'image', 'audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
+    'screenshot', 'image', 'ai-image', 'audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
     'translation', 'context-translation', 'cefr', 'part-of-speech', 'tags', 'document-title', 'search-query',
 ];
 
@@ -98,6 +98,7 @@ export function suggestMarker(fieldName, index) {
         [/(cloze)/, '{cloze-prefix}<b>{cloze-body}</b>{cloze-suffix}'],
         [/(sentence|context|example)/, '{sentence}'],
         [/(screenshot)/, '{screenshot}'],
+        [/(ai|ia|generated|gerada).?(image|imagem|picture|photo)|(image|imagem|picture).?(ai|ia)$/, '{ai-image}'],
         [/(image|picture|photo)/, '{image}'],
         [/(translation)/, '{translation}'],
         [/(meaning|definition|glossary|back|gloss)/, '{glossary}'],
@@ -257,6 +258,8 @@ function cloze(sentence, word) {
  * @property {() => Promise<string|null>} [screenshot] Base64 PNG of the capture.
  * @property {() => Promise<{data: string, extension: string}[]>} [images] The pictures checked in the
  *   pop-up's "Imagens" section, as base64 files, for {image}.
+ * @property {() => Promise<{data: string, extension: string}[]>} [aiImages] The pictures checked in
+ *   "Imagens IA", for {ai-image}; they go to {image} too when the note has no {ai-image}.
  * @property {() => Promise<{data: string, extension: string}|null>} [audio] The word's audio from
  *   Configurações › Áudio (the recording last played, else the first found), for {audio}.
  * @property {string} [title] Source window title.
@@ -314,6 +317,7 @@ export async function buildNote(ctx, anki, conn) {
         'search-query': escapeHtml(ctx.query || ctx.word),
         'screenshot': '',
         'image': '',
+        'ai-image': '',
         'audio': '',
     };
     for (const name of new Set(defs.map((d) => d.dictionary))) {
@@ -342,16 +346,25 @@ export async function buildNote(ctx, anki, conn) {
             values.screenshot = `<img src="${escapeHtml(stored || fileName)}">`;
         }
     }
-    if (used.has('image') && conn && ctx.images) {
-        const files = await ctx.images();
+    const storeImages = async (files, prefix) => {
         const time = Date.now();
         const tags = [];
         for (const [i, file] of files.entries()) {
-            const fileName = generateAnkiNoteMediaFileName(`lookitan_image_${i + 1}`, `.${file.extension}`, time);
+            const fileName = generateAnkiNoteMediaFileName(`${prefix}_${i + 1}`, `.${file.extension}`, time);
             const stored = await conn.storeMediaFile(fileName, file.data);
             tags.push(`<img src="${escapeHtml(stored || fileName)}">`);
         }
-        values.image = tags.join('');
+        return tags.join('');
+    };
+    // Generated pictures have their own marker; a note without it gets them in {image}, after the
+    // searched ones, so nothing checked is lost.
+    const ownAiField = used.has('ai-image');
+    if (used.has('image') && conn && (ctx.images || ctx.aiImages)) {
+        const files = [...((await ctx.images?.()) || []), ...(ownAiField ? [] : ((await ctx.aiImages?.()) || []))];
+        values.image = await storeImages(files, 'lookitan_image');
+    }
+    if (ownAiField && conn && ctx.aiImages) {
+        values['ai-image'] = await storeImages((await ctx.aiImages()) || [], 'lookitan_ai_image');
     }
     if (used.has('audio') && conn && ctx.audio) {
         const file = await ctx.audio();
