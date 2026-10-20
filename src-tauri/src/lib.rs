@@ -4,6 +4,7 @@
 // This program is free software: you can redistribute it and/or modify it under the terms of the
 // GNU General Public License version 3 as published by the Free Software Foundation.
 
+mod audio;
 mod block;
 mod cards;
 mod dict;
@@ -97,6 +98,8 @@ pub struct AppState {
     busy: AtomicBool,
     pinned: AtomicBool,
     blank: Blanking,
+    /// Local audio databases opened so far, by path (see audio.rs).
+    audio_dbs: Mutex<HashMap<String, Arc<audio::AudioDb>>>,
 }
 
 /// The overlay and the pop-up are hidden only once they show nothing (see `hide_blank`).
@@ -1384,6 +1387,38 @@ fn read_text_file(path: String) -> std::result::Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))
 }
 
+/// The local audio database at `path`, opened once (read-only) and kept.
+fn audio_db(state: &AppState, path: &str) -> std::result::Result<Arc<audio::AudioDb>, String> {
+    let mut dbs = state.audio_dbs.lock();
+    if let Some(db) = dbs.get(path) { return Ok(db.clone()); }
+    let db = Arc::new(audio::AudioDb::open(std::path::Path::new(path)).map_err(|e| format!("{e:#}"))?);
+    dbs.insert(path.to_string(), db.clone());
+    Ok(db)
+}
+
+/// The recordings of a word in a local audio database (Configurações › Áudio), best first.
+#[tauri::command]
+async fn audio_lookup(app: AppHandle, path: String, term: String, reading: Option<String>) -> std::result::Result<Vec<audio::AudioEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        audio_db(&state, &path)?.lookup(&term, reading.as_deref()).map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// One recording of a local audio database, as base64 with its file extension.
+#[tauri::command]
+async fn audio_data(app: AppHandle, path: String, source: String, file: String) -> std::result::Result<Option<(String, String)>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let bytes = audio_db(&state, &path)?.data(&source, &file).map_err(|e| format!("{e:#}"))?;
+        Ok(bytes.map(|b| (base64::engine::general_purpose::STANDARD.encode(b), audio::extension(&file).to_string())))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn word_image(state: tauri::State<'_, AppState>, name: String) -> Option<String> {
     state.cards.media(&name).map(|b| base64::engine::general_purpose::STANDARD.encode(b))
@@ -1447,6 +1482,7 @@ pub fn run() {
                 busy: AtomicBool::new(false),
                 pinned: AtomicBool::new(false),
                 blank: Blanking::default(),
+                audio_dbs: Mutex::new(HashMap::new()),
             });
 
             // Configured WebViews can invoke get_settings before setup reaches manage().
@@ -1579,6 +1615,8 @@ pub fn run() {
             save_word,
             delete_word,
             word_image,
+            audio_lookup,
+            audio_data,
             write_text_file,
             read_text_file
         ])

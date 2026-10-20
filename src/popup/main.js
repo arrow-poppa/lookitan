@@ -10,6 +10,8 @@ import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
+import {invoke} from '@tauri-apps/api/core';
+import {audioFile, findAudio, normalizeAudioOptions} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
 
@@ -127,6 +129,89 @@ function speak(text) {
     window.speechSynthesis.speak(u);
 }
 
+// ------------------------------------------------------------------ word audio (Configurações › Áudio)
+
+const audioIo = {invoke};
+let playing = null;
+
+function audioWord(term) {
+    return {term, reading: '', language: String(settings.ocrLanguage || 'en').split('-')[0]};
+}
+
+/** The recordings of `term` from the configured sources, found once per lookup. */
+function recordings(lookup, term) {
+    lookup.audio ||= new Map();
+    if (!lookup.audio.has(term)) { lookup.audio.set(term, findAudio(normalizeAudioOptions(settings.audio), audioWord(term), audioIo)); }
+    return lookup.audio.get(term);
+}
+
+function stopAudio() {
+    if (playing) { playing.pause(); URL.revokeObjectURL(playing.src); playing = null; }
+    if ('speechSynthesis' in window) { window.speechSynthesis.cancel(); }
+}
+
+/** Plays one recording; false when it cannot be read, so the next one is tried. */
+async function playRecording(entry, term) {
+    stopAudio();
+    if (entry.kind === 'tts') {
+        if (!('speechSynthesis' in window)) { return false; }
+        speak(term);
+        return true;
+    }
+    const file = await audioFile(entry, audioIo).catch(() => null);
+    if (!file) { return false; }
+    const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+    const audio = new Audio(URL.createObjectURL(new Blob([bytes], {type: file.mime})));
+    playing = audio;
+    try { await audio.play(); return true; } catch (_e) { return false; }
+}
+
+/** The word's audio: the first recording that plays, in the order of the sources. */
+async function playWord(lookup, term) {
+    for (const entry of await recordings(lookup, term)) {
+        if (state !== lookup) { return; }
+        if (await playRecording(entry, term)) { lookup.audioPlayed = entry.kind === 'tts' ? lookup.audioPlayed : entry; return; }
+    }
+}
+
+/** Right click on the speaker: every recording found, to pick one (as Yomitan's audio menu). */
+async function audioMenu(button, lookup, term) {
+    closeAudioMenu();
+    const entries = await recordings(lookup, term);
+    if (state !== lookup) { return; }
+    const menu = document.createElement('div');
+    menu.className = 'audio-menu';
+    menu.innerHTML = entries.length ? entries.map((e, i) => `<button class="ghost" data-i="${i}">${icon('speaker', 'sm')}${escapeHtml(e.name)}</button>`).join('')
+        : '<p class="hint">Nenhum áudio encontrado. Configure as fontes em Configurações › Áudio.</p>';
+    const r = button.getBoundingClientRect();
+    const card = $('card').getBoundingClientRect();
+    menu.style.left = `${r.left - card.left}px`;
+    menu.style.top = `${r.bottom - card.top + 4}px`;
+    $('card').append(menu);
+    for (const b of menu.querySelectorAll('button')) {
+        b.addEventListener('click', async () => {
+            const entry = entries[Number(b.dataset.i)];
+            closeAudioMenu();
+            if (await playRecording(entry, term) && entry.kind !== 'tts') { lookup.audioPlayed = entry; }
+        });
+    }
+    setTimeout(() => document.addEventListener('click', closeAudioMenu, {once: true}), 0);
+}
+
+function closeAudioMenu() {
+    document.querySelector?.('.audio-menu')?.remove();
+}
+
+/** The file for {audio}: the recording last played, or the first that can be read (not the system voice). */
+async function audioForAnki(lookup, term) {
+    const entries = [lookup.audioPlayed, ...(await recordings(lookup, term))].filter((e) => e && e.kind !== 'tts');
+    for (const entry of entries) {
+        const file = await audioFile(entry, audioIo).catch(() => null);
+        if (file) { return file; }
+    }
+    return null;
+}
+
 // ------------------------------------------------------------------ AI word card
 
 function renderCard(body, card, pending = false) {
@@ -139,13 +224,15 @@ function renderCard(body, card, pending = false) {
     for (const l of card.labels) { chips.push(`<span class="chip">${escapeHtml(l)}</span>`); }
     const hide = settings.hideWordTranslation;
     body.innerHTML = `
-        <div class="hw"><span class="word">${escapeHtml(headword)}</span>${'speechSynthesis' in window ? `<button class="ghost icon speak" title="Ouvir">${icon('speaker')}</button>` : ''}</div>
+        <div class="hw"><span class="word">${escapeHtml(headword)}</span><button class="ghost icon speak" title="Ouvir (clique direito: escolher o áudio)">${icon('speaker')}</button></div>
         ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
         ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body">${markContext(p)}</div></details>` : ''}`;
-    body.querySelector('.speak')?.addEventListener('click', () => speak(headword));
+    const speaker = body.querySelector('.speak');
+    speaker?.addEventListener('click', () => void playWord(state, headword));
+    speaker?.addEventListener('contextmenu', (ev) => { ev.preventDefault?.(); void audioMenu(speaker, state, headword); });
     body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => ev.currentTarget.classList.remove('hidden-tr'));
     body.querySelector('.explain-btn')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation')));
     body.querySelector('.explain-reset')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation'), true));
@@ -708,6 +795,7 @@ function noteContext(lookup = state, options = anki) {
         dictionaryOrder: glossaryDictionaryNames(dicts),
         screenshot: async () => (lookup.payload.recognition ? api.captureImage(lookup.payload.recognition, options.screenshotArea || 'sentence') : null),
         images: () => checkedImageFiles(lookup),
+        audio: () => audioForAnki(lookup, lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word),
     };
 }
 
@@ -840,6 +928,8 @@ async function render(payload) {
         responses.cancelPendingExcept(keepRunning(keep));
     }
     closeViewer();
+    closeAudioMenu();
+    stopAudio();
     $('sections').replaceChildren();
     $('sections').scrollTop = 0;
     $('query').value = payload.word || '';
@@ -898,6 +988,10 @@ async function render(payload) {
         $('sections').innerHTML = '<div class="empty"><strong>Nenhum resultado</strong>Adicione dicionários ou configure a IA na janela do Lookitan.</div>';
     }
     void refreshAnkiButton();
+    // "Tocar o áudio automaticamente": the word as found on screen or in the first entry.
+    if (normalizeAudioOptions(settings.audio).autoPlay && payload.word) {
+        void playWord(state, payload.entries?.[0]?.headword || payload.word);
+    }
 }
 
 async function lookup(text, fragment = '') {
@@ -983,6 +1077,8 @@ function closePopup() {
 void listen('popup-blank', (event) => {
     stopDictionaryAudio();
     closeViewer();
+    closeAudioMenu();
+    stopAudio();
     if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
     const card = $('card');
     card.classList.remove('tip-open', 'tip-close');
@@ -1026,6 +1122,8 @@ void listen('lookup', (event) => { void render(event.payload); });
 void listen('popup-hidden', () => {
     stopDictionaryAudio();
     closeViewer();
+    closeAudioMenu();
+    stopAudio();
     if (ai && Object.keys(KIND_DICTIONARY).some(cancels)) { responses.cancelPendingExcept(keepRunning(new Set())); }
 });
 void listen('settings-changed', async () => {

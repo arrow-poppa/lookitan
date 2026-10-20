@@ -31,19 +31,20 @@ class Element {
     }
 }
 
-async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}} = {}) {
+async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, audioRows = async () => null} = {}) {
     const nodes = new Map();
     const document = {getElementById: (id) => {
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
         return nodes.get(id);
     }, createElement: () => new Element(), addEventListener() {}};
-    const calls = {settings: 0, hides: 0, blanks: [], events: [], notes: [], listeners: new Map()};
+    const calls = {settings: 0, hides: 0, blanks: [], events: [], notes: [], listeners: new Map(), invokes: []};
     const lookup = {payload: {word: 'run', sentence: 'I run daily.', entries: []}, keys: new Set()};
     const options = {enable: false, checkForDuplicates: false};
     const settings = {hideWordTranslation: false, saveWordsAutomatically: false, ocrLanguage: 'en-US'};
     const ai = {streamResponse: true, provider: 'custom', custom: {model: 'test'}, cardPrompt: 'card'};
     const entry = file('src/popup/main.js');
     const stubs = {
+        '@tauri-apps/api/core': {invoke: async (command, args) => { calls.invokes.push([command, args]); return audioRows(command, args); }},
         '@tauri-apps/api/event': {listen: async (name, handler) => { calls.listeners.set(name, handler); return () => {}; }, emit: async (...args) => { calls.events.push(args); }},
         [file('src/lib/api.js')]: {
             api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, webviewBlank: async (token) => { calls.blanks.push(token); }, entryHtml, listDictionaries: async () => dictionaries},
@@ -591,4 +592,21 @@ test('the context translation can stay blurred until clicked, like the word tran
     view.lookup.contextRevealed = false;
     await view.popup.runContext(body);
     assert(!body.innerHTML.includes('hidden-tr'), 'off by default');
+});
+
+test('{audio} gets the word audio from a local database source, as an Anki sound file', async () => {
+    const view = await fixture({audioRows: async (command, args) => {
+        if (command === 'audio_lookup') { return [{source: 'nhk16', file: 'audio/yomu.ogg', name: 'NHK16 ヨム'}]; }
+        if (command === 'audio_data') { return args.source === 'nhk16' ? ['T2dnUw==', 'ogg'] : null; }
+        return null;
+    }});
+    view.settings.audio = {sources: [{type: 'local-db', path: 'C:/audio/android.db'}, {type: 'tts'}]};
+    view.options.enable = true;
+    view.lookup.payload.word = '読む';
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    await view.popup.onAnkiClick();
+    const ctx = view.calls.notes.at(-1);
+    const file = await ctx.audio();
+    assert.deepEqual(JSON.parse(JSON.stringify(file)), {data: 'T2dnUw==', extension: 'ogg', mime: 'audio/ogg'});
+    assert.deepEqual(JSON.parse(JSON.stringify(view.calls.invokes[0])), ['audio_lookup', {path: 'C:/audio/android.db', term: '読む', reading: null}]);
 });

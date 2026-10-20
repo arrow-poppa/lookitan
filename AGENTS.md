@@ -21,6 +21,7 @@ Since 2026-10-16 the repository has these branches:
 | `tests` | Every agent: Claude Code, Claude in the cloud, Codex | All work is committed and pushed here. |
 | `main` | Only the user | The user merges `tests` into `main` after testing it. |
 | `with-fade` | Snapshot requested by the user | Preserves the overlay fade version at `3dcd0f0`; do not update unless the user asks. |
+| `without-fade` | Only the user, or an agent the user asks | The user has it updated together with `main` (fast-forwarded to `tests` on 2026-10-20). |
 
 - **Never commit, push, merge or open a PR into `main`.** That includes Claude in the cloud, which by default creates its own `claude/…` branch: check out `tests` instead.
 - **Do not create other branches** unless the user asks.
@@ -41,6 +42,8 @@ Since 2026-10-16 the repository has these branches:
 index.html, popup.html, overlay.html   three webviews (main window, pop-up, click-other-words overlay)
 src/main/      main window: Palavras / Dicionários / Configurações tabs, Anki panel, store.js (settings)
 src/popup/     pop-up: AI word card, context translator, Explain, pictures, MDict iframes, Anki and save buttons
+src/lib/audio.js   word audio sources (local audio .db, Yomitan custom URL / URL JSON, system voice); src/main/audio-panel.js is Configurações › Áudio
+src-tauri/src/audio.rs  reads local-audio-yomichan databases (entries.db / android.db) read-only with rusqlite
 src/lib/images.js  the "Imagens" dictionary: image query prompts, Bing Images search and parsing, picture download for Anki
 src/overlay/   word rectangles over a frozen frame; a click calls `overlay_pick`
 src/lib/ai/    ai-provider.js (ported from the fork), explain.js, word-card.js (prompts), response-cache.js
@@ -152,6 +155,12 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 - **AI providers per dictionary:** each AI dictionary in the Dicionários tab has its own provider block, and a change there affects only that dictionary. The block holds the provider, its accounts (key, model, thinking, routing, extra JSON), temperature, streaming and "Cancelar pedidos pendentes" (`PROVIDER_FIELDS`), plus a system prompt for the card and the translator. "IA — palavra no contexto" keeps its block at the top of `ai`, as in the fork. The context translator and "Imagens" keep theirs in `ai.sectionProviders['ai-context' | 'ai-images']`. `normalizeAiOptions` fills a missing block with a copy of the word card's, so older settings keep working with the same key. Requests use `aiOptionsFor(ai, id)`: the shared prompts plus that dictionary's block. The popup's `optionsOf(kind)` maps card/explain → ai-word, context → ai-context and images → ai-images. Cancelling follows each dictionary's own switch (`keyKinds`, `keepRunning`). Each dictionary also has its own automatic switch: `autoGenerateOnLookup` (card), `autoExplain`, `autoTranslateContext` (which starts from `autoGenerateOnLookup` for older settings) and `autoShowImages`. Settings files strip and restore `apiKey` at any depth, including in `sectionProviders`.
 - **Pop-up order (Dicionários tab):** drag a row (grip on the left) or press Alt+↑/↓ on it. The list uses pointer events (`sortable`, `dropIndex` in dicts-tab.js), not HTML drag and drop. Tauri's native file drop handler is on by default (`dragDropEnabled`), and it keeps WebView2 from delivering HTML drag events; WebKitGTK is unreliable with them too. That is why the old `draggable` rows could not be moved. Do not go back to `dragstart`/`drop`. The row moves among the others while dragged, and on release `update_dictionary(moveTo)` saves the order.
 - **Overlay:** no hint pill ("Clique em outra palavra · Esc para fechar"). It showed only on pointer lookups with a pop-up, and the user asked for it to go.
+- **Word audio (Configurações › Áudio, `settings.audio`, owned by src/lib/audio.js):** an ordered list of sources, tried top to bottom as in Yomitan's audio sources.
+  - `local-db` is a local audio database in local-audio-yomichan's format (MIT; behavior only): SQLite `entries (expression, reading, source, speaker, display, file)`. The android.db variant adds `android (file, source, data BLOB)` holding the audio; entries.db has the files in `<source>_files/<file>` next to it. audio.rs opens it read-only (rusqlite, back for this only) and keeps it open per path. It matches `expression` plus the reading (rows without a reading always match) and orders by local-audio's source order (nhk16, shinmeikai8, forvo, jpod, jpod_alternate, ozk5). Names follow its display patterns ("NHK16 %s", "Forvo (%s)"). `audio_data` never leaves the source folder (no `..`).
+  - Manatan's public repo (checked 2026-10-20) has no audio .db of its own; its /audio endpoint returns online provider URLs, and "one-click local audio setup" is on its roadmap. This is the db people use with it and Yomitan.
+  - `custom` is Yomitan's Custom URL (the template answers with the audio); `custom-json` is Custom URL (JSON) (answers `{type: "audioSourceList", audioSources: [{name, url}]}`). Templates take `{term}`, `{reading}` (the term when there is none, since Lookitan has no reading yet) and `{language}` (the OCR language's base tag). URLs are fetched through tauri-plugin-http and played from a Blob URL, so http sources work from both platforms' WebView origins. Only `audio/*` (or octet-stream) answers are kept.
+  - `tts` is the system voice, the default and only source of new settings.
+  - Pop-up: the AI card's speaker plays the first recording that plays; a right click lists every recording found (`audio-menu`). "Tocar o áudio automaticamente" (`autoPlay`) plays on lookup. `{audio}` in Anki stores the recording last played, else the first readable one (never the system voice), as `[sound:lookitan_audio_<date>.<ext>]`. `suggestMarker` gives `{audio}` to fields named audio/sound.
 - **AI cache:** same semantics as the fork. It has a 60 s TTL, joins in-flight requests and never caches partial or failed answers. `cancelPendingExcept` drops requests the pop-up no longer shows.
 - **Anki:** uses Yomitan's `anki` options shape and field markers, through AnkiConnect.
   - tauri-plugin-http always sends `Origin: http://tauri.localhost` (Windows) or `tauri://localhost` (Linux). AnkiConnect allows only `http://localhost`, 127.0.0.1 and browser-extension origins by default (that is why Yomitan works) and answers 403 to anything else.
@@ -172,6 +181,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-20 (Claude, `tests`): word audio sources in Configurações › Áudio: local audio .db (local-audio-yomichan entries.db/android.db, `audio.rs`, rusqlite 0.37 bundled), Yomitan Custom URL and Custom URL (JSON), and the system voice. Also the speaker menu, auto-play and the `{audio}` Anki marker. Before this, at the user's request, `main` and `without-fade` were fast-forwarded to `tests` at `cc69412`.
 
 - 2026-10-20 (Claude, `tests`): the enlarged picture zooms, up to 8×, keeping the point under the pointer in place (`zoomBy`, `applyPictureZoom`). Ways to zoom: the mouse wheel, a double click (toggles 2.5×), the − / + buttons in its bar, and the + − 0 keys. With a picture enlarged, those keys zoom the picture instead of the pop-up. While zoomed, a drag moves the picture around instead of going to the next one (`gestures`, which replaced `swipe`).
 

@@ -131,3 +131,30 @@ test('meme mode puts " meme" at the end of the search, as Migaku does', async ()
     assert.equal(withMemeMode('to run', true), 'to run meme');
     assert.equal(withMemeMode('to run', false), 'to run');
 });
+
+test('word audio sources: Yomitan URL templates, the JSON list, order and defaults', async () => {
+    const {defaultAudioOptions, fillAudioUrl, findAudio, normalizeAudioOptions, parseAudioList} = await import('../src/lib/audio.js');
+    assert.deepEqual(defaultAudioOptions().sources.map((s) => s.type), ['tts'], 'the system voice until something else is set');
+    assert.equal(fillAudioUrl('http://x/?t={term}&r={reading}&l={language}', {term: '読む', reading: 'よむ', language: 'ja'}),
+        `http://x/?t=${encodeURIComponent('読む')}&r=${encodeURIComponent('よむ')}&l=ja`);
+    assert.equal(fillAudioUrl('{reading}', {term: 'run'}), 'run', 'no reading: the term');
+    assert.deepEqual(parseAudioList({type: 'audioSourceList', audioSources: [{name: 'NHK16', url: 'http://127.0.0.1:5050/nhk16/a.ogg'}, {url: 'file:///etc/passwd'}, {url: 'https://b/c.mp3'}]}),
+        [{name: 'NHK16', url: 'http://127.0.0.1:5050/nhk16/a.ogg'}, {name: '', url: 'https://b/c.mp3'}]);
+    assert.deepEqual(parseAudioList({type: 'other'}), []);
+    assert.deepEqual(normalizeAudioOptions({sources: [{type: 'bogus'}, {type: 'custom', url: 'u', enabled: false}]}).sources,
+        [{type: 'custom', enabled: false, path: '', url: 'u'}]);
+    const options = {sources: [
+        {type: 'custom-json', url: 'http://127.0.0.1:5050/?term={term}'},
+        {type: 'local-db', path: 'a.db'},
+        {type: 'custom', url: 'https://audio.example/{term}.mp3', enabled: false},
+        {type: 'custom', url: 'https://audio.example/{term}.mp3'},
+        {type: 'tts'},
+    ]};
+    const io = {
+        invoke: async (command) => { if (command === 'audio_lookup') { throw new Error('no such file'); } return null; },
+        fetch: async (url) => ({ok: true, json: async () => ({type: 'audioSourceList', audioSources: [{name: 'Forvo', url: `${url}&file=1`}]})}),
+    };
+    const found = await findAudio(options, {term: 'run', reading: '', language: 'en'}, io);
+    assert.deepEqual(found.map((f) => [f.kind, f.name]), [['url', 'Forvo'], ['url', 'audio.example'], ['tts', 'Voz do sistema']],
+        'in source order; a failing database and a disabled source are skipped');
+});

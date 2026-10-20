@@ -1,9 +1,10 @@
-// Settings tab: essentials, shortcuts, OCR, per-app profiles, Anki and application options.
+// Settings tab: essentials, shortcuts, OCR, per-app profiles, word audio, Anki and application options.
 
 import {getVersion} from '@tauri-apps/api/app';
 import {api, escapeHtml} from '../lib/api.js';
 import {icon} from '../lib/icons.js';
 import {renderAnkiSection} from './anki-panel.js';
+import {renderAudioSection} from './audio-panel.js';
 import {transferRow} from './settings-transfer.js';
 import {store, save} from './store.js';
 import {cardRow, collapser, el, heading, segmented, select, textInput, toggle} from './ui.js';
@@ -325,6 +326,11 @@ function render(root) {
     ));
 
     root.append(heading('Jogos e programas'), profilesCard());
+
+    root.append(heading('Áudio'));
+    const audioRoot = el('div', {class: 'group', id: 'audio-settings'});
+    root.append(audioRoot);
+    renderAudioSection(audioRoot);
 
     root.append(heading('Anki'));
     const ankiRoot = el('div', {class: 'group', id: 'anki-settings'});

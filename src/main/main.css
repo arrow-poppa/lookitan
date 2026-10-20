@@ -113,3 +113,11 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .word-detail img { max-width: 100%; border-radius: 6px; margin-top: 12px; border: 1px solid var(--border); }
 .actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
 .note { color: var(--muted); font-size: 12.5px; }
+
+/* Configurações › Áudio */
+.audio-source .head { align-items: center; }
+.audio-source .num { width: 16px; color: var(--muted); font-size: 13px; text-align: right; }
+.audio-source .txt select { max-width: 280px; margin-bottom: 4px; }
+.audio-field { display: flex; gap: 8px; width: 100%; }
+.audio-test { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.audio-test input { width: 120px; }

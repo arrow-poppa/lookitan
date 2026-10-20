@@ -55,6 +55,8 @@ hunspell-rs = "0.4"
 # hunspell-sys's defaults make its bindgen load libclang at run time too.
 hunspell-sys = { version = "0.3", features = ["bundled"] }
 prost = "0.14"
+# Local word audio databases (audio.rs): local-audio-yomichan's entries.db / android.db, read-only.
+rusqlite = { version = "0.37", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "gzip"] }
 
 [dev-dependencies]

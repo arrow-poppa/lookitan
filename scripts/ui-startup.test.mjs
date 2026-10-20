@@ -103,6 +103,7 @@ async function settingsFixture(overrides = {}) {
         [file('src/lib/api.js')]: {api: {ocrLanguages: () => languages.promise, engineStatus: () => status.promise}, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/main/anki-panel.js')]: {renderAnkiSection: async () => {}},
+        [file('src/main/audio-panel.js')]: {renderAudioSection: () => {}},
         [file('src/main/settings-transfer.js')]: {transferRow: () => null},
         [file('src/main/store.js')]: {store: {settings, anki: {}}, save: () => { saves += 1; }},
     });

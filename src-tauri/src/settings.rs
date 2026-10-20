@@ -161,6 +161,9 @@ pub struct Settings {
     pub ai: serde_json::Value,
     /// Anki options, owned by the front end (same shape as Yomitan's `anki` options).
     pub anki: serde_json::Value,
+    /// Word audio sources, owned by the front end (src/lib/audio.js): local audio databases,
+    /// Yomitan-style custom URLs and the system voice.
+    pub audio: serde_json::Value,
     pub theme: String,
 }
 
@@ -204,6 +207,7 @@ impl Default for Settings {
             hide_word_translation: false,
             ai: serde_json::Value::Null,
             anki: serde_json::Value::Null,
+            audio: serde_json::Value::Null,
             theme: "system".into(),
         }
     }
