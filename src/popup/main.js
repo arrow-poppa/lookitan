@@ -11,7 +11,7 @@ import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai
 import {buildNote, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {invoke} from '@tauri-apps/api/core';
-import {audioFile, edgeEntry, findAudio, normalizeAudioOptions} from '../lib/audio.js';
+import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
 
@@ -1013,6 +1013,7 @@ function noteContext(lookup = state, options = anki) {
         screenshot: async () => (lookup.payload.recognition ? api.captureImage(lookup.payload.recognition, options.screenshotArea || 'sentence') : null),
         images: () => checkedImageFiles(lookup),
         audio: () => audioForAnki(lookup, lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word),
+        sentenceAudio: () => sentenceAudioFile(lookup.payload.sentence, settings.audio, settings.ocrLanguage, audioIo),
     };
 }
 

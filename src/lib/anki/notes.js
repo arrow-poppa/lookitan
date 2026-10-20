@@ -46,7 +46,7 @@ export const MARKERS = [
     'expression', 'reading', 'glossary', 'glossary-brief', 'glossary-no-dictionary', 'glossary-plain',
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
-    'screenshot', 'image', 'audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
+    'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
     'translation', 'context-translation', 'cefr', 'part-of-speech', 'tags', 'document-title', 'search-query',
 ];
 
@@ -93,6 +93,7 @@ export function suggestMarker(fieldName, index) {
     const n = fieldName.toLowerCase();
     const rules = [
         [/^(front|word|expression|term|vocab|target|headword)/, '{expression}'],
+        [/(sentence|context|example).*(audio|sound)|(audio|sound).*(sentence|context|example)/, '{sentence-audio}'],
         [/(audio|sound)/, '{audio}'],
         [/(reading|ipa|pronunciation|transcription|phonetic)/, '{reading}'],
         [/(cloze)/, '{cloze-prefix}<b>{cloze-body}</b>{cloze-suffix}'],
@@ -244,6 +245,8 @@ function cloze(sentence, word) {
  *   pop-up's "Imagens" section, as base64 files, for {image}.
  * @property {() => Promise<{data: string, extension: string}|null>} [audio] The word's audio from
  *   Configurações › Áudio (the recording last played, else the first found), for {audio}.
+ * @property {() => Promise<{data: string, extension: string}|null>} [sentenceAudio] The sentence
+ *   read aloud by an Edge neural voice, for {sentence-audio}.
  * @property {string} [title] Source window title.
  * @property {string} [query]
  * @property {string} [popupSelection] Text selected in the pop-up when the note was added.
@@ -300,6 +303,7 @@ export async function buildNote(ctx, anki, conn) {
         'screenshot': '',
         'image': '',
         'audio': '',
+        'sentence-audio': '',
     };
     for (const name of new Set(defs.map((d) => d.dictionary))) {
         const id = getKebabCase(name);
@@ -345,6 +349,14 @@ export async function buildNote(ctx, anki, conn) {
             const stored = await conn.storeMediaFile(fileName, file.data);
             // Anki's own sound tag, as Yomitan writes {audio}.
             values.audio = `[sound:${stored || fileName}]`;
+        }
+    }
+    if (used.has('sentence-audio') && conn && ctx.sentenceAudio) {
+        const file = await ctx.sentenceAudio();
+        if (file) {
+            const fileName = generateAnkiNoteMediaFileName('lookitan_sentence_audio', `.${file.extension}`, Date.now());
+            const stored = await conn.storeMediaFile(fileName, file.data);
+            values['sentence-audio'] = `[sound:${stored || fileName}]`;
         }
     }
     for (const name of Object.keys(fields)) {

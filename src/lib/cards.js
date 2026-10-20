@@ -1,6 +1,8 @@
 // Saved-word cards: built from a lookup in the popup, listed in the Words tab, sent to Anki.
 
+import {invoke} from '@tauri-apps/api/core';
 import {api} from './api.js';
+import {sentenceAudioFile} from './audio.js';
 
 /**
  * @param {object} lookup popup state: payload, aiCard, explanation, contextTranslation, glossaries
@@ -32,8 +34,9 @@ export function cardFromLookup(lookup, settings) {
  * Anki note context for a saved card.
  * @param {object} card
  * @param {string[]} [dictionaryOrder] see glossaryDictionaryNames
+ * @param {object} [settings] the app settings, for the voice of {sentence-audio}
  */
-export function noteContextFromCard(card, dictionaryOrder = []) {
+export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
     return {
         dictionaryOrder,
         word: card.word,
@@ -54,6 +57,7 @@ export function noteContextFromCard(card, dictionaryOrder = []) {
         title: card.windowTitle,
         query: card.word,
         screenshot: async () => (card.image ? await api.wordImage(card.image) : null),
+        sentenceAudio: () => sentenceAudioFile(card.sentence, settings.audio, card.language || settings.ocrLanguage, {invoke}),
     };
 }
 

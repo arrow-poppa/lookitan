@@ -685,3 +685,21 @@ test('a slow, older Anki notes check cannot overwrite a newer one', async () => 
     await first;
     assert(view.nodes.get('btn-anki-notes').innerHTML.includes('<span class="n">1</span>'), 'the newest answer stays');
 });
+
+test('{sentence-audio} reads only the sentence, with the Edge voice of the context or the language default', async () => {
+    const view = await fixture({audioRows: async (command) => (command === 'edge_tts_speak' ? 'SUQz' : null)});
+    view.settings.audio = {sources: [{type: 'tts'}], context: {type: 'edge-tts', voice: 'en-US-AriaNeural'}};
+    view.options.enable = true;
+    view.lookup.payload = {word: 'run', sentence: 'I run daily.', context: 'Every morning, I run daily. It helps.', entries: []};
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    await view.popup.onAnkiClick();
+    const ctx = view.calls.notes.at(-1);
+    const file = await ctx.sentenceAudio();
+    assert.equal(JSON.stringify(file), JSON.stringify({data: 'SUQz', extension: 'mp3', mime: 'audio/mpeg'}));
+    const speak = view.calls.invokes.find(([command]) => command === 'edge_tts_speak');
+    assert.equal(JSON.stringify(speak[1]), JSON.stringify({text: 'I run daily.', voice: 'en-US-AriaNeural', language: 'en-US'}), 'the sentence, not the paragraph');
+    view.settings.audio.context = {type: 'tts', voice: ''};
+    await ctx.sentenceAudio();
+    const last = view.calls.invokes.filter(([command]) => command === 'edge_tts_speak').at(-1);
+    assert.equal(last[1].voice, '', 'with the system voice, the language default Edge voice');
+});

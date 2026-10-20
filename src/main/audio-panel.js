@@ -264,7 +264,7 @@ export function renderAudioSection(root, focusIndex = null) {
                 {value: 'menu', label: 'Menu no clique direito do botão de áudio'},
                 {value: 'buttons', label: 'Um botão para cada áudio'},
             ], audio.others, (v) => { audio.others = v; save(); })}),
-        cardRow({icon: 'speaker', title: 'Voz para ler o contexto', desc: 'O botão de áudio ao lado do contexto e do tradutor de contexto lê a frase com esta voz. Se a do Edge falhar, a do sistema lê.', wide: true,
+        cardRow({icon: 'speaker', title: 'Voz para ler o contexto', desc: 'O botão de áudio ao lado do contexto e do tradutor de contexto lê a frase com esta voz. Se a do Edge falhar, a do sistema lê. O marcador {sentence-audio} do Anki grava a frase com esta voz do Edge; a do sistema não gera arquivo, então com ela ele usa a voz do Edge padrão do idioma.', wide: true,
             control: el('div', {class: 'audio-field'},
                 select(CONTEXT_VOICE_TYPES, audio.context.type, (v) => { audio.context.type = v; save(); redraw(); }),
                 audio.context.type === 'edge-tts' ? edgeVoiceSelect(audio.context.voice, (v) => { audio.context.voice = v; save(); }) : null)}),

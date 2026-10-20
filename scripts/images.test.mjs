@@ -243,3 +243,40 @@ test('Edge neural voices: a source that reads the word, voice names, and the con
     const automatic = await audio.findAudio({sources: [{type: 'edge-tts'}]}, {term: 'livro', language: 'pt', locale: 'pt-BR'}, io);
     assert.equal(automatic[0].name, 'Edge', 'no voice chosen: the app picks the language default');
 });
+
+test('{sentence-audio} stores the sentence read aloud as an Anki sound file, only when a field uses it', async () => {
+    const context = createContext({AbortController, setTimeout, clearTimeout});
+    const modules = new Map();
+    async function load(id) {
+        if (!modules.has(id)) {
+            modules.set(id, (async () => (id === '@tauri-apps/plugin-http' ? new SyntheticModule(['fetch'], function () {
+                this.setExport('fetch', async () => { throw new Error('note construction must not use HTTP'); });
+            }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8'), {context, identifier: id})))());
+        }
+        return modules.get(id);
+    }
+    const module = await load(resolve(project, 'src/lib/anki/notes.js'));
+    await module.link((specifier, owner) => load(specifier.startsWith('.') ? resolve(owner.identifier, '..', specifier) : specifier));
+    await module.evaluate();
+    const notes = module.namespace;
+    const options = notes.defaultAnkiOptions();
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {Front: {value: '{expression}'}, SentenceAudio: {value: '{sentence-audio}'}, Audio: {value: '{audio}'}}}];
+    const stored = [];
+    const conn = {storeMediaFile: async (name, data) => { stored.push({name, data}); return name; }};
+    let asked = 0;
+    const sentenceAudio = async () => { asked++; return {data: 'SUQz', extension: 'mp3'}; };
+    const built = await notes.buildNote({word: 'cat', sentence: 'The cat sleeps.', sentenceAudio}, options, conn);
+    assert.equal(stored.length, 1);
+    assert.match(stored[0].name, /^lookitan_sentence_audio_.+\.mp3$/);
+    assert.equal(built.fields.SentenceAudio, `[sound:${stored[0].name}]`);
+    assert.equal(built.fields.Audio, '', 'the word audio stays apart');
+    await notes.buildNote({word: 'cat', sentenceAudio}, options, null);
+    options.cardFormats[0].fields = {Front: {value: '{expression}'}};
+    await notes.buildNote({word: 'cat', sentenceAudio}, options, conn);
+    assert.equal(asked, 1, 'read aloud only for a real note with {sentence-audio}, not for duplicate checks');
+    assert(notes.MARKERS.includes('sentence-audio'));
+    assert.equal(notes.suggestMarker('SentenceAudio', 3), '{sentence-audio}');
+    assert.equal(notes.suggestMarker('Sentence Audio', 3), '{sentence-audio}');
+    assert.equal(notes.suggestMarker('Audio', 3), '{audio}');
+    assert.equal(notes.suggestMarker('Sentence', 3), '{sentence}');
+});

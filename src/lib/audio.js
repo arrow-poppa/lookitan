@@ -245,6 +245,18 @@ export function edgeVoiceName(id) {
     return m ? m[1].replace(/Multilingual$/, '') : String(id || '');
 }
 
+/**
+ * {sentence-audio} in Anki: the sentence (never the paragraph) read by the voice of "Voz para ler o
+ * contexto", as a file. The system voice cannot be saved to a file, so with it the sentence is read
+ * by the language's default Edge voice. Null without a sentence or when Edge fails.
+ */
+export async function sentenceAudioFile(sentence, options, language, io) {
+    const text = String(sentence || '').trim();
+    if (!text) { return null; }
+    const voice = normalizeAudioOptions(options).context;
+    return audioFile(edgeEntry(text, voice.type === 'edge-tts' ? voice.voice : '', language || 'en-US'), io).catch(() => null);
+}
+
 /** An Edge neural voice reading `text` (no voice: the language's default one, chosen by the app). */
 export function edgeEntry(text, voice, language) {
     return {kind: 'edge', name: voice ? `Edge · ${edgeVoiceName(voice)}` : 'Edge', text, voice: voice || '', language: language || ''};

@@ -101,7 +101,7 @@ async function addToAnki(w) {
     if (!isFormatReady(options)) { return 'Configure o Anki em Configurações › Anki (baralho, tipo de nota e campos).'; }
     try {
         const conn = createConnection(options);
-        const note = await buildNote(noteContextFromCard(w, glossaryDictionaryNames(store.settings?.dictionaries)), options, conn);
+        const note = await buildNote(noteContextFromCard(w, glossaryDictionaryNames(store.settings?.dictionaries), store.settings || {}), options, conn);
         const id = await conn.addNote(note);
         if (id === null) { return 'O Anki não aceitou a nota (talvez já exista).'; }
         if (options.suspendNewCards) {
