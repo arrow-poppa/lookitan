@@ -15,6 +15,8 @@ test('components keep their part, reading and meaning, and odd items are left ou
     assert.deepEqual(card.synonyms, ['期望']);
     assert.deepEqual(card.components, [{part: '期', reading: 'qī', meaning: 'period'}, {part: '許', reading: '', meaning: ''}]);
     assert.deepEqual(parseCardProgress('{"headword":"run"}').components, []);
+    const korean = parseCardProgress('{"headword":"학교","components":[{"part":"학","hanja":"學","meaning":"learn"}]}');
+    assert.deepEqual(korean.components, [{part: '학', reading: '學', meaning: 'learn'}], 'a Korean part shows its hanja where a reading goes');
 });
 
 test('split JSON escapes wait for complete unicode and retain escaped quotes and braces', () => {

@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -53,6 +53,8 @@ function baseAiOptions() {
         customPrompt: DEFAULT_PROMPT,
         cardPrompt: CARD_PROMPT,
         wordTranslationPrompt: WORD_TRANSLATION_PROMPT,
+        readingPrompt: READING_PROMPT,
+        componentsPrompt: COMPONENTS_PROMPT,
         contextPrompt: CONTEXT_PROMPT,
         // The "Imagens" dictionary: its own system and user prompts for the search query (as
         // Migaku's "Image query"), shown on click unless autoShowImages is on.
@@ -120,7 +122,7 @@ export function normalizeAiOptions(stored) {
     // one, they start from a copy of the word card's, so they keep working as they did.
     const own = isObject(stored.sectionProviders) ? stored.sectionProviders : {};
     out.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(isObject(own[id]) ? own[id] : out, base)]));
-    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
+    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'readingPrompt', 'componentsPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
         if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
     }
     // Card prompts saved before the translation had its own field: move the default translation

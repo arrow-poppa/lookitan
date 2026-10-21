@@ -221,6 +221,18 @@ test('synonyms are asked in every language, the reading only in Chinese and Japa
     assert(prompts[2].includes('"synonyms"') && prompts[2].includes('"ipa"'), 'synonyms and IPA in every language');
     assert(!prompts[2].includes('"reading"') && !prompts[2].includes('"components"'));
     assert(!off.innerHTML.includes('Componentes'), 'switched off, components are not shown');
+    view.settings.ocrLanguage = 'ko-KR';
+    view.ai.cardComponents = true;
+    await view.popup.runCard(new Element());
+    assert(prompts[3].includes('"hanja"') && prompts[3].includes('Sino-Korean'), 'Korean parts carry their hanja');
+    assert(!prompts[3].includes('"reading"'), 'Korean has no reading of its own');
+    assert(!prompts[2].includes('hanja') && !prompts[0].includes('hanja'));
+    view.ai.componentsPrompt = 'my parts: {{componentParts}} / {{componentReading}}';
+    view.ai.readingPrompt = 'my reading in {{readingSystem}}';
+    view.settings.ocrLanguage = 'zh-CN';
+    await view.popup.runCard(new Element());
+    assert(prompts[4].includes(', "components": my parts: each character / "reading": its pinyin reading, '), 'the components prompt is the user\'s');
+    assert(prompts[4].includes(', "reading": my reading in pinyin with tone marks'), 'the reading prompt is the user\'s');
 });
 
 test('the popup grows from the word like a TeachingTip and a new lookup cancels a pending close', async () => {

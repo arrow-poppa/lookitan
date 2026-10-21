@@ -5,7 +5,7 @@ import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
-import {CARD_PROMPT, CONTEXT_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
+import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_PROMPT, READING_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
@@ -330,6 +330,8 @@ function renderAiWord(root) {
         el('div', {class: 'group'},
             promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada; ${escapeHtml('{{readingField}}')} pede a leitura só no chinês (pinyin) e no japonês (kana); ${escapeHtml('{{componentsField}}')} pede os componentes só com a opção Componentes ligada.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
             promptCard('Prompt da tradução da palavra', `O que a IA põe no campo "translation" do card. Só é enviado com a tradução da palavra ligada. Variáveis: ${vars}.`, () => ai.wordTranslationPrompt, (v) => { ai.wordTranslationPrompt = v; }, WORD_TRANSLATION_PROMPT, 'wordTranslationPrompt'),
+            promptCard('Prompt da leitura', `O que a IA põe no campo "reading" do card. Só é enviado no chinês e no japonês. ${escapeHtml('{{readingSystem}}')} vira "pinyin with tone marks" no chinês e "hiragana" no japonês.`, () => ai.readingPrompt, (v) => { ai.readingPrompt = v; }, READING_PROMPT, 'readingPrompt'),
+            promptCard('Prompt dos componentes', `O que a IA põe no campo "components" do card. Só é enviado com Componentes ligado. ${escapeHtml('{{componentParts}}')} vira o que são as partes no idioma (caracteres no chinês e no japonês, sílabas com hanja no coreano, raízes e afixos nos outros) e ${escapeHtml('{{componentReading}}')} o campo de leitura de cada parte (pinyin, kana ou hanja; vazio nos outros idiomas). Variáveis: ${vars}.`, () => ai.componentsPrompt, (v) => { ai.componentsPrompt = v; }, COMPONENTS_PROMPT, 'componentsPrompt'),
             promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT, 'customPrompt'),
             el('div', {class: 'card-row stack'},
                 el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado no card e na explicação. Opcional.'))),

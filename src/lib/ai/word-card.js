@@ -35,16 +35,39 @@ export const CARD_PROMPT =
     '"definition": a one or two sentence definition in {{definitionLanguage}}' +
     TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + '}';
 
-const READINGS = {
-    zh: 'the pinyin of the headword with tone marks, e.g. "qīxǔ"',
-    ja: 'the reading of the headword in hiragana',
+/** Default instruction for the card's "reading" key (the "Prompt da leitura"). */
+export const READING_PROMPT = 'the reading of the headword in {{readingSystem}}';
+
+/** Default instruction for the card's "components" key (the "Prompt dos componentes"). */
+export const COMPONENTS_PROMPT =
+    '[the parts the word is built from, in order: {{componentParts}}; [] for a word of one part. ' +
+    'Each is {"part": the part as written, {{componentReading}}"meaning": its short meaning in {{definitionLanguage}}}]';
+
+/** {{readingSystem}}: the languages with a reading, and how it is written. */
+const READING_SYSTEMS = {
+    zh: 'pinyin with tone marks, e.g. "qīxǔ"',
+    ja: 'hiragana',
 };
 
-const COMPONENTS =
-    ', "components": [the parts the word is built from, in order: each character for Chinese and Japanese, ' +
-    'otherwise its roots, affixes or the words of a compound; [] for a word of one part. Each is ' +
-    '{"part": the part as written, "reading": its pinyin or kana reading for Chinese and Japanese, otherwise "", ' +
-    '"meaning": its short meaning in {{definitionLanguage}}}]';
+/** {{componentParts}}: what the parts of a word are in each language. */
+const COMPONENT_PARTS = {
+    zh: 'each character',
+    ja: 'each character',
+    ko: 'each syllable for a word of Chinese origin (Sino-Korean), otherwise its stem and endings',
+};
+const OTHER_PARTS = 'its roots, affixes or the words of a compound';
+
+/** {{componentReading}}: the key each part gets besides its meaning in each language. */
+const COMPONENT_READINGS = {
+    zh: '"reading": its pinyin reading, ',
+    ja: '"reading": its kana reading, ',
+    ko: '"hanja": the hanja of a Sino-Korean syllable, otherwise "", ',
+};
+
+/** A user's prompt, or the default when it is empty. */
+function promptOr(value, fallback) {
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : fallback;
+}
 
 /** The base language of a BCP 47 tag ("zh-Hant-TW" -> "zh"). */
 function baseLanguage(tag) {
@@ -79,31 +102,33 @@ export function fillLanguages(template, settings) {
 /**
  * The word-card prompt as sent. {{translationField}} becomes the "translation" key with the word
  * translation prompt, or nothing when the word translation is turned off, so the model spends no
- * tokens on it. Likewise {{readingField}} asks for the reading only in Chinese and Japanese, and
- * {{componentsField}} for the components only when they are switched on. A card prompt without a marker is sent as written.
+ * tokens on it. Likewise {{readingField}} gets the reading prompt only in Chinese and Japanese, and
+ * {{componentsField}} the components prompt only when they are switched on; their variables follow
+ * the OCR language. A card prompt without a marker is sent as written.
  * @param {string} template
  * @param {{showWordTranslation?: boolean, ocrLanguage?: string}} settings
- * @param {{wordTranslationPrompt?: string, cardComponents?: boolean}} [ai]
+ * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, cardComponents?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
-    const instruction = typeof ai.wordTranslationPrompt === 'string' && ai.wordTranslationPrompt.trim() !== '' ?
-        ai.wordTranslationPrompt.trim() : WORD_TRANSLATION_PROMPT;
-    const field = settings.showWordTranslation === false ? '' : `, "translation": ${instruction}`;
+    const field = settings.showWordTranslation === false ? '' : `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}`;
     const language = baseLanguage(settings.ocrLanguage);
-    const reading = READINGS[language] ? `, "reading": ${READINGS[language]}` : '';
-    const components = ai.cardComponents === false ? '' : COMPONENTS;
+    const reading = READING_SYSTEMS[language] ?
+        `, "reading": ${promptOr(ai.readingPrompt, READING_PROMPT).replaceAll('{{readingSystem}}', READING_SYSTEMS[language])}` : '';
+    const components = ai.cardComponents === false ? '' : `, "components": ${promptOr(ai.componentsPrompt, COMPONENTS_PROMPT)
+        .replaceAll('{{componentParts}}', COMPONENT_PARTS[language] || OTHER_PARTS)
+        .replaceAll('{{componentReading}}', COMPONENT_READINGS[language] || '')}`;
     return fillLanguages(template
         .replaceAll(TRANSLATION_FIELD, field)
         .replaceAll(READING_FIELD, reading)
         .replaceAll(COMPONENTS_FIELD, components), settings);
 }
 
-/** The components of a reply: objects with a part, its reading and its meaning. */
+/** The components of a reply: objects with a part, its reading or hanja and its meaning. */
 function componentList(value) {
     if (!Array.isArray(value)) { return []; }
     return value
         .filter((c) => typeof c === 'object' && c !== null && c.part)
-        .map((c) => ({part: String(c.part), reading: String(c.reading || ''), meaning: String(c.meaning || '')}));
+        .map((c) => ({part: String(c.part), reading: String(c.reading || c.hanja || ''), meaning: String(c.meaning || '')}));
 }
 
 /**
