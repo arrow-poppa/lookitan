@@ -217,6 +217,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `main`/`edge-tts`): at the user's request `main` and `edge-tts` were fast-forwarded to `tests`, and a backup copy of `tests` was pushed to the private repo `arrow-poppa/lookitan-old` as branch `backup/tests-2026-10-21` (its own `main` left alone). `without-fade` was not moved this time.
 - 2026-10-21 (Claude, `tests`): Google Lens read badly because Lookitan shrank every capture to 1000 px and 1 MP (YomiNinja's limits): a whole 1920 × 1080 screen was halved. On a synthetic 5-language test screen Lens read 5/5 lines at full size and 2/5 (12 px text) or 3/5 (15 px) shrunk. Now only captures over 3 MP shrink, with Lanczos, as owocr, and the request sends `surface` SURFACE_CHROMIUM (4) as Chromium does.
 - 2026-10-21 (Claude, `tests`): at the user's request the built-in Lens key left the source: CI passes the `LOOKITAN_LENS_API_KEY` secret to the build, and `option_env!` reads it.
 - 2026-10-21 (Claude, `tests`): at the user's request a whole-screen lookup also says when Google Lens failed: `Recognition.notice` goes to the overlay, which shows it at the top of the screen while no pop-up is open. The message is now in Portuguese.
