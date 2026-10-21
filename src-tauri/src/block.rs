@@ -1,91 +1,99 @@
 // The block of text under the pointer, found on the detected boxes before anything is recognized.
 // In the automatic capture, as in Lookupper's pointer mode, the whole monitor is detected but only
-// this block is recognized: the line under the pointer and the lines set close around it (a
-// paragraph, a list item, a chat message). A pointer on no line finds no block, and the lookup
-// reads the whole screen instead. The thresholds are our own.
+// this block is recognized. A pointer on no box finds no block, and the lookup reads the whole
+// screen instead. The rules and thresholds are Lookupper's (REA: XpressOCR's `0x1409505c0`, its
+// pointer test `0x140950940` and its clustering `0x14094b8c0`).
+
+use std::collections::VecDeque;
 
 use crate::ocr::paddle::TextBox;
 
-/// Slack around a box for the pointer to count as on it, in box heights: above and below it, and
-/// past its ends.
-const POINTER_SLACK_Y: f32 = 0.2;
-const POINTER_SLACK_X: f32 = 0.5;
-/// Height ratio above which two boxes are different text (a title over its body).
-const MAX_HEIGHT_RATIO: f32 = 1.6;
-/// Vertical gap between two lines of one block, in line heights. Tighter than a paragraph's
-/// (see words.rs), so list items and separate messages stay apart.
-const MAX_LINE_GAP: f32 = 0.6;
-/// Horizontal gap between two boxes of one row (a line the detector split), in line heights.
-const MAX_ROW_GAP: f32 = 1.5;
-/// Bounds the recognition work of one lookup.
-const MAX_BLOCK_BOXES: usize = 40;
+/// The pointer is on a box when it lies inside it with the box's short side (the text's size)
+/// widened by this share on each side; there is no slack past the ends of a line or a column.
+const POINTER_SLACK: f32 = 0.2;
+/// Size ratio (of the boxes' short sides) above which two boxes are different text, unless the
+/// smaller one is ruby: above a row, or right of a column.
+const MAX_SIZE_RATIO: f64 = 1.6;
+/// How far a box reaches for others: this share of its short side across the text (sideways for
+/// a row, up and down for a column) and of its height up and down.
+const REACH_ACROSS: f64 = 0.7;
+const REACH_DOWN: f64 = 0.5;
 
-fn height(b: &TextBox) -> f32 {
-    (b.y1 - b.y0).max(4.0)
+/// A box in whole pixels, as OpenCV's `RotatedRect.BoundingRect()` gives it to Lookupper: its
+/// far edges rounded up and counted in.
+#[derive(Clone, Copy)]
+struct Rect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
 }
 
-fn same_row(a: &TextBox, b: &TextBox) -> bool {
-    a.y1.min(b.y1) - a.y0.max(b.y0) >= 0.5 * height(a).min(height(b))
+fn rect(b: &TextBox) -> Rect {
+    let (x, y) = (b.x0.floor() as i32, b.y0.floor() as i32);
+    Rect { x, y, w: b.x1.ceil() as i32 - x + 1, h: b.y1.ceil() as i32 - y + 1 }
 }
 
-/// Whether `b` belongs to the block of `a`: the line right above or below it, overlapping it
-/// horizontally, or another piece of the same row, in a similar text size.
-fn joins(a: &TextBox, b: &TextBox) -> bool {
-    let (ha, hb) = (height(a), height(b));
-    if ha.max(hb) > MAX_HEIGHT_RATIO * ha.min(hb) {
+/// The first box the pointer is on.
+fn under_pointer(boxes: &[TextBox], x: f32, y: f32) -> Option<usize> {
+    boxes.iter().position(|b| {
+        let (w, h) = (b.x1 - b.x0, b.y1 - b.y0);
+        let (sx, sy) = if w < h { (POINTER_SLACK * w, 0.0) } else { (0.0, POINTER_SLACK * h) };
+        x >= b.x0 - sx && x <= b.x1 + sx && y >= b.y0 - sy && y <= b.y1 + sy
+    })
+}
+
+/// Whether box `a` takes `b` into its block: `b` touches `a` grown by its reach, and is of a similar
+/// size, or is ruby of `a` (smaller, above a row or right of a column), or `a` is ruby of it.
+fn joins(a: Rect, b: Rect) -> bool {
+    let vertical = a.w < a.h;
+    let across = (if vertical { a.w } else { a.h } as f64 * REACH_ACROSS) as i32;
+    let down = (a.h as f64 * REACH_DOWN) as i32;
+    let (x, y, w, h) = (a.x - across, a.y - down, a.w + 2 * across, a.h + 2 * down);
+    if !(x < b.x + b.w && b.x < x + w && y < b.y + b.h && b.y < y + h) {
         return false;
     }
-    let h = (ha + hb) / 2.0;
-    if same_row(a, b) {
-        return a.x0.max(b.x0) - a.x1.min(b.x1) <= MAX_ROW_GAP * h;
+    let (sa, sb) = (a.w.min(a.h) as f64, b.w.min(b.h) as f64);
+    if sb * MAX_SIZE_RATIO < sa {
+        return if vertical { a.x <= b.x } else { b.y <= a.y };
     }
-    let gap = (b.y0 - a.y1).max(a.y0 - b.y1);
-    let overlap = a.x1.min(b.x1) - a.x0.max(b.x0);
-    gap <= MAX_LINE_GAP * h && overlap > 0.0
+    if sb > sa * MAX_SIZE_RATIO {
+        return if vertical { b.x <= a.x } else { a.y <= b.y };
+    }
+    true
 }
 
-/// The box the pointer is on: it lies inside it, give or take the slack. Of overlapping boxes,
-/// the one whose middle is closest to the pointer.
-fn under_pointer(boxes: &[TextBox], x: f32, y: f32) -> Option<usize> {
-    boxes
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| {
-            let h = height(b);
-            x >= b.x0 - POINTER_SLACK_X * h
-                && x <= b.x1 + POINTER_SLACK_X * h
-                && y >= b.y0 - POINTER_SLACK_Y * h
-                && y <= b.y1 + POINTER_SLACK_Y * h
-        })
-        .min_by(|(_, a), (_, b)| {
-            let d = |t: &TextBox| (y - (t.y0 + t.y1) / 2.0).abs();
-            d(a).total_cmp(&d(b))
-        })
-        .map(|(i, _)| i)
-}
-
-/// The indices of the boxes in the block under the pointer, the pointed line first; empty when the
-/// pointer is on no line of text.
-pub fn under(boxes: &[TextBox], x: f32, y: f32) -> Vec<usize> {
-    let Some(start) = under_pointer(boxes, x, y) else { return Vec::new() };
-    let mut members = vec![start];
-    let mut seen = vec![false; boxes.len()];
-    seen[start] = true;
-    let mut k = 0;
-    while k < members.len() && members.len() < MAX_BLOCK_BOXES {
-        let a = boxes[members[k]];
-        for (j, b) in boxes.iter().enumerate() {
-            if !seen[j] && joins(&a, b) {
-                seen[j] = true;
-                members.push(j);
-                if members.len() == MAX_BLOCK_BOXES {
-                    break;
+/// The block of every box, as Lookupper labels them: in order, each box not yet in a block starts
+/// one, which grows through every box its members take.
+fn blocks(boxes: &[TextBox]) -> Vec<usize> {
+    let rects: Vec<Rect> = boxes.iter().map(rect).collect();
+    let mut label = vec![usize::MAX; boxes.len()];
+    let mut next = 0;
+    for i in 0..boxes.len() {
+        if label[i] != usize::MAX {
+            continue;
+        }
+        label[i] = next;
+        let mut queue = VecDeque::from([i]);
+        while let Some(k) = queue.pop_front() {
+            for j in 0..boxes.len() {
+                if label[j] == usize::MAX && joins(rects[k], rects[j]) {
+                    label[j] = next;
+                    queue.push_back(j);
                 }
             }
         }
-        k += 1;
+        next += 1;
     }
-    members
+    label
+}
+
+/// The indices of the boxes in the block under the pointer, the pointed box first; empty when the
+/// pointer is on no box.
+pub fn under(boxes: &[TextBox], x: f32, y: f32) -> Vec<usize> {
+    let Some(start) = under_pointer(boxes, x, y) else { return Vec::new() };
+    let label = blocks(boxes);
+    std::iter::once(start).chain((0..boxes.len()).filter(|&j| j != start && label[j] == label[start])).collect()
 }
 
 /// The rectangle around some boxes.
@@ -111,26 +119,44 @@ mod tests {
             b(100.0, 196.0, 300.0, 216.0),
         ];
         assert_eq!(under(&boxes, 200.0, 135.0), [1, 0]);
-        let mut second = under(&boxes, 150.0, 180.0);
-        second.sort();
-        assert_eq!(second, [2, 3]);
+        assert_eq!(under(&boxes, 150.0, 180.0), [2, 3]);
     }
 
     #[test]
-    fn pieces_of_a_row_join_and_a_bigger_title_stays_apart() {
-        let boxes = [b(100.0, 40.0, 400.0, 80.0), b(100.0, 90.0, 300.0, 110.0), b(320.0, 90.0, 500.0, 110.0)];
-        let mut block = under(&boxes, 150.0, 100.0);
-        block.sort();
-        assert_eq!(block, [1, 2]);
+    fn close_pieces_of_a_row_join_and_a_bigger_title_stays_apart() {
+        let boxes = [b(100.0, 40.0, 400.0, 80.0), b(100.0, 90.0, 300.0, 110.0), b(310.0, 90.0, 500.0, 110.0), b(540.0, 90.0, 700.0, 110.0)];
+        // The third piece is 10 px away (within 0.7 of the 21 px height); the fourth is 40 px away.
+        assert_eq!(under(&boxes, 150.0, 100.0), [1, 2]);
     }
 
     #[test]
-    fn the_pointer_off_every_line_finds_no_block() {
+    fn ruby_joins_the_text_it_reads_but_a_small_caption_below_does_not() {
+        let boxes = [b(100.0, 100.0, 400.0, 140.0), b(120.0, 85.0, 200.0, 98.0), b(120.0, 145.0, 200.0, 158.0)];
+        assert_eq!(under(&boxes, 300.0, 120.0), [0, 1]);
+        // A column with ruby to its right.
+        let column = [b(100.0, 100.0, 140.0, 400.0), b(142.0, 120.0, 155.0, 200.0), b(85.0, 120.0, 98.0, 200.0)];
+        assert_eq!(under(&column, 120.0, 300.0), [0, 1]);
+    }
+
+    #[test]
+    fn the_pointer_off_every_box_finds_no_block() {
         let boxes = [b(100.0, 100.0, 600.0, 120.0)];
         assert!(under(&boxes, 300.0, 160.0).is_empty());
         assert!(under(&boxes, 900.0, 110.0).is_empty());
-        // Just past the end of the line, or between its words, is still on it.
-        assert_eq!(under(&boxes, 605.0, 110.0), [0]);
+        assert!(under(&boxes, 605.0, 110.0).is_empty(), "no slack past the end of a line");
+        // A fifth of the line's height above or below it is still on it.
+        assert_eq!(under(&boxes, 300.0, 123.0), [0]);
+    }
+
+    #[test]
+    fn a_column_is_measured_by_its_width_not_its_length() {
+        // The user's Google Images screenshot: two columns of a Chinese text 427 px long and a
+        // column of another picture 465 px to the left; the pointer was on the grey beside them.
+        let boxes = [b(1326.0, 284.0, 1361.0, 712.0), b(1375.0, 284.0, 1412.0, 710.0), b(773.0, 217.0, 860.0, 635.0)];
+        assert!(under(&boxes, 1137.0, 443.0).is_empty());
+        assert_eq!(under(&boxes, 1340.0, 443.0), [0, 1], "neighbouring columns join, the far picture does not");
+        assert_eq!(under(&boxes, 1320.0, 443.0), [0, 1], "within a fifth of the column's width");
+        assert!(under(&boxes, 1317.0, 443.0).is_empty());
     }
 
     #[test]
