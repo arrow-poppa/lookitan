@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use crate::ocr::{is_rtl_text, is_unspaced_script, Flow, OcrChar, OcrLine};
-use crate::segment::{Kind, Segment};
+use crate::segment::Segment;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -201,8 +201,8 @@ fn on_screen(flow: Flow, (x0, y0, x1, y1): (f32, f32, f32, f32)) -> (f32, f32, f
 
 /// A line's words as character ranges. As in Lookupper's recognizer, a word is a run of characters
 /// without a space, cut where unspaced-script text (CJK, Thai) starts or ends; Lookupper then trims
-/// what is not a letter or digit from its ends, so "(U.S.A.)," is "U.S.A". A run of unspaced-script
-/// characters is one range.
+/// what is not a letter or digit from its ends, so "(U.S.A.)," is "U.S.A", and keeps a run of
+/// punctuation alone ("？", "—") whole. A run of unspaced-script characters is one range.
 fn scanned_spans(line: &OcrLine) -> Vec<(usize, usize)> {
     let chars = &line.chars;
     let mut out = Vec::new();
@@ -218,11 +218,7 @@ fn scanned_spans(line: &OcrLine) -> Vec<(usize, usize)> {
         while i < chars.len() && !chars[i].ch.is_whitespace() && is_unspaced_script(chars[i].ch) == unspaced {
             i += 1;
         }
-        if unspaced {
-            out.push((start, i));
-        } else if let Some(span) = trimmed(chars, start, i) {
-            out.push(span);
-        }
+        out.push(if unspaced { (start, i) } else { word_span(chars, start, i) });
     }
     out
 }
@@ -236,6 +232,12 @@ fn trimmed(chars: &[OcrChar], mut start: usize, mut end: usize) -> Option<(usize
         end -= 1;
     }
     (start < end).then_some((start, end))
+}
+
+/// Characters `start..end` as Lookupper's `GetTrimmedWordAndRect` makes them a word: trimmed, or
+/// whole when nothing would be left ("？").
+fn word_span(chars: &[OcrChar], start: usize, end: usize) -> (usize, usize) {
+    trimmed(chars, start, end).unwrap_or((start, end))
 }
 
 /// Whether a character belongs to a word of a spaced script: anything but a space and the
@@ -272,10 +274,9 @@ fn parts(chars: &[OcrChar], start: usize, end: usize, ci: usize) -> Vec<String> 
     std::iter::once(first).chain(pieces).map(|(a, b)| chars[a..b].iter().map(|c| c.ch).collect()).collect()
 }
 
-/// Whether a paragraph is noise: a single Latin or Cyrillic letter (a stray mark read as "l" or
-/// "о"), as Lookupper leaves out. Lookupper also leaves out a paragraph with no letter, so a
-/// number alone could not be looked up; Lookitan keeps any paragraph with a digit, at the user's
-/// request.
+/// Whether a paragraph is noise, as Lookupper leaves out: no letter at all ("—", "•"), or a single
+/// Latin or Cyrillic letter (a stray mark read as "l" or "о"). Lookupper also leaves out a number
+/// alone; Lookitan keeps any paragraph with a digit, at the user's request.
 fn is_noise(lines: &[OcrLine], order: &[usize]) -> bool {
     let chars = || order.iter().flat_map(|&li| lines[li].chars.iter().map(|c| c.ch));
     if chars().any(|c| c.is_numeric()) {
@@ -283,6 +284,7 @@ fn is_noise(lines: &[OcrLine], order: &[usize]) -> bool {
     }
     let mut letters = chars().filter(|c| c.is_alphabetic());
     match (letters.next(), letters.next()) {
+        (None, _) => true,
         (Some(c), None) => matches!(c as u32, 0x41..=0x5A | 0x61..=0x7A | 0xC0..=0x24F | 0x400..=0x52F),
         _ => false,
     }
@@ -315,7 +317,7 @@ fn analyzed_spans(lines: &[OcrLine], seg: &dyn Segment) -> Vec<Option<Vec<(usize
             if out[p.line].is_some() || !analyzed_line(&lines[p.line], seg) {
                 continue;
             }
-            let spans = words.iter().filter(|w| w.kind != Kind::Punct).filter_map(|w| piece_span(p, w.start, w.end)).collect();
+            let spans = words.iter().filter_map(|w| piece_span(p, w.start, w.end)).collect();
             out[p.line] = Some(spans);
         }
     }
@@ -343,7 +345,7 @@ fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) ->
         return None;
     }
     let at = p.at + ci - p.first;
-    let w = seg.words(&text.iter().collect::<String>()).into_iter().find(|w| w.start <= at && at < w.end && w.kind != Kind::Punct)?;
+    let w = seg.words(&text.iter().collect::<String>()).into_iter().find(|w| w.start <= at && at < w.end)?;
     let (start, end) = piece_span(p, w.start, w.end)?;
     let word: String = text[w.start..w.end].iter().collect();
     let mut candidates: Vec<String> = Vec::new();
@@ -406,19 +408,8 @@ fn pick_upright(lines: &[OcrLine], line_idx: usize, px: f32, py: f32, seg: Optio
                 .unwrap_or(0)
         });
     let mut ci = ci;
-    // Off any word: a space, or punctuation with no letter or digit beside it ("—", "。").
-    let off = |i: usize| {
-        let c = chars[i].ch;
-        if c.is_whitespace() {
-            return true;
-        }
-        if is_unspaced_script(c) || c.is_alphanumeric() {
-            return false;
-        }
-        let from = (0..i).rev().take_while(|&k| in_word(chars[k].ch)).last().unwrap_or(i);
-        let to = (i + 1..chars.len()).take_while(|&k| in_word(chars[k].ch)).last().map_or(i + 1, |k| k + 1);
-        !chars[from..to].iter().any(|c| c.ch.is_alphanumeric())
-    };
+    // Off any word: a space. Punctuation alone ("？", "—") is a word, as in Lookupper.
+    let off = |i: usize| chars[i].ch.is_whitespace();
     // Pointer off a word: prefer the word just before it, then the one after.
     if off(ci) {
         if ci > 0 && !off(ci - 1) {
@@ -454,7 +445,7 @@ fn pick_upright(lines: &[OcrLine], line_idx: usize, px: f32, py: f32, seg: Optio
         while end < chars.len() && in_word(chars[end].ch) {
             end += 1;
         }
-        let (start, end) = trimmed(chars, start, end)?;
+        let (start, end) = word_span(chars, start, end);
         let word: String = chars[start..end].iter().map(|c| c.ch).collect();
         let mut candidates = crate::dict::candidate_forms(&word);
         // "well-known" -> also "known" (the part under the pointer) and "well", if the dictionary
@@ -850,8 +841,10 @@ mod tests {
         assert!(at("Next") < at("end"), "the part under the pointer first: {:?}", p.candidates);
         let texts: Vec<String> = super::word_boxes(&lines, None).into_iter().map(|b| b.text).collect();
         assert_eq!(texts, ["in", "the", "U.S.A", "end.Next", "one"]);
-        // Punctuation standing alone picks the word just before it.
-        assert_eq!(pick(&[line("今日は雨。", 100.0, 100.0)], 145.0, 110.0, None).unwrap().word, "雨");
+        // Punctuation standing alone is a word of its own, as in Lookupper.
+        assert_eq!(pick(&[line("今日は雨。", 100.0, 100.0)], 145.0, 110.0, None).unwrap().word, "。");
+        let texts: Vec<String> = super::word_boxes(&[line("你好吗？ well — yes", 100.0, 100.0)], None).into_iter().map(|b| b.text).collect();
+        assert_eq!(texts, ["你好吗", "？", "well", "—", "yes"]);
     }
 
     #[test]
@@ -865,6 +858,9 @@ mod tests {
         let lines = [line("a", 100.0, 100.0), line("cat sat", 100.0, 125.0)];
         assert_eq!(pick(&lines, 105.0, 110.0, None).unwrap().word, "a", "a letter in a paragraph of text");
         assert_eq!(pick(&[line("日", 100.0, 100.0)], 105.0, 110.0, None).unwrap().word, "日");
+        // A paragraph with no letter and no digit is noise, as in Lookupper.
+        assert!(pick(&[line("— •", 100.0, 100.0)], 105.0, 110.0, None).is_none());
+        assert!(super::word_boxes(&[line("？", 100.0, 100.0)], None).is_empty());
     }
 
     /// A right-to-left line in reading order, its first character at the right end `x1`.
@@ -909,7 +905,7 @@ mod tests {
         let seg = japanese();
         let boxes = super::word_boxes(&lines, Some(&seg));
         let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
-        assert_eq!(texts, ["日本語", "を", "勉強しています"], "not the whole column as one");
+        assert_eq!(texts, ["日本語", "を", "勉強しています", "。"], "not the whole column as one");
         assert_eq!((boxes[0].x0, boxes[0].y0, boxes[0].x1, boxes[0].y1), (200.0, 100.0, 220.0, 160.0));
         assert_eq!((boxes[1].hit.1, boxes[1].hit.3), (160.0, 180.0), "the hit areas follow the column down");
         assert_eq!((boxes[1].hit.0, boxes[1].hit.2), (200.0, 220.0));
@@ -1027,11 +1023,11 @@ mod tests {
         let seg = japanese();
         let boxes = super::word_boxes(&lines, Some(&seg));
         let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
-        assert_eq!(texts, ["日本語", "を", "勉", "強しています"], "a box per word, a piece on each line");
+        assert_eq!(texts, ["日本語", "を", "勉", "強しています", "。"], "a box per word, a piece on each line");
         let p = pick(&lines, 115.0, 135.0, Some(&seg)).unwrap();
         assert_eq!(p.word, "勉強しています");
         assert_eq!((p.x0, p.x1), (100.0, 160.0), "the piece on the pointer's line");
-        assert_eq!(super::word_boxes(&lines, None).len(), 2, "without an analyzer, a box per run");
+        assert_eq!(super::word_boxes(&lines, None).len(), 3, "without an analyzer, a box per run, and the 。");
     }
 
     #[test]
