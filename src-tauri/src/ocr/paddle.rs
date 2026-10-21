@@ -2,8 +2,8 @@
 //
 // Engine choice mirrors Lookupper: try the `small` detector on the GPU (DirectML on Windows, WebGPU
 // on Linux) first and fall back to the `tiny` detector on the CPU with full graph optimization.
-// Parameters (normalization, thresholds, unclip ratio) come from the official PaddlePaddle
-// `inference.yml` of each model.
+// Normalization comes from the official PaddlePaddle `inference.yml` of each model; the detector's
+// border, binarization, unclip ratio and image size are Lookupper's.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -242,8 +242,14 @@ mod tests {
     }
 }
 
-const DET_THRESH: f32 = 0.2;
-const UNCLIP_RATIO: f32 = 1.4;
+/// Binarization of the probability map, as Lookupper (76 / 255) and PaddleOCR's default.
+const DET_THRESH: f32 = 0.3;
+const UNCLIP_RATIO: f32 = 1.35;
+/// White border around the detector's image, in detector pixels, as Lookupper's WhitePadding:
+/// text touching the edge of a capture is still found whole.
+const DET_PADDING: u32 = 20;
+/// Lookupper moves each grown box down by this fraction of its area / perimeter.
+const DET_SHIFT_DOWN: f32 = 0.15;
 /// Longest side of the image the detector sees, as in Lookupper: the GPU detector gets more
 /// pixels, so small text (dense CJK above all) is not shrunk as much.
 const DET_MAX_SIDE_GPU: f32 = 1920.0;
@@ -744,35 +750,41 @@ impl PaddleOcr {
             return Ok(Vec::new());
         }
         let scale = (self.det_max_side() / w.max(h) as f32).min(1.0);
+        let pad = DET_PADDING;
+        // The padded size is a multiple of 32, so the bands need no further resize.
         let round32 = |v: f32| -> u32 { (((v / 32.0).round() as u32) * 32).max(32) };
-        let rw = round32(w as f32 * scale);
-        let rh = round32(h as f32 * scale);
-        let resized = image::imageops::resize(img, rw, rh, FilterType::Triangle);
+        let pw = round32(w as f32 * scale + (2 * pad) as f32);
+        let ph = round32(h as f32 * scale + (2 * pad) as f32);
+        let (rw, rh) = (pw - 2 * pad, ph - 2 * pad);
+        let mut resized = RgbaImage::from_pixel(pw, ph, image::Rgba([255, 255, 255, 255]));
+        image::imageops::replace(&mut resized, &image::imageops::resize(img, rw, rh, FilterType::Triangle), pad as i64, pad as i64);
+        let (rw, rh, pad) = (rw as f32, rh as f32, pad as f32);
         let mut boxes = Vec::new();
         let mut y = 0;
         loop {
-            let height = DET_BAND_HEIGHT.min(rh - y);
-            let band = image::imageops::crop_imm(&resized, 0, y, rw, height).to_image();
+            let height = DET_BAND_HEIGHT.min(ph - y);
+            let band = image::imageops::crop_imm(&resized, 0, y, pw, height).to_image();
             let mut found = self.detect_band(&band)?;
             for b in &mut found {
                 b.y0 += y as f32;
                 b.y1 += y as f32;
             }
             merge_band_boxes(&mut boxes, found);
-            if y + height == rh {
+            if y + height == ph {
                 break;
             }
             y += DET_BAND_HEIGHT - DET_BAND_OVERLAP;
         }
         // The rest of OCR and the overlay continue to use captured-image coordinates.
-        let sx = w as f32 / rw as f32;
-        let sy = h as f32 / rh as f32;
+        let sx = w as f32 / rw;
+        let sy = h as f32 / rh;
         for b in &mut boxes {
-            b.x0 *= sx;
-            b.x1 *= sx;
-            b.y0 *= sy;
-            b.y1 *= sy;
+            b.x0 = (b.x0 - pad).clamp(0.0, rw) * sx;
+            b.x1 = (b.x1 - pad).clamp(0.0, rw) * sx;
+            b.y0 = (b.y0 - pad).clamp(0.0, rh) * sy;
+            b.y1 = (b.y1 - pad).clamp(0.0, rh) * sy;
         }
+        boxes.retain(|b| b.x1 - b.x0 >= 1.0 && b.y1 - b.y0 >= 1.0);
         Ok(boxes)
     }
 
@@ -782,7 +794,7 @@ impl PaddleOcr {
             return Ok(Vec::new());
         }
         let longest = w.max(h) as f32;
-        let max_side = self.det_max_side();
+        let max_side = self.det_max_side() + (2 * DET_PADDING) as f32;
         let scale = if longest > max_side {
             max_side / longest
         } else {
@@ -864,11 +876,13 @@ impl PaddleOcr {
                 continue;
             }
             // DB predicts shrunk text kernels; grow them back by area * ratio / perimeter.
-            let d = bw * bh * UNCLIP_RATIO / (2.0 * (bw + bh));
+            let area_per_perimeter = bw * bh / (2.0 * (bw + bh));
+            let d = area_per_perimeter * UNCLIP_RATIO;
+            let down = area_per_perimeter * DET_SHIFT_DOWN;
             let x0 = ((minx as f32 - d) * sx).max(0.0);
-            let y0 = ((miny as f32 - d) * sy).max(0.0);
+            let y0 = ((miny as f32 - d + down) * sy).max(0.0);
             let x1 = (((maxx + 1) as f32 + d) * sx).min(w as f32);
-            let y1 = (((maxy + 1) as f32 + d) * sy).min(h as f32);
+            let y1 = (((maxy + 1) as f32 + d + down) * sy).min(h as f32);
             if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
                 boxes.push(TextBox { x0, y0, x1, y1 });
             }
