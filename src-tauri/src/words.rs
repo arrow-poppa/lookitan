@@ -213,20 +213,28 @@ fn parts(chars: &[OcrChar], start: usize, end: usize, ci: usize) -> Vec<String> 
     std::iter::once(first).chain(pieces).map(|(a, b)| chars[a..b].iter().map(|c| c.ch).collect()).collect()
 }
 
-/// Whether a paragraph is noise that Lookupper leaves out: no letter at all, or a single Latin or
-/// Cyrillic one (a stray mark read as "l" or "о").
+/// Whether a paragraph is noise: a single Latin or Cyrillic letter (a stray mark read as "l" or
+/// "о"), as Lookupper leaves out. Lookupper also leaves out a paragraph with no letter, so a
+/// number alone could not be looked up; Lookitan keeps any paragraph with a digit, at the user's
+/// request.
 fn is_noise(lines: &[OcrLine], order: &[usize]) -> bool {
-    let mut letters = order.iter().flat_map(|&li| lines[li].chars.iter().map(|c| c.ch)).filter(|c| c.is_alphabetic());
+    let chars = || order.iter().flat_map(|&li| lines[li].chars.iter().map(|c| c.ch));
+    if chars().any(|c| c.is_numeric()) {
+        return false;
+    }
+    let mut letters = chars().filter(|c| c.is_alphabetic());
     match (letters.next(), letters.next()) {
-        (None, _) => true,
         (Some(c), None) => matches!(c as u32, 0x41..=0x5A | 0x61..=0x7A | 0xC0..=0x24F | 0x400..=0x52F),
         _ => false,
     }
 }
 
-/// Whether line `idx` is in a noise paragraph. A line with two letters never is.
+/// Whether line `idx` is in a noise paragraph. A line with two letters or a digit never is.
 fn noise_line(lines: &[OcrLine], idx: usize) -> bool {
-    lines[idx].chars.iter().filter(|c| c.ch.is_alphabetic()).nth(1).is_none() && is_noise(lines, &paragraph(lines, idx))
+    let line = &lines[idx].chars;
+    line.iter().filter(|c| c.ch.is_alphabetic()).nth(1).is_none()
+        && !line.iter().any(|c| c.ch.is_numeric())
+        && is_noise(lines, &paragraph(lines, idx))
 }
 
 /// Whether the analyzer reads this line.
@@ -769,10 +777,13 @@ mod tests {
     }
 
     #[test]
-    fn a_paragraph_without_two_letters_is_noise() {
+    fn a_paragraph_of_a_single_latin_or_cyrillic_letter_is_noise() {
         assert!(pick(&[line("a", 100.0, 100.0)], 105.0, 110.0, None).is_none());
-        assert!(pick(&[line("2024", 100.0, 100.0)], 115.0, 110.0, None).is_none());
         assert!(super::word_boxes(&[line("l", 100.0, 100.0)], None).is_empty());
+        // A number alone still looks up, unlike in Lookupper.
+        assert_eq!(pick(&[line("2024", 100.0, 100.0)], 115.0, 110.0, None).unwrap().word, "2024");
+        assert_eq!(pick(&[line("A1", 100.0, 100.0)], 105.0, 110.0, None).unwrap().word, "A1");
+        assert_eq!(super::word_boxes(&[line("١٢٣", 100.0, 100.0)], None).len(), 1);
         let lines = [line("a", 100.0, 100.0), line("cat sat", 100.0, 125.0)];
         assert_eq!(pick(&lines, 105.0, 110.0, None).unwrap().word, "a", "a letter in a paragraph of text");
         assert_eq!(pick(&[line("日", 100.0, 100.0)], 105.0, 110.0, None).unwrap().word, "日");

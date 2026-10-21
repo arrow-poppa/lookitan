@@ -116,7 +116,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 - **Sentence:** like Lookupper, the context is the word's paragraph, and `Pick.sentence` is the sentence cut from it.
 - **Words of other scripts and right-to-left text (words.rs, ocr/mod.rs `reverse_rtl`), as in Lookupper (REA on 2026-10-21):**
   - A word is a run without a space, cut where unspaced-script text starts or ends, trimmed at its ends of what is not a letter or digit ("(U.S.A.)," → "U.S.A"). Punctuation inside stays ("end.Next"); its pieces are tried too, the one under the pointer first.
-  - A paragraph with no letter, or a single Latin or Cyrillic one, is noise: no word boxes, no pick (Lookupper's `IsNoiseParagraph`).
+  - A paragraph of a single Latin or Cyrillic letter is noise: no word boxes, no pick (Lookupper's `IsNoiseParagraph`). Lookupper also drops a paragraph with no letter; the user chose to keep any paragraph with a digit, so a number alone can be looked up.
   - A line-end hyphen (-, U+2010, U+2011) after a letter joins the next line's word when that starts lowercase, or uppercase after a word with no lowercase ("EXAM-" "PLE"). The test is `char.IsLower` in Lookupper's `Any` call.
   - Right-to-left: a line with more RTL characters (U+0590–08FF, FB1D–FDFF, FE70–FEFF) than other letters is reversed into reading order. Each letter keeps its marks. Unlike Lookupper, which reverses all of it, runs of digits and LTR words keep their order, as in PaddleOCR's `pred_reverse`, and brackets are mirrored.
     - PaddleOCR (`paddle.rs` `decode_line`) reads RTL text as drawn. Lens gives words in reading order, so `lens.rs` lays them out as drawn for the ink snapping, then reverses once.
@@ -250,6 +250,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request, a paragraph with a digit is never noise, so a number alone (a price, a date, "٢٠٢٤") can be looked up. Lookupper drops it. Only a single Latin or Cyrillic letter is still noise.
 - 2026-10-21 (Claude, `main`, then `tests`): at the user's request `main` was fast-forwarded to `tests` (670c870). Then, on `tests`, words of other scripts are cut as in Lookupper. Arabic and Hebrew lines from PaddleOCR and Lens are put in reading order; before, PaddleOCR's Arabic came out backwards and found nothing. The line-end hyphen follows Lookupper's rule, and paragraphs with no letter or a single Latin or Cyrillic one are noise.
 - 2026-10-21 (Claude, `tests`): at the user's request, Japanese, Chinese and Korean words are found as Lookupper does (REA: its `OcrWordResegmenter` with Sudachi, jieba and Kiwi). `segment/` uses lindera 6.2 with SudachiDict, jieba and ko-dic, downloaded on first use. The word under the pointer is the whole analyzed word, starting before the pointer if need be, looked up by its dictionary form (食べさせられなかった → 食べる, 친구들과 → 친구). The overlay outlines each word.
 - 2026-10-21 (Claude, `main`/`edge-tts`): at the user's request `main` and `edge-tts` were fast-forwarded to `tests`, and a backup copy of `tests` was pushed to the private repo `arrow-poppa/lookitan-old` as branch `backup/tests-2026-10-21` (its own `main` left alone). Right after, the user had `without-fade` fast-forwarded to `tests` too.
