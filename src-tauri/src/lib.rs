@@ -14,6 +14,7 @@ mod mdict;
 mod ocr;
 mod platform;
 mod protocol;
+mod segment;
 mod sentence;
 mod settings;
 mod words;
@@ -184,6 +185,8 @@ pub struct EngineStatus {
     pub rec_model: Option<String>,
     pub rec_on_gpu: bool,
     pub error: Option<String>,
+    /// The word analyzer for the recognition language (segment.rs), for Japanese, Chinese and Korean.
+    pub segmenter: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -384,14 +387,26 @@ fn lookup_words(state: &AppState, candidates: &[String]) -> Vec<EntryRef> {
     dict::lookup(&dicts, &forms)
 }
 
-fn manual_candidates(text: &str) -> Vec<String> {
+/// Forms to look up for typed text: the dictionary forms of its first word when the language has
+/// an analyzer (食べた → 食べる), then, for an unspaced script, its prefixes, longest first.
+fn manual_candidates(text: &str, analyzer: Option<&dyn segment::Segment>) -> Vec<String> {
     let text = text.trim();
-    if text.chars().next().map(ocr::is_unspaced_script).unwrap_or(false) {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(seg) = analyzer.filter(|s| text.chars().next().is_some_and(|c| s.handles(c))) {
+        if let Some(w) = seg.words(text).into_iter().find(|w| w.kind != segment::Kind::Punct).filter(|w| w.start == 0) {
+            out.extend(w.lemmas);
+        }
+    }
+    let rest = if text.chars().next().map(ocr::is_unspaced_script).unwrap_or(false) {
         let chars: Vec<char> = text.chars().take(16).collect();
         (1..=chars.len()).rev().map(|n| chars[..n].iter().collect()).collect()
     } else {
         dict::candidate_forms(text)
+    };
+    for form in rest {
+        if !out.contains(&form) { out.push(form); }
     }
+    out
 }
 
 pub fn scan(app: &AppHandle) {
@@ -491,7 +506,8 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     let started = Instant::now();
     let reading = if whole_screen { Reading::Screen } else if auto { Reading::Block } else { Reading::Region };
     let mut pass = ocr_pass(&state, &settings, settings.engine_for(whole_screen), &capture.image, px, py, reading)?;
-    let mut pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
+    let analyzer = segment::current(&settings.ocr_language);
+    let mut pick = words::pick(&pass.lines, px, py, analyzer.as_deref().map(|a| a as &dyn segment::Segment)).filter(|p| p.is_under(px, py));
     // Like Lookupper: a shortcut pressed away from text reads the whole screen and shows the
     // clickable words without a pop-up; clicking one of them looks it up. Pressed on a block of
     // text but off its words, the automatic capture shows that block's words instead.
@@ -509,7 +525,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         // transparent overlay, so the screen cannot move away from the frame the OCR reads.
         show_overlay_window(app, monitor, true);
         pass = ocr_pass(&state, &settings, settings.engine_for(true), &capture.image, px, py, Reading::Screen)?;
-        pick = words::pick(&pass.lines, px, py).filter(|p| p.is_under(px, py));
+        pick = words::pick(&pass.lines, px, py, analyzer.as_deref().map(|a| a as &dyn segment::Segment)).filter(|p| p.is_under(px, py));
         // A click or Esc on the transparent overlay cancelled this lookup while it was read.
         if state.scan_seq.load(Ordering::SeqCst) != scan {
             if let Some(pid) = frozen_pid { platform::resume_process(pid); }
@@ -732,12 +748,13 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
     let Some(monitor) = state.recognition.lock().as_ref().filter(|r| r.id == id).map(|r| r.monitor) else { return };
     // Query the window outside the recognition lock: its dispatcher may need the event thread.
     let (origin, scale, (viewport_width, viewport_height)) = overlay_viewport(app, monitor);
+    let analyzer = segment::current(&state.settings.read().ocr_language);
     let payload = {
         let mut guard = state.recognition.lock();
         let Some(r) = guard.as_mut().filter(|r| r.id == id) else { return };
         r.complete = complete;
         let css_rect = |x0, y0, x1, y1| r.monitor.css_rect((x0, y0, x1, y1), origin, scale);
-        let words = words::word_boxes(&r.lines)
+        let words = words::word_boxes(&r.lines, analyzer.as_deref().map(|a| a as &dyn segment::Segment))
             .into_iter()
             .map(|w| {
                 let (x0, y0) = r.capture.to_desktop(w.x0, w.y0);
@@ -1179,6 +1196,7 @@ fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: S
     if previous.ocr_language != next.ocr_language {
         let language = next.ocr_language.clone();
         std::thread::spawn(move || dictionaries::hunspell::warm(&language));
+        warm_segmenter(app, next.ocr_language.clone());
     }
     if previous.autostart != next.autostart {
         apply_autostart(app, next.autostart);
@@ -1189,6 +1207,13 @@ fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: S
     }
     let _ = app.emit("settings-changed", ());
     Ok(())
+}
+
+/// Downloads (once) and loads the word analyzer for a recognition language, in the background;
+/// Settings › OCR follows its progress.
+fn warm_segmenter(app: &AppHandle, language: String) {
+    let app = app.clone();
+    std::thread::spawn(move || segment::warm(&language, &|| { let _ = app.emit("engine-status", ()); }));
 }
 
 #[tauri::command]
@@ -1206,6 +1231,7 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
         rec_model: paddle.as_ref().map(|p| p.rec_model.clone()),
         rec_on_gpu: paddle.as_ref().map(|p| p.rec_on_gpu()).unwrap_or(false),
         error: state.engine_error.read().clone(),
+        segmenter: segment::status(&state.settings.read().ocr_language),
     }
 }
 
@@ -1325,7 +1351,8 @@ async fn update_dictionary(app: AppHandle, id: String, enabled: Option<bool>, mo
 
 #[tauri::command]
 fn lookup_text(state: tauri::State<'_, AppState>, text: String, sentence: Option<String>, context: Option<String>) -> LookupPayload {
-    let candidates = manual_candidates(&text);
+    let analyzer = segment::current(&state.settings.read().ocr_language);
+    let candidates = manual_candidates(&text, analyzer.as_deref().map(|a| a as &dyn segment::Segment));
     let entries = lookup_words(&state, &candidates);
     LookupPayload {
         word: text.trim().to_string(),
@@ -1349,7 +1376,8 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
     let (origin, scale, _) = overlay_viewport(&app, monitor);
     let (dx, dy) = monitor.css_to_desktop(x, y, origin, scale);
     let (px, py) = capture.to_image(dx, dy);
-    let Some(pick) = words::pick(&lines, px, py) else { return };
+    let analyzer = segment::current(&state.settings.read().ocr_language);
+    let Some(pick) = words::pick(&lines, px, py, analyzer.as_deref().map(|a| a as &dyn segment::Segment)) else { return };
     if let Some(r) = state.recognition.lock().as_mut() {
         // The "sentence" screenshot frames the lines of the picked sentence.
         r.focus_lines = pick.sentence_lines.iter().map(|&i| lines[i].clone()).collect();
@@ -1597,6 +1625,7 @@ pub fn run() {
             let dictionaries_dir = app.path().app_local_data_dir()?.join("dictionaries");
             let resource_dir = app.path().resource_dir()?;
             dictionaries::hunspell::set_root(resource_dir.join("hunspell"));
+            segment::set_root(app.path().app_local_data_dir()?.join("segmenters"));
             let first_run = !settings::settings_path(&config_dir).exists();
             let settings = settings::load(&config_dir);
             let hotkey = settings.hotkey.clone();
@@ -1660,6 +1689,7 @@ pub fn run() {
                     let _ = handle.emit("dictionaries-changed", ());
                     let language = state.settings.read().ocr_language.clone();
                     dictionaries::hunspell::warm(&language);
+                    warm_segmenter(&handle, language);
                 });
             }
             warm_engine_in_background(&handle);

@@ -15,6 +15,8 @@ or adapts the following work.
 | [MaruPop](https://github.com/marunine/marupop) | KWin cursor relay approach; `src-tauri/resources/kwin/lookitan-cursor.js` is adapted from its `marupopcursor` script | LGPL-3.0-only (`src-tauri/resources/kwin/LICENSE-LGPL-3.0.txt`) |
 | [YomiNinja](https://github.com/matt-m-o/YomiNinja) | Request and response handling of the optional Google Lens engine (`src-tauri/src/ocr/lens.rs`) | GPL-3.0 |
 | [Chromium](https://chromium.googlesource.com/chromium/src/+/main/third_party/lens_server_proto/) | Field numbers of the Lens Overlay protocol messages (`src-tauri/src/ocr/lens_proto.rs`) | BSD-3-Clause |
+| [lindera](https://github.com/lindera/lindera) 6.2 | Word analysis of Japanese, Chinese and Korean text (`src-tauri/src/segment/`) | MIT |
+| [SudachiDict](https://github.com/WorksApplications/SudachiDict) (core), [jieba](https://github.com/fxsjy/jieba) with [CC-CEDICT](https://cc-cedict.org/), [mecab-ko-dic](https://bitbucket.org/eunjeon/mecab-ko-dic) | lindera's prebuilt dictionaries, downloaded unmodified from its GitHub release on first use, each with its NOTICE.txt | SudachiDict and mecab-ko-dic: Apache-2.0; jieba: MIT; CC-CEDICT: CC BY-SA 4.0 |
 | [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv6 and PP-OCRv5 models | OCR models, downloaded at build time from huggingface.co/PaddlePaddle | Apache-2.0 |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.24.4 and DirectML 1.15.4 | Inference runtime, downloaded at build time | MIT |
 | [Tauri](https://tauri.app) and its plugins | Application framework | MIT or Apache-2.0 |

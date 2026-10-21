@@ -125,7 +125,8 @@ function engineStatusText() {
     if (status.runtimeError) { return `ONNX Runtime: ${status.runtimeError}`; }
     if (status.error) { return status.error; }
     if (!status.detModel) { return 'Carregando o motor…'; }
-    return `Detecção ${status.detModel} na ${status.detOnGpu ? (status.session === 'windows' ? 'GPU (DirectML)' : 'GPU (WebGPU)') : 'CPU'} · reconhecimento ${status.recModel} na ${status.recOnGpu ? 'GPU' : 'CPU'}`;
+    const engine = `Detecção ${status.detModel} na ${status.detOnGpu ? (status.session === 'windows' ? 'GPU (DirectML)' : 'GPU (WebGPU)') : 'CPU'} · reconhecimento ${status.recModel} na ${status.recOnGpu ? 'GPU' : 'CPU'}`;
+    return status.segmenter ? `${engine} · ${status.segmenter}` : engine;
 }
 
 function captureRegionRows() {

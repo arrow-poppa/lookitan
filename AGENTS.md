@@ -59,6 +59,7 @@ src-tauri/src/
   ocr/paddle.rs  PP-OCRv6 det+rec through ONNX Runtime (DirectML on Windows, WebGPU on Linux, CPU fallback)
   ocr/lens.rs    optional Google Lens cloud OCR (protobuf to lensfrontend-pa.googleapis.com/v1/crupload)
   ocr/cache.rs   per-frame cache of boxes and recognized lines
+  segment/       words of Japanese, Chinese and Korean text (lindera; its dictionaries are downloaded on first use); words.rs picks with it
   platform/      cursor, capture and foreground app; kwin.rs is the KDE Wayland relay and ScreenShot2
   protocol.rs    `lkt:` URI scheme (/e entry HTML, /d dictionary resource, /c capture frame, /m saved media)
   cards.rs       saved words (words.json plus media/)
@@ -113,6 +114,30 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Where WinUI would not open the tip at all, Lookitan still shows it, centred below or above and kept on the monitor.
 - **Freeze:** per app, as in Lookupper: each profile in Configurações › Jogos e programas has `freeze` = `none` ("Sem congelar", the default: the screen stays live and only the words are highlighted), `frame` ("Congelar": the captured frame covers the screen; on whole-screen lookups it is blurred with sharp word cut-outs) or `process` ("Pausar o programa"). There is no global freeze option; the short-lived `freezeOnLookup` key is ignored, and `migrate()` turns saved `default` profiles into `none`.
 - **Sentence:** like Lookupper, the context is the word's paragraph, and `Pick.sentence` is the sentence cut from it.
+- **Words of Japanese, Chinese and Korean (`segment/`, used by words.rs `pick`, `word_boxes` and `manual_candidates`):** as in Lookupper, the word under the pointer is the analyzed word holding that character, not the longest match from the pointer.
+  - Lookupper (REA on 2026-10-21; addresses are in the exe with SHA-256 16af03f1…):
+    - `OcrWordResegmenter.ResegmentParagraph` (`0x14015f940`) joins the paragraph's OCR words into one text, with no space between CJK characters, even across lines. It analyzes that text and rebuilds the word boxes from the words, a piece on each line for a word broken across lines.
+    - The analyzers, downloaded per language into LocalState `models/`: Sudachi split mode C with SudachiDict core (`system.dic`); jieba with CC-CEDICT words added (`dict.txt`, `hmm.txt`, plus `pinyin.txt`); Kiwi (`kiwi.dll`, LGPL-2.1).
+    - The Japanese chunker is `0x1401a37a0`, with its attach rule at `0x1401a3d40` and its lemma list at `0x1401a4720`. A content morpheme takes:
+      - auxiliaries after a predicate;
+      - 非自立 adjectives (ない);
+      - て/で/ば/たり/だり, and the 非自立 verb after them or after a 連用形 verb;
+      - する after a サ変 noun;
+      - suffixes (名詞的 only after a noun);
+      - そう/よう after a predicate.
+    - Also in Japanese, a prefix takes the next morpheme, and a number its 助数詞 counter. Particles, auxiliaries alone and symbols are their own words. The lemmas are, in order: the する compound, the prefix + head, the head's dictionary form, then the surface.
+    - The Korean chunker is `0x1401a1540`, with its attach rule at `0x1401a17e0` and lemmas at `0x1401a1b00`. Particles and XSN go on a nominal, endings on a verbal, XSV/XSA/VCP on a nominal, a bound noun on a number, and a VX after an EC, never across a space. The lemma is the stem + 다, the noun before 이다/아니다, or the noun (also without 들).
+  - Lookitan:
+    - lindera 6.2.0 (`=6.2.0` in Cargo.toml) reads its release's prebuilt dictionaries: `lindera-sudachidict` (126 MB zip, 590 MB unpacked, memory-mapped), `lindera-jieba` (14 MB) and `lindera-ko-dic` (20 MB; the Sejong tags Kiwi uses).
+    - They are pinned by size and SHA-256 in `PACKS`, downloaded on first use into `<local data>/segmenters/`, and unpacked through `archive::unpack`. Only the recognition language's dictionary is loaded.
+    - `warm_segmenter` runs at start-up and on a language change. Its progress shows in Configurações › OCR › Estado do motor (`EngineStatus.segmenter`). Until it is ready, and for other languages, the old longest-match path is used.
+    - The rules in japanese.rs and korean.rs are Lookitan's own, written to Lookupper's behavior.
+    - Candidates: the lemmas, the word as written, then (for unspaced scripts) its prefixes, longest first. The Yomitan rules in morphology.rs still expand each of them.
+    - Differences from Sudachi:
+      - lindera's SudachiDict has a normalized form but no dictionary form, so only conjugating heads take a lemma. For the others it would spell この as 此の.
+      - It splits digits, which are joined again.
+      - It gives counters such as 人 as 接尾辞-名詞的-一般, so 12 and 人 stay apart, as they would in Lookupper.
+    - CI runs `segment::tests::real_dictionaries` (`--ignored`) with the real dictionaries cached.
   - `words::paragraph` grows from the pointer line. It adds lines right above or below in the same column (gap ≤ 1 line height, height ratio ≤ 1.6) and pieces of the same row.
   - `sentence::split` applies Lookupper's rules (see the module header). Text longer than 400 characters without sentence marks falls back to the pointer row ±1.
   - `Pick.sentence_lines` frames the "sentence" screenshot (`focus_lines`).
@@ -217,6 +242,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request, Japanese, Chinese and Korean words are found as Lookupper does (REA: its `OcrWordResegmenter` with Sudachi, jieba and Kiwi). `segment/` uses lindera 6.2 with SudachiDict, jieba and ko-dic, downloaded on first use. The word under the pointer is the whole analyzed word, starting before the pointer if need be, looked up by its dictionary form (食べさせられなかった → 食べる, 친구들과 → 친구). The overlay outlines each word.
 - 2026-10-21 (Claude, `main`/`edge-tts`): at the user's request `main` and `edge-tts` were fast-forwarded to `tests`, and a backup copy of `tests` was pushed to the private repo `arrow-poppa/lookitan-old` as branch `backup/tests-2026-10-21` (its own `main` left alone). Right after, the user had `without-fade` fast-forwarded to `tests` too.
 - 2026-10-21 (Claude, `tests`): Google Lens read badly because Lookitan shrank every capture to 1000 px and 1 MP (YomiNinja's limits): a whole 1920 × 1080 screen was halved. On a synthetic 5-language test screen Lens read 5/5 lines at full size and 2/5 (12 px text) or 3/5 (15 px) shrunk. Now only captures over 3 MP shrink, with Lanczos, as owocr, and the request sends `surface` SURFACE_CHROMIUM (4) as Chromium does.
 - 2026-10-21 (Claude, `tests`): at the user's request the built-in Lens key left the source: CI passes the `LOOKITAN_LENS_API_KEY` secret to the build, and `option_env!` reads it.

@@ -3,12 +3,15 @@
 use serde::Serialize;
 
 use crate::ocr::{is_unspaced_script, OcrLine};
+use crate::segment::{Kind, Segment};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Pick {
     pub word: String,
-    /// Forms to look up, best first. For unspaced scripts these are prefixes starting at the pointer.
+    /// Forms to look up, best first. For a word an analyzer found (segment.rs), its dictionary
+    /// forms, then the word as written; otherwise, for unspaced scripts, prefixes starting at the
+    /// pointer.
     pub candidates: Vec<String>,
     /// The sentence holding the word, cut from its paragraph (context translation and Anki's
     /// {sentence}).
@@ -82,36 +85,22 @@ fn pad_x(line: &OcrLine) -> f32 {
     line.ink_y.map_or(0.0, |(a, b)| (b - a) * INK_PAD_X)
 }
 
-/// Every word of every line as a rectangle. Runs of unspaced-script characters (CJK, Thai) form
-/// one rectangle; a click inside it still picks the longest dictionary match from the click point.
-pub fn word_boxes(lines: &[OcrLine]) -> Vec<WordBox> {
+/// Every word of every line as a rectangle. With an analyzer for the language (segment.rs), its
+/// words: each word of Japanese or Chinese text, a Korean word with its particles. Otherwise runs
+/// of unspaced-script characters (CJK, Thai) form one rectangle, and a click inside it still picks
+/// the longest dictionary match from the click point.
+pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> {
+    let analyzed = seg.map(|s| analyzed_spans(lines, s)).unwrap_or_default();
     let mut out: Vec<WordBox> = Vec::new();
-    for line in lines {
+    for (li, line) in lines.iter().enumerate() {
         let chars = &line.chars;
         let first = out.len();
         let pad = pad_x(line);
-        let mut i = 0;
-        while i < chars.len() {
-            let c = chars[i].ch;
-            let unspaced = is_unspaced_script(c);
-            if !(c.is_alphanumeric() || unspaced) {
-                i += 1;
-                continue;
-            }
-            let start = i;
-            i += 1;
-            while i < chars.len() {
-                let d = chars[i].ch;
-                let same = if unspaced { is_unspaced_script(d) } else { is_word_char(d) && !is_unspaced_script(d) };
-                if !same {
-                    break;
-                }
-                i += 1;
-            }
-            let mut end = i;
-            while end > start + 1 && !chars[end - 1].ch.is_alphanumeric() && !unspaced {
-                end -= 1;
-            }
+        let spans = match analyzed.get(li) {
+            Some(Some(spans)) => spans.clone(),
+            _ => scanned_spans(line),
+        };
+        for (start, end) in spans {
             let text: String = chars[start..end].iter().map(|c| c.ch).collect();
             if !text.trim().is_empty() {
                 let (y0, y1) = text_rows(line);
@@ -143,11 +132,118 @@ pub fn word_boxes(lines: &[OcrLine]) -> Vec<WordBox> {
     out
 }
 
+/// A line's words as character ranges: runs of word characters, or of unspaced-script ones.
+fn scanned_spans(line: &OcrLine) -> Vec<(usize, usize)> {
+    let chars = &line.chars;
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i].ch;
+        let unspaced = is_unspaced_script(c);
+        if !(c.is_alphanumeric() || unspaced) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i < chars.len() {
+            let d = chars[i].ch;
+            let same = if unspaced { is_unspaced_script(d) } else { is_word_char(d) && !is_unspaced_script(d) };
+            if !same {
+                break;
+            }
+            i += 1;
+        }
+        let mut end = i;
+        while end > start + 1 && !chars[end - 1].ch.is_alphanumeric() && !unspaced {
+            end -= 1;
+        }
+        out.push((start, end));
+    }
+    out
+}
+
+/// Whether the analyzer reads this line.
+fn analyzed_line(line: &OcrLine, seg: &dyn Segment) -> bool {
+    line.chars.iter().any(|c| seg.handles(c.ch))
+}
+
+/// The words of every line the analyzer reads, as character ranges. Like Lookupper, each paragraph
+/// is analyzed as one text, so a word broken across two lines is one word with a piece on each.
+fn analyzed_spans(lines: &[OcrLine], seg: &dyn Segment) -> Vec<Option<Vec<(usize, usize)>>> {
+    let mut out: Vec<Option<Vec<(usize, usize)>>> = vec![None; lines.len()];
+    for i in 0..lines.len() {
+        if out[i].is_some() || !analyzed_line(&lines[i], seg) {
+            continue;
+        }
+        let (text, pieces) = join(lines, &paragraph(lines, i));
+        let words = seg.words(&text.iter().collect::<String>());
+        for p in &pieces {
+            if out[p.line].is_some() || !analyzed_line(&lines[p.line], seg) {
+                continue;
+            }
+            let spans = words.iter().filter(|w| w.kind != Kind::Punct).filter_map(|w| piece_span(p, w.start, w.end)).collect();
+            out[p.line] = Some(spans);
+        }
+    }
+    out
+}
+
+/// The characters `start..end` of a joined paragraph that are on piece `p`'s line, as a range of
+/// that line's characters.
+fn piece_span(p: &Piece, start: usize, end: usize) -> Option<(usize, usize)> {
+    let (a, b) = (start.max(p.at), end.min(p.at + p.len));
+    (a < b).then(|| (p.first + a - p.at, p.first + b - p.at))
+}
+
+/// The longest run tried from the pointer in unspaced scripts, and from the start of an analyzed
+/// word for one the dictionaries split otherwise.
+const MAX_RUN: usize = 16;
+
+/// The analyzed word holding character `ci` of line `idx`: its paragraph is analyzed whole, so the
+/// word may start before the pointer, or on the line above.
+fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) -> Option<Pick> {
+    let line = &lines[idx];
+    let (text, pieces) = join(lines, &paragraph(lines, idx));
+    let p = pieces.iter().find(|p| p.line == idx)?;
+    if ci < p.first || ci >= p.first + p.len {
+        return None;
+    }
+    let at = p.at + ci - p.first;
+    let w = seg.words(&text.iter().collect::<String>()).into_iter().find(|w| w.start <= at && at < w.end && w.kind != Kind::Punct)?;
+    let (start, end) = piece_span(p, w.start, w.end)?;
+    let word: String = text[w.start..w.end].iter().collect();
+    let mut candidates: Vec<String> = Vec::new();
+    let run: Vec<char> = word.chars().take(MAX_RUN).collect();
+    let shorter = run.first().is_some_and(|&c| is_unspaced_script(c));
+    for c in w.lemmas.into_iter().chain([word.clone()]).chain((1..run.len()).rev().filter(|_| shorter).map(|n| run[..n].iter().collect::<String>())) {
+        if !candidates.contains(&c) {
+            candidates.push(c);
+        }
+    }
+    let Context { sentence, sentence_lines, context, context_at } = context_of(lines, idx, start..end);
+    let (y0, y1) = text_rows(line);
+    let pad = pad_x(line);
+    Some(Pick {
+        word,
+        candidates,
+        sentence,
+        sentence_lines,
+        context,
+        context_at,
+        x0: (line.chars[start].x0 - pad).max(line.x0),
+        y0,
+        x1: (line.chars[end - 1].x1 + pad).min(line.x1),
+        y1,
+    })
+}
+
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '\'' || c == '’' || c == '-' || c == '·'
 }
 
-pub fn pick(lines: &[OcrLine], px: f32, py: f32) -> Option<Pick> {
+/// The word under the pointer, found through `seg` when it reads that word's script.
+pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> Option<Pick> {
     let line_idx = lines
         .iter()
         .enumerate()
@@ -188,9 +284,15 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32) -> Option<Pick> {
         }
     }
 
+    if let Some(seg) = seg.filter(|s| s.handles(chars[ci].ch)) {
+        if let Some(pick) = pick_analyzed(lines, line_idx, ci, seg) {
+            return Some(pick);
+        }
+    }
+
     let (start, end, candidates) = if is_unspaced_script(chars[ci].ch) {
         let mut end = ci;
-        while end < chars.len() && end - ci < 16 && (is_unspaced_script(chars[end].ch) || chars[end].ch.is_alphanumeric()) {
+        while end < chars.len() && end - ci < MAX_RUN && (is_unspaced_script(chars[end].ch) || chars[end].ch.is_alphanumeric()) {
             end += 1;
         }
         let run: Vec<char> = chars[ci..end].iter().map(|c| c.ch).collect();
@@ -457,6 +559,7 @@ fn around(text: &[char], ranges: &[std::ops::Range<usize>], from: usize, to: usi
 mod tests {
     use super::pick;
     use crate::ocr::{OcrChar, OcrLine};
+    use crate::segment::{Kind, Segment, Word};
 
     fn line(text: &str, x0: f32, y0: f32) -> OcrLine {
         let chars: Vec<OcrChar> = text.chars().enumerate()
@@ -469,10 +572,10 @@ mod tests {
     fn word_boxes_take_the_rows_of_the_ink_and_the_pointer_test_the_line() {
         let mut l = line("hello world", 100.0, 100.0);
         l.ink_y = Some((104.0, 116.0));
-        let boxes = super::word_boxes(std::slice::from_ref(&l));
+        let boxes = super::word_boxes(std::slice::from_ref(&l), None);
         // 12% of the ink's 12 rows of room on each side.
         assert!((boxes[1].y0 - 102.56).abs() < 0.01 && (boxes[1].y1 - 117.44).abs() < 0.01, "{:?}", boxes[1]);
-        let p = pick(std::slice::from_ref(&l), 165.0, 101.0).unwrap();
+        let p = pick(std::slice::from_ref(&l), 165.0, 101.0, None).unwrap();
         assert!((p.y0 - 102.56).abs() < 0.01 && (p.y1 - 117.44).abs() < 0.01);
         assert!(p.is_under(165.0, 110.0));
         assert!(!p.is_under(165.0, 99.0), "above the word's box and its slack is off the word");
@@ -481,7 +584,7 @@ mod tests {
     #[test]
     fn the_space_between_two_words_is_off_both() {
         let lines = [line("hello world", 100.0, 100.0)];
-        let p = pick(&lines, 155.0, 110.0).unwrap();
+        let p = pick(&lines, 155.0, 110.0, None).unwrap();
         assert_eq!(p.word, "hello", "the space still picks a word, for the overlay");
         assert!(!p.is_under(155.0, 110.0), "but the shortcut there is off the word");
     }
@@ -490,13 +593,13 @@ mod tests {
     fn room_around_the_ink_stays_in_the_line_and_apart_from_the_next_word() {
         let mut l = line("hello world", 100.0, 100.0);
         l.ink_y = Some((100.0, 120.0));
-        let boxes = super::word_boxes(std::slice::from_ref(&l));
+        let boxes = super::word_boxes(std::slice::from_ref(&l), None);
         assert_eq!((boxes[0].y0, boxes[0].y1), (100.0, 120.0), "never past the detected box");
         assert_eq!(boxes[0].x0, 100.0, "nor past the line's ends");
         // The words' own edges are 150 and 160; the room (1.6) leaves the gap between them.
         assert!((boxes[0].x1 - 151.6).abs() < 0.01 && (boxes[1].x0 - 158.4).abs() < 0.01, "{boxes:?}");
         l.chars[4].x1 = 159.0; // a gap so narrow that the rooms would meet
-        let narrow = super::word_boxes(std::slice::from_ref(&l));
+        let narrow = super::word_boxes(std::slice::from_ref(&l), None);
         assert!(narrow[0].x1 <= narrow[1].x0 + 1e-3, "{narrow:?}");
     }
 
@@ -504,7 +607,7 @@ mod tests {
     fn the_hit_area_covers_the_line_and_meets_the_next_word_halfway() {
         let mut l = line("hello world", 100.0, 100.0);
         l.ink_y = Some((104.0, 116.0));
-        let boxes = super::word_boxes(std::slice::from_ref(&l));
+        let boxes = super::word_boxes(std::slice::from_ref(&l), None);
         let (a, b) = (boxes[0].hit, boxes[1].hit);
         assert_eq!((a.1, a.3), (100.0, 120.0), "the whole detected height");
         assert_eq!(a.0, 100.0, "never past the line's start");
@@ -516,7 +619,7 @@ mod tests {
     #[test]
     fn pointer_on_a_word_is_under_it() {
         let lines = [line("hello world", 100.0, 100.0)];
-        let p = pick(&lines, 165.0, 110.0).unwrap();
+        let p = pick(&lines, 165.0, 110.0, None).unwrap();
         assert_eq!(p.word, "world");
         assert!(p.is_under(165.0, 110.0));
     }
@@ -529,15 +632,15 @@ mod tests {
             line("here and ends here.", 100.0, 150.0),
             line("Another paragraph far below.", 100.0, 260.0),
         ];
-        let p = pick(&lines, 145.0, 110.0).unwrap();
+        let p = pick(&lines, 145.0, 110.0, None).unwrap();
         assert_eq!(p.word, "quick");
         assert_eq!(p.sentence, "The quick brown fox jumps over the lazy dog.");
         assert_eq!(p.sentence_lines, [0, 1]);
-        let p = pick(&lines, 225.0, 135.0).unwrap();
+        let p = pick(&lines, 225.0, 135.0, None).unwrap();
         assert_eq!(p.word, "second");
         assert_eq!(p.sentence, "A second sentence starts here and ends here.");
         assert_eq!(p.sentence_lines, [1, 2]);
-        let p = pick(&lines, 105.0, 270.0).unwrap();
+        let p = pick(&lines, 105.0, 270.0, None).unwrap();
         assert_eq!(p.sentence, "Another paragraph far below.");
         assert_eq!(p.sentence_lines, [3]);
     }
@@ -550,7 +653,7 @@ mod tests {
             line("here and ends here.", 100.0, 150.0),
             line("Another paragraph far below.", 100.0, 260.0),
         ];
-        let p = pick(&lines, 225.0, 135.0).unwrap();
+        let p = pick(&lines, 225.0, 135.0, None).unwrap();
         assert_eq!(p.sentence, "A second sentence starts here and ends here.");
         assert_eq!(p.context, "The quick brown fox jumps over the lazy dog. A second sentence starts here and ends here.");
         let at: String = p.context.chars().skip(p.context_at).take(6).collect();
@@ -560,7 +663,7 @@ mod tests {
     #[test]
     fn a_long_paragraph_keeps_the_whole_sentences_nearest_the_word() {
         let lines: Vec<_> = (0..60).map(|i| line(&format!("Line {i:02} ends here with a few more words."), 100.0, 100.0 + i as f32 * 25.0)).collect();
-        let p = pick(&lines, 105.0, 100.0 + 30.0 * 25.0 + 10.0).unwrap();
+        let p = pick(&lines, 105.0, 100.0 + 30.0 * 25.0 + 10.0, None).unwrap();
         assert_eq!(p.sentence, "Line 30 ends here with a few more words.");
         assert!(p.context.chars().count() <= super::MAX_CONTEXT_CHARS);
         assert!(p.context.starts_with("Line ") && p.context.ends_with("more words."));
@@ -574,7 +677,7 @@ mod tests {
         let mut title = line("Chapter One", 100.0, 40.0);
         title.y1 = 80.0;
         let lines = [title, line("It was a good exam-", 100.0, 100.0), line("ple of work. Next one.", 100.0, 125.0)];
-        let p = pick(&lines, 195.0, 110.0).unwrap();
+        let p = pick(&lines, 195.0, 110.0, None).unwrap();
         assert_eq!(p.word, "good");
         assert_eq!(p.sentence, "It was a good example of work.");
         assert_eq!(p.sentence_lines, [1, 2]);
@@ -583,7 +686,7 @@ mod tests {
     #[test]
     fn pieces_of_one_row_are_read_left_to_right() {
         let lines = [line("my friend. Bye.", 240.0, 100.0), line("Hello there,", 100.0, 100.0)];
-        let p = pick(&lines, 105.0, 110.0).unwrap();
+        let p = pick(&lines, 105.0, 110.0, None).unwrap();
         assert_eq!(p.word, "Hello");
         assert_eq!(p.sentence, "Hello there, my friend.");
         assert_eq!(p.sentence_lines, [1, 0]);
@@ -592,25 +695,82 @@ mod tests {
     #[test]
     fn unspaced_scripts_split_at_their_own_marks() {
         let lines = [line("今日は晴れ。明日は雨。", 100.0, 100.0)];
-        let p = pick(&lines, 165.0, 110.0).unwrap();
+        let p = pick(&lines, 165.0, 110.0, None).unwrap();
         assert_eq!(p.sentence, "明日は雨。");
     }
 
     #[test]
     fn text_without_sentence_marks_falls_back_to_the_lines_around_the_pointer() {
         let lines: Vec<_> = (0..30).map(|i| line("menu item without any marks here", 100.0, 100.0 + i as f32 * 25.0)).collect();
-        let p = pick(&lines, 105.0, 100.0 + 15.0 * 25.0 + 10.0).unwrap();
+        let p = pick(&lines, 105.0, 100.0 + 15.0 * 25.0 + 10.0, None).unwrap();
         assert_eq!(p.sentence_lines, [14, 15, 16]);
+    }
+
+    /// An analyzer that knows the words of the test's text, in order, with their lemmas.
+    struct Words(Vec<(&'static str, Vec<&'static str>)>);
+
+    impl Segment for Words {
+        fn words(&self, text: &str) -> Vec<Word> {
+            let chars: Vec<char> = text.chars().collect();
+            let mut out = Vec::new();
+            let mut at = 0;
+            for (word, lemmas) in &self.0 {
+                let w: Vec<char> = word.chars().collect();
+                if let Some(start) = (at..(chars.len() + 1).saturating_sub(w.len())).find(|&i| chars[i..i + w.len()] == w[..]) {
+                    let kind = if w.iter().any(|c| c.is_alphanumeric()) { Kind::Word } else { Kind::Punct };
+                    out.push(Word { start, end: start + w.len(), kind, lemmas: lemmas.iter().map(|s| s.to_string()).collect() });
+                    at = start + w.len();
+                }
+            }
+            out
+        }
+
+        fn handles(&self, c: char) -> bool {
+            crate::ocr::is_unspaced_script(c)
+        }
+    }
+
+    fn japanese() -> Words {
+        Words(vec![("日本語", vec![]), ("を", vec![]), ("勉強しています", vec!["勉強する", "勉強"]), ("。", vec![])])
+    }
+
+    #[test]
+    fn an_analyzed_word_is_picked_whole_from_any_of_its_characters() {
+        let lines = [line("日本語を勉強しています。", 100.0, 100.0)];
+        let seg = japanese();
+        // On 強, the word's second character.
+        let p = pick(&lines, 155.0, 110.0, Some(&seg)).unwrap();
+        assert_eq!(p.word, "勉強しています");
+        assert_eq!(p.candidates[..4], ["勉強する", "勉強", "勉強しています", "勉強していま"]);
+        assert_eq!(p.candidates.last().map(String::as_str), Some("勉"));
+        assert_eq!((p.x0, p.x1), (140.0, 210.0), "the box is the word's, not the run past the pointer");
+        assert_eq!(p.sentence, "日本語を勉強しています。");
+        assert!(p.is_under(155.0, 110.0));
+        // Without an analyzer, the longest match runs from the pointer.
+        assert_eq!(pick(&lines, 155.0, 110.0, None).unwrap().word, "強しています");
+    }
+
+    #[test]
+    fn a_paragraph_is_analyzed_whole_so_a_word_broken_across_lines_is_one_word() {
+        let lines = [line("日本語を勉", 100.0, 100.0), line("強しています。", 100.0, 125.0)];
+        let seg = japanese();
+        let boxes = super::word_boxes(&lines, Some(&seg));
+        let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["日本語", "を", "勉", "強しています"], "a box per word, a piece on each line");
+        let p = pick(&lines, 115.0, 135.0, Some(&seg)).unwrap();
+        assert_eq!(p.word, "勉強しています");
+        assert_eq!((p.x0, p.x1), (100.0, 160.0), "the piece on the pointer's line");
+        assert_eq!(super::word_boxes(&lines, None).len(), 2, "without an analyzer, a box per run");
     }
 
     #[test]
     fn pointer_near_but_off_the_text_is_not_under_it() {
         let lines = [line("hello world", 100.0, 100.0)];
         // Below the line, within pick's 1.5-line tolerance but clearly off the word.
-        let p = pick(&lines, 130.0, 128.0).unwrap();
+        let p = pick(&lines, 130.0, 128.0, None).unwrap();
         assert!(!p.is_under(130.0, 128.0));
         // Past the end of the line.
-        let p = pick(&lines, 240.0, 110.0).unwrap();
+        let p = pick(&lines, 240.0, 110.0, None).unwrap();
         assert!(!p.is_under(240.0, 110.0));
     }
 }

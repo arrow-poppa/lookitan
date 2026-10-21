@@ -79,6 +79,18 @@ jobs:
       - name: Test OCR recovery
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+      # The word analyzers' dictionaries (segment/mod.rs PACKS), as the app downloads them.
+      - name: Cache word analyzer dictionaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/segmenters
+          key: segmenters-${{ matrix.platform }}-${{ hashFiles('src-tauri/src/segment/mod.rs') }}
+
+      - name: Test word analysis with the real dictionaries
+        env:
+          LOOKITAN_SEGMENTERS: ${{ runner.temp }}/segmenters
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib segment::tests::real_dictionaries -- --ignored --nocapture
+
       - name: Build
         uses: tauri-apps/tauri-action@v0
         env:
