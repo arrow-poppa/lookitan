@@ -28,10 +28,14 @@ pub struct Pick {
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
+    /// The word is in a vertical line, so its box is tall.
+    #[serde(skip)]
+    pub vertical: bool,
 }
 
 /// How far past a word's drawn box the pointer still counts as on it: a share of the box's
-/// height, so it scales with the text, and at least a few capture pixels.
+/// height (its width in a vertical line), so it scales with the text, and at least a few capture
+/// pixels.
 const UNDER_SLACK: f32 = 0.1;
 const UNDER_SLACK_MIN: f32 = 3.0;
 
@@ -41,7 +45,8 @@ impl Pick {
     /// shortcut is off any word: the automatic capture then outlines the block of text, and a
     /// region capture opens the whole-screen overlay instead of a pop-up.
     pub fn is_under(&self, px: f32, py: f32) -> bool {
-        let slack = ((self.y1 - self.y0) * UNDER_SLACK).max(UNDER_SLACK_MIN);
+        let across = if self.vertical { self.x1 - self.x0 } else { self.y1 - self.y0 };
+        let slack = (across * UNDER_SLACK).max(UNDER_SLACK_MIN);
         px >= self.x0 - slack && px <= self.x1 + slack && py >= self.y0 - slack && py <= self.y1 + slack
     }
 }
@@ -100,6 +105,8 @@ fn span_x(line: &OcrLine, start: usize, end: usize) -> (f32, f32) {
 /// of unspaced-script characters (CJK, Thai) form one rectangle, and a click inside it still picks
 /// the longest dictionary match from the click point.
 pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> {
+    let lines: Vec<OcrLine> = lines.iter().map(upright).collect();
+    let lines = &lines[..];
     let analyzed = seg.map(|s| analyzed_spans(lines, s)).unwrap_or_default();
     let mut out: Vec<WordBox> = Vec::new();
     for (li, line) in lines.iter().enumerate() {
@@ -136,8 +143,40 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
             let right = if k + 1 < out.len() { (out[k].x1 + out[k + 1].x0) / 2.0 } else { (out[k].x1 + reach).min(line.x1) };
             out[k].hit = (left, line.y0, right, line.y1);
         }
+        if line.vertical {
+            for b in &mut out[first..] {
+                (b.x0, b.y0, b.x1, b.y1) = on_screen(true, (b.x0, b.y0, b.x1, b.y1));
+                b.hit = on_screen(true, b.hit);
+            }
+        }
     }
     out
+}
+
+// A vertical line (a column of CJK text) is picked as a horizontal one: `upright` turns it a
+// quarter so its top is at the left and its right side at the top. Its characters' spans, down the
+// column, become spans across, and columns read right to left become rows read top to bottom, so
+// paragraphs, sentences and word boxes need nothing else. Boxes found there are turned back with
+// `on_screen`.
+
+/// `line`, turned to lie horizontal if it is vertical.
+fn upright(line: &OcrLine) -> OcrLine {
+    let mut out = line.clone();
+    if line.vertical {
+        (out.x0, out.y0, out.x1, out.y1) = (line.y0, -line.x1, line.y1, -line.x0);
+        out.ink_y = line.ink_y.map(|(a, b)| (-b, -a));
+    }
+    out
+}
+
+/// A capture point in the frame of `upright` for a line that is `vertical` or not.
+fn upright_point(vertical: bool, x: f32, y: f32) -> (f32, f32) {
+    if vertical { (y, -x) } else { (x, y) }
+}
+
+/// A box `(x0, y0, x1, y1)` from the frame of `upright` back on the capture.
+fn on_screen(vertical: bool, (x0, y0, x1, y1): (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+    if vertical { (-y1, x0, -y0, x1) } else { (x0, y0, x1, y1) }
 }
 
 /// A line's words as character ranges. As in Lookupper's recognizer, a word is a run of characters
@@ -298,17 +337,32 @@ fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) ->
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, idx, start..end);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1 })
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false })
 }
 
 /// The word under the pointer, found through `seg` when it reads that word's script.
 pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> Option<Pick> {
+    let lines: Vec<OcrLine> = lines.iter().map(upright).collect();
+    let near = |l: &OcrLine| {
+        let (x, y) = upright_point(l.vertical, px, py);
+        dist(l, x, y)
+    };
     let line_idx = lines
         .iter()
         .enumerate()
         .filter(|(_, l)| !l.chars.is_empty())
-        .min_by(|(_, a), (_, b)| dist(a, px, py).total_cmp(&dist(b, px, py)))
+        .min_by(|(_, a), (_, b)| near(a).total_cmp(&near(b)))
         .map(|(i, _)| i)?;
+    let vertical = lines[line_idx].vertical;
+    let (px, py) = upright_point(vertical, px, py);
+    let mut pick = pick_upright(&lines, line_idx, px, py, seg)?;
+    (pick.x0, pick.y0, pick.x1, pick.y1) = on_screen(vertical, (pick.x0, pick.y0, pick.x1, pick.y1));
+    pick.vertical = vertical;
+    Some(pick)
+}
+
+/// The word under the pointer `px, py` on line `line_idx`, all in the frame of `upright`.
+fn pick_upright(lines: &[OcrLine], line_idx: usize, px: f32, py: f32, seg: Option<&dyn Segment>) -> Option<Pick> {
     let line = &lines[line_idx];
     if dist(line, px, py) > (line.y1 - line.y0).max(12.0) * 1.5 || noise_line(lines, line_idx) {
         return None;
@@ -402,7 +456,7 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, line_idx, span);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1 })
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false })
 }
 
 fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
@@ -441,6 +495,10 @@ fn same_row(a: &OcrLine, b: &OcrLine) -> bool {
 /// Whether `b` continues the paragraph of `a`: the line right above or below it in the same
 /// column, or another piece of the same row, in a similar text size.
 fn joins(a: &OcrLine, b: &OcrLine) -> bool {
+    // A column and a row are in different frames (see `upright`), and different text.
+    if a.vertical != b.vertical {
+        return false;
+    }
     let (ha, hb) = (height(a), height(b));
     if ha.max(hb) > MAX_HEIGHT_RATIO * ha.min(hb) {
         return false;
@@ -633,7 +691,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x0 + i as f32 * 10.0, x1: x0 + i as f32 * 10.0 + 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None }
+        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None, vertical: false }
     }
 
     #[test]
@@ -795,7 +853,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x1 - (i + 1) as f32 * 10.0, x1: x1 - i as f32 * 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None }
+        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None, vertical: false }
     }
 
     #[test]
@@ -814,6 +872,42 @@ mod tests {
         assert_eq!(p.word, "بالعالم");
         assert_eq!(p.sentence, "مرحبا بالعالم");
         assert_eq!(p.sentence_lines, [1, 0]);
+    }
+
+    /// A vertical line 20 wide at `x0`, its characters 20 tall from `y0` down.
+    fn column(text: &str, x0: f32, y0: f32) -> OcrLine {
+        let n = text.chars().count();
+        let chars: Vec<OcrChar> = text.chars().enumerate()
+            .map(|(i, ch)| OcrChar { ch, x0: y0 + i as f32 * 20.0, x1: y0 + (i + 1) as f32 * 20.0 })
+            .collect();
+        OcrLine { text: text.into(), x0, y0, x1: x0 + 20.0, y1: y0 + n as f32 * 20.0, chars, ink_y: None, vertical: true }
+    }
+
+    #[test]
+    fn a_vertical_line_has_a_word_per_box_down_the_column() {
+        let lines = [column("日本語を勉強しています。", 200.0, 100.0)];
+        let seg = japanese();
+        let boxes = super::word_boxes(&lines, Some(&seg));
+        let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["日本語", "を", "勉強しています"], "not the whole column as one");
+        assert_eq!((boxes[0].x0, boxes[0].y0, boxes[0].x1, boxes[0].y1), (200.0, 100.0, 220.0, 160.0));
+        assert_eq!((boxes[1].hit.1, boxes[1].hit.3), (160.0, 180.0), "the hit areas follow the column down");
+        assert_eq!((boxes[1].hit.0, boxes[1].hit.2), (200.0, 220.0));
+        // On 強, the sixth character.
+        let p = pick(&lines, 210.0, 205.0, Some(&seg)).unwrap();
+        assert_eq!(p.word, "勉強しています");
+        assert_eq!((p.x0, p.y0, p.x1, p.y1), (200.0, 180.0, 220.0, 320.0));
+        assert!(p.is_under(210.0, 205.0) && !p.is_under(240.0, 205.0));
+        assert_eq!(pick(&lines, 210.0, 125.0, None).unwrap().word, "本語を勉強しています", "longest match down from the pointer");
+    }
+
+    #[test]
+    fn vertical_columns_read_from_the_right() {
+        let lines = [column("晴れ。", 170.0, 100.0), column("今日は", 200.0, 100.0), line("Title", 100.0, 20.0)];
+        let p = pick(&lines, 180.0, 110.0, None).unwrap();
+        assert_eq!(p.sentence, "今日は晴れ。");
+        assert_eq!(p.sentence_lines, [1, 0]);
+        assert_eq!(pick(&lines, 105.0, 30.0, None).unwrap().word, "Title", "a row is apart from the columns");
     }
 
     #[test]

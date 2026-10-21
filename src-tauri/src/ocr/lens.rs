@@ -160,11 +160,16 @@ impl LensOcr {
     }
 }
 
+/// The upright box around a Lens box, which may be turned (`rotation_z`, as for a column of text
+/// set on its side).
 fn rect(g: &Option<pb::Geometry>, w: f32, h: f32) -> Option<(f32, f32, f32, f32)> {
     let b = g.as_ref()?.bounding_box.as_ref()?;
-    let x0 = (b.center_x - b.width / 2.0) * w;
-    let y0 = (b.center_y - b.height / 2.0) * h;
-    Some((x0, y0, x0 + b.width * w, y0 + b.height * h))
+    let (bw, bh) = (b.width * w, b.height * h);
+    let (sin, cos) = b.rotation_z.sin_cos();
+    let half_w = (bw * cos.abs() + bh * sin.abs()) / 2.0;
+    let half_h = (bw * sin.abs() + bh * cos.abs()) / 2.0;
+    let (cx, cy) = (b.center_x * w, b.center_y * h);
+    Some((cx - half_w, cy - half_h, cx + half_w, cy + half_h))
 }
 
 /// How far past Lens's word box its ink is looked for, in line heights.
@@ -178,7 +183,7 @@ const INK_REACH: f32 = 0.15;
 fn snap_to_ink(img: &RgbaImage, line: &mut OcrLine) {
     let (iw, ih) = img.dimensions();
     let height = line.y1 - line.y0;
-    if height <= 0.0 || height > (line.x1 - line.x0) * 1.5 {
+    if line.vertical || height <= 0.0 || height > (line.x1 - line.x0) * 1.5 {
         return;
     }
     let reach = height * INK_REACH;
@@ -245,7 +250,7 @@ fn snap_to_ink(img: &RgbaImage, line: &mut OcrLine) {
 
 /// A right-to-left line, laid out as drawn, in reading order, as the local recognizer's lines are.
 fn to_reading_order(line: &mut OcrLine) {
-    if is_rtl_text(line.chars.iter().map(|c| c.ch)) {
+    if !line.vertical && is_rtl_text(line.chars.iter().map(|c| c.ch)) {
         line.chars = reverse_rtl(&line.chars);
         line.text = line.chars.iter().map(|c| c.ch).collect();
     }
@@ -263,20 +268,20 @@ fn to_lines(resp: &pb::ServerResponse, w: f32, h: f32) -> Vec<OcrLine> {
         let vertical = para.writing_direction == pb::WRITING_TOP_TO_BOTTOM;
         for line in &para.lines {
             let mut words: Vec<&pb::Word> = line.words.iter().collect();
-            if !vertical {
-                words.sort_by(|a, b| {
-                    let ax = a.geometry.as_ref().and_then(|g| g.bounding_box.as_ref()).map(|b| b.center_x).unwrap_or(0.0);
-                    let bx = b.geometry.as_ref().and_then(|g| g.bounding_box.as_ref()).map(|b| b.center_x).unwrap_or(0.0);
-                    ax.total_cmp(&bx)
-                });
-            }
+            // Left to right, or top to bottom down a vertical line.
+            let along = |word: &pb::Word| {
+                word.geometry.as_ref().and_then(|g| g.bounding_box.as_ref()).map(|b| if vertical { b.center_y } else { b.center_x }).unwrap_or(0.0)
+            };
+            words.sort_by(|a, b| along(a).total_cmp(&along(b)));
             let mut text = String::new();
             let mut chars = Vec::new();
             // Lens gives each word in reading order; the line is laid out as drawn, left to right,
             // and turned to reading order once snapped to its ink (to_reading_order).
             let rtl = !vertical && is_rtl_text(words.iter().flat_map(|w| w.plain_text.chars()));
             for word in words {
-                let (wx0, _, wx1, _) = rect(&word.geometry, w, h).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                let (bx0, by0, bx1, by1) = rect(&word.geometry, w, h).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                // A vertical line's characters are spread top to bottom.
+                let (wx0, wx1) = if vertical { (by0, by1) } else { (bx0, bx1) };
                 let n = word.plain_text.chars().count().max(1) as f32;
                 let step = (wx1 - wx0) / n;
                 let mut letters: Vec<OcrChar> = word.plain_text.chars().map(|ch| OcrChar { ch, x0: 0.0, x1: 0.0 }).collect();
@@ -298,7 +303,7 @@ fn to_lines(resp: &pb::ServerResponse, w: f32, h: f32) -> Vec<OcrLine> {
             }
             let Some((x0, y0, x1, y1)) = rect(&line.geometry, w, h) else { continue };
             if !text.trim().is_empty() {
-                out.push(OcrLine { text, x0, y0, x1, y1, chars, ink_y: None });
+                out.push(OcrLine { text, x0, y0, x1, y1, chars, ink_y: None, vertical });
             }
         }
     }
@@ -332,7 +337,7 @@ mod tests {
                 text.push(' ');
             }
         }
-        OcrLine { text, x0: words[0].1, y0: 98.0, x1: words.last().unwrap().2, y1: 122.0, chars, ink_y: None }
+        OcrLine { text, x0: words[0].1, y0: 98.0, x1: words.last().unwrap().2, y1: 122.0, chars, ink_y: None, vertical: false }
     }
 
     #[test]

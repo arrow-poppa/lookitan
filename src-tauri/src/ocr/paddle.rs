@@ -17,7 +17,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
-use super::{ink, is_rtl_text, reverse_rtl, OcrChar, OcrLine};
+use super::{ink, is_rtl_text, is_vertical_box, reverse_rtl, OcrChar, OcrLine};
 use crate::settings::GpuPreference;
 
 macro_rules! ortx {
@@ -200,6 +200,28 @@ mod tests {
             (18.0, 222.0, 480.0, 524.0)
         );
     }
+
+    #[test]
+    fn a_vertical_box_is_read_on_its_side_with_its_top_at_the_left() {
+        // A white 20 x 100 column at (40, 10), inked in its top 30 rows and right 12 columns.
+        let img = RgbaImage::from_fn(100, 200, |x, y| {
+            let inked = (52..60).contains(&x) && (10..40).contains(&y);
+            if inked { Rgba([0, 0, 0, 255]) } else { Rgba([255, 255, 255, 255]) }
+        });
+        let b = TextBox { x0: 40.0, y0: 10.0, x1: 60.0, y1: 110.0 };
+        let crop = rec_crop(&img, b).unwrap();
+        assert!(crop.vertical);
+        assert_eq!(crop.image.height(), REC_HEIGHT);
+        assert_eq!(crop.tw, rec_width(100, 20), "as long as the column is tall");
+        assert_eq!(box_rec_width(&b), crop.tw);
+        let ink = crop.ink.unwrap();
+        // The top of the column is at the left of the turned crop...
+        assert!(ink.cols[..30].iter().all(|&c| c) && !ink.cols[40..].iter().any(|&c| c), "{:?}", ink.cols);
+        // ...and its right side at the top: ink in columns 52..60 is in rows 0..8.
+        assert_eq!((ink.y0, ink.y1), (0, 8));
+        let horizontal = rec_crop(&img, TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 40.0 }).unwrap();
+        assert!(!horizontal.vertical);
+    }
 }
 
 const DET_THRESH: f32 = 0.2;
@@ -223,7 +245,9 @@ fn rec_width(cw: u32, ch: u32) -> u32 {
 }
 
 fn box_rec_width(b: &TextBox) -> u32 {
-    rec_width((b.x1 - b.x0).max(1.0) as u32, (b.y1 - b.y0).max(1.0) as u32)
+    let (w, h) = ((b.x1 - b.x0).max(1.0), (b.y1 - b.y0).max(1.0));
+    // A vertical box is read on its side.
+    if is_vertical_box(w, h) { rec_width(h as u32, w as u32) } else { rec_width(w as u32, h as u32) }
 }
 
 /// Groups boxes of similar width for batched recognition, narrowest first, so little of each
@@ -247,17 +271,20 @@ pub fn plan_batches(boxes: &[TextBox]) -> Vec<Vec<TextBox>> {
     out
 }
 
-/// A text box cut out of the capture and resized to the recognizer's height.
+/// A text box cut out of the capture and resized to the recognizer's height. A vertical box is
+/// turned a quarter left first, as PaddleOCR does, so its top is at the left.
 struct RecCrop {
     b: TextBox,
-    /// Left edge, top and width of the crop in capture pixels.
+    /// Left edge, top, width and height of the crop in capture pixels.
     x: u32,
     y: u32,
     cw: u32,
+    ch: u32,
+    vertical: bool,
     /// Width after resizing.
     tw: u32,
     image: RgbaImage,
-    /// The ink of the crop at capture resolution, to snap the word edges to.
+    /// The ink of the crop (turned, if vertical) at capture resolution, to snap the word edges to.
     ink: Option<ink::Ink>,
 }
 
@@ -270,12 +297,17 @@ fn rec_crop(img: &RgbaImage, b: TextBox) -> Option<RecCrop> {
     if cw < 2 || ch < 2 {
         return None;
     }
-    let crop = image::imageops::crop_imm(img, x, y, cw, ch).to_image();
+    let mut crop = image::imageops::crop_imm(img, x, y, cw, ch).to_image();
+    let vertical = is_vertical_box(cw as f32, ch as f32);
+    if vertical {
+        crop = image::imageops::rotate270(&crop);
+    }
+    let (w, h) = crop.dimensions();
     let lum: Vec<u8> = crop.pixels().map(|p| ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8).collect();
-    let ink = ink::measure(&lum, cw as usize, ch as usize);
-    let tw = rec_width(cw, ch);
+    let ink = ink::measure(&lum, w as usize, h as usize);
+    let tw = rec_width(w, h);
     let image = image::imageops::resize(&crop, tw, REC_HEIGHT, FilterType::Triangle);
-    Some(RecCrop { b, x, y, cw, tw, image, ink })
+    Some(RecCrop { b, x, y, cw, ch, vertical, tw, image, ink })
 }
 
 /// Writes one crop into its slot of a recognizer input (3 planes of REC_HEIGHT x `padded_w`,
@@ -310,13 +342,18 @@ pub fn split_focus(boxes: &[TextBox], fx: f32, fy: f32) -> (Vec<TextBox>, Vec<Te
     else {
         return (Vec::new(), boxes.to_vec());
     };
-    let h = target.height().max(4.0);
+    // The lines above and below, or the columns beside a vertical one.
+    let vertical = is_vertical_box(target.x1 - target.x0, target.height());
+    let across = |b: &TextBox| if vertical { (b.y0, b.y1, b.x0, b.x1) } else { (b.x0, b.x1, b.y0, b.y1) };
+    let (t0, t1, s0, s1) = across(&target);
+    let h = (s1 - s0).max(4.0);
     let near = |b: &TextBox| {
-        let overlap = b.x1.min(target.x1) - b.x0.max(target.x0);
-        let gap = if b.y0 > target.y1 {
-            b.y0 - target.y1
-        } else if b.y1 < target.y0 {
-            target.y0 - b.y1
+        let (a0, a1, b0, b1) = across(b);
+        let overlap = a1.min(t1) - a0.max(t0);
+        let gap = if b0 > s1 {
+            b0 - s1
+        } else if b1 < s0 {
+            s0 - b1
         } else {
             0.0
         };
@@ -324,7 +361,12 @@ pub fn split_focus(boxes: &[TextBox], fx: f32, fy: f32) -> (Vec<TextBox>, Vec<Te
     };
     let mut focus: Vec<TextBox> = boxes.iter().copied().filter(near).collect();
     // Match the original lookup's context selection, always keeping the pointed-at line.
-    focus.sort_by(|a, b| a.y0.total_cmp(&b.y0));
+    if vertical {
+        // Columns read from the right.
+        focus.sort_by(|a, b| b.x1.total_cmp(&a.x1));
+    } else {
+        focus.sort_by(|a, b| a.y0.total_cmp(&b.y0));
+    }
     focus.truncate(6);
     let same_box = |a: &TextBox, b: &TextBox| a.x0 == b.x0 && a.y0 == b.y0 && a.x1 == b.x1 && a.y1 == b.y1;
     if !focus.iter().any(|b| same_box(b, &target)) {
@@ -814,7 +856,10 @@ impl PaddleOcr {
         if steps == 0 || classes == 0 {
             return None;
         }
-        let (b, x, cw) = (crop.b, crop.x, crop.cw);
+        let b = crop.b;
+        // Where the line starts and how long it is in capture pixels, and its ends: across, or
+        // top to bottom for a vertical line.
+        let (start, len, lo, hi) = if crop.vertical { (crop.y, crop.ch, b.y0, b.y1) } else { (crop.x, crop.cw, b.x0, b.x1) };
         // In a batch, the steps past this crop's own width only see padding.
         let content_steps = steps as f32 * crop.tw as f32 / padded_w as f32;
         let valid = (content_steps.ceil() as usize).clamp(1, steps);
@@ -851,22 +896,30 @@ impl PaddleOcr {
             return None;
         }
 
-        // Each CTC step covers an equal slice of the padded input, so of the crop width.
-        let step_w = cw as f32 / content_steps;
+        // Each CTC step covers an equal slice of the padded input, so of the crop's length.
+        let step_w = len as f32 / content_steps;
         let centers: Vec<f32> = decoded
             .iter()
-            .map(|(_, t)| x as f32 + (*t as f32 + 0.5) * step_w)
+            .map(|(_, t)| start as f32 + (*t as f32 + 0.5) * step_w)
             .collect();
         let blank: Vec<bool> = decoded.iter().map(|(c, _)| c.is_whitespace()).collect();
         // Word edges snap to the ink of the line, as in Lookupper.
-        let spans = ink::spans(&centers, &blank, crop.ink.as_ref(), x as f32, b.x0, b.x1, step_w);
+        let spans = ink::spans(&centers, &blank, crop.ink.as_ref(), start as f32, lo, hi, step_w);
         let mut chars: Vec<OcrChar> = decoded.iter().zip(spans).map(|((c, _), (x0, x1))| OcrChar { ch: *c, x0, x1 }).collect();
         // The recognizer reads right-to-left text as drawn; like Lookupper, turn it to reading order.
-        if is_rtl_text(chars.iter().map(|c| c.ch)) {
+        if !crop.vertical && is_rtl_text(chars.iter().map(|c| c.ch)) {
             chars = reverse_rtl(&chars);
         }
         let text: String = chars.iter().map(|c| c.ch).collect();
-        let ink_y = crop.ink.as_ref().map(|ink| (crop.y as f32 + ink.y0 as f32, crop.y as f32 + ink.y1 as f32));
+        // The turned crop's rows are the columns of a vertical line, its last row at the left.
+        let ink_y = crop.ink.as_ref().map(|ink| {
+            if crop.vertical {
+                let right = (crop.x + crop.cw) as f32;
+                (right - ink.y1 as f32, right - ink.y0 as f32)
+            } else {
+                (crop.y as f32 + ink.y0 as f32, crop.y as f32 + ink.y1 as f32)
+            }
+        });
         Some(OcrLine {
             text,
             x0: b.x0,
@@ -875,6 +928,7 @@ impl PaddleOcr {
             y1: b.y1,
             chars,
             ink_y,
+            vertical: crop.vertical,
         })
     }
 }

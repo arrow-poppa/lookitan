@@ -9,6 +9,8 @@ pub mod paddle;
 
 use serde::Serialize;
 
+/// A character's span along its line: `x0..x1` across a horizontal line, and top to bottom
+/// (`y0..y1` in capture pixels) down a vertical one.
 #[derive(Clone, Debug, Serialize)]
 pub struct OcrChar {
     pub ch: char,
@@ -24,9 +26,18 @@ pub struct OcrLine {
     pub x1: f32,
     pub y1: f32,
     pub chars: Vec<OcrChar>,
-    /// The rows of the line's ink (`ink::measure`), tighter than the detected box; `None` when
-    /// the engine gives no ink or the crop had none.
+    /// Where the line's ink lies across it (`ink::measure`), tighter than the detected box: its
+    /// rows, or the columns of a vertical line. `None` when the engine gives no ink or the crop
+    /// had none.
     pub ink_y: Option<(f32, f32)>,
+    /// Written top to bottom (a column of CJK text): its characters' spans are along y.
+    pub vertical: bool,
+}
+
+/// Whether a text box reads top to bottom: as tall as one and a half times its width, as in
+/// PaddleOCR and Lookupper's recognizer, which turn such a crop on its side to read it.
+pub fn is_vertical_box(width: f32, height: f32) -> bool {
+    height >= 1.5 * width
 }
 
 impl OcrLine {

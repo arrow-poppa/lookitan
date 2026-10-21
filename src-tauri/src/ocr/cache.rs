@@ -117,6 +117,7 @@ mod tests {
             y1: 4.0,
             chars: vec![],
             ink_y: None,
+            vertical: false,
         }
     }
 
