@@ -217,6 +217,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request Configurações › OCR › Região de captura offers only Automático and Personalizada; the fixed-size formats (Original 900 × 260, 16:9, 4:3, 1:1) were removed. A saved fixed size shows as Personalizada with its size.
 - 2026-10-21 (Claude, `tests`): at the user's request Google Lens works without pasting a key: it sends Chromium's public Lens key, and the user's key still overrides it. The hard constraint was changed to match.
 - 2026-10-21 (Claude, `tests`): with Google Lens the word highlight did not hug the ink as with the local models: Lens lines had no `ink_y` and kept Lens's loose word boxes. `snap_to_ink` now measures the ink of each Lens line in the capture.
 - 2026-10-21 (Claude, `main`/`without-fade`): at the user's request, `main` and `without-fade` were fast-forwarded to `tests` again, with the Edge v2 token fix.

@@ -128,17 +128,9 @@ function engineStatusText() {
     return `Detecção ${status.detModel} na ${status.detOnGpu ? (status.session === 'windows' ? 'GPU (DirectML)' : 'GPU (WebGPU)') : 'CPU'} · reconhecimento ${status.recModel} na ${status.recOnGpu ? 'GPU' : 'CPU'}`;
 }
 
-const CAPTURE_PRESETS = [
-    {value: 'original', label: 'Original (900 × 260)', width: 900, height: 260},
-    {value: '16:9', label: '16:9 (960 × 540)', width: 960, height: 540},
-    {value: '4:3', label: '4:3 (800 × 600)', width: 800, height: 600},
-    {value: '1:1', label: '1:1 (640 × 640)', width: 640, height: 640},
-];
-
 function captureRegionRows() {
     const s = store.settings;
-    const currentPreset = () => (s.captureAuto === true ? 'auto' : CAPTURE_PRESETS.find((p) => p.width === (s.captureWidth ?? 900) &&
-        p.height === (s.captureHeight ?? 260))?.value || 'custom');
+    const currentPreset = () => (s.captureAuto === true ? 'auto' : 'custom');
     let presets;
     function dimension(key, label, minimum, fallback, id) {
         const input = el('input', {id, type: 'number', min: minimum, max: 4096, step: 1,
@@ -157,31 +149,24 @@ function captureRegionRows() {
     }
     const width = dimension('captureWidth', 'Largura', 200, 900, 'cap-w');
     const height = dimension('captureHeight', 'Altura', 60, 260, 'cap-h');
-    // The size is edited only under "Personalizada"; a preset sets it.
+    // The size is edited only under "Personalizada".
     const size = cardRow({icon: 'focus', title: 'Tamanho da captura', desc: 'Região em volta do cursor, em pixels.', wide: true,
         control: el('div', {class: 'capture-size'}, width.label, height.label)});
     size.hidden = currentPreset() !== 'custom';
     // "Automático" reads the whole monitor but recognizes only the block of text under the
-    // pointer, like Lookupper's pointer mode; the other choices read a fixed region.
-    const choices = [{value: 'auto', label: 'Automático (o bloco de texto sob o cursor)'}, ...CAPTURE_PRESETS, {value: 'custom', label: 'Personalizada'}];
+    // pointer, like Lookupper's pointer mode; "Personalizada" reads a fixed region of the size below.
+    const choices = [{value: 'auto', label: 'Automático (o bloco de texto sob o cursor)'}, {value: 'custom', label: 'Personalizada'}];
     presets = select(choices, currentPreset(), (value) => {
         size.hidden = value !== 'custom';
         const auto = value === 'auto';
         const modeChanged = (s.captureAuto === true) !== auto;
         s.captureAuto = auto;
-        const preset = CAPTURE_PRESETS.find((p) => p.value === value);
-        if (preset) {
-            s.captureWidth = preset.width;
-            s.captureHeight = preset.height;
-            width.input.value = preset.width;
-            height.input.value = preset.height;
-        }
-        if (preset || modeChanged) { save(); }
+        if (modeChanged) { save(); }
     });
     presets.id = 'capture-preset';
     presets.setAttribute('aria-label', 'Região de captura do OCR');
     return [
-        cardRow({icon: 'focus', title: 'Região de captura', desc: 'Automático lê só o bloco de texto sob o cursor, como o Lookupper. Os formatos leem uma região fixa em volta dele.', wide: true, control: presets}),
+        cardRow({icon: 'focus', title: 'Região de captura', desc: 'Automático lê só o bloco de texto sob o cursor, como o Lookupper. Personalizada lê uma região fixa em volta dele, do tamanho que você escolher.', wide: true, control: presets}),
         size,
     ];
 }

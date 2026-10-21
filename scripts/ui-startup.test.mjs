@@ -345,17 +345,15 @@ test('the video card choice stays hidden until its toggle is on', async () => {
     await fixture.finish();
 });
 
-test('custom capture dimensions save on change and presets restore the original while OCR is pending', async () => {
+test('the capture region offers only Automático and Personalizada, and custom dimensions save on change while OCR is pending', async () => {
     const fixture = await settingsFixture({ocrScope: 'region'});
     const {view, settings} = fixture;
     const width = view.document.getElementById('cap-w');
     const height = view.document.getElementById('cap-h');
     const preset = view.document.getElementById('capture-preset');
     const sizeRow = descendants(fixture.root).find((node) => node.className === 'card-row' && node.textContent.includes('Tamanho da captura'));
-    assert.equal(preset.value, 'original');
-    assert.equal(sizeRow.hidden, true, 'a preset hides the size fields');
-    preset.value = 'custom';
-    preset.dispatch('change');
+    assert.equal(JSON.stringify(descendants(preset).filter((node) => node.tagName === 'option').map((node) => node.value)), JSON.stringify(['auto', 'custom']));
+    assert.equal(preset.value, 'custom', 'a fixed region of the default size is Personalizada');
     assert.equal(sizeRow.hidden, false, 'Personalizada shows the size fields');
     width.value = '1200';
     width.dispatch('input');
@@ -368,16 +366,6 @@ test('custom capture dimensions save on change and presets restore the original 
     assert.equal(settings.captureHeight, 480);
     assert.equal(preset.value, 'custom');
     assert.equal(fixture.saves(), 2);
-    for (const [value, expectedWidth, expectedHeight] of [['16:9', 960, 540], ['4:3', 800, 600], ['1:1', 640, 640], ['original', 900, 260]]) {
-        preset.value = value;
-        preset.dispatch('change');
-        assert.equal(settings.captureWidth, expectedWidth);
-        assert.equal(settings.captureHeight, expectedHeight);
-        assert.equal(width.value, String(expectedWidth));
-        assert.equal(height.value, String(expectedHeight));
-        assert.equal(sizeRow.hidden, true);
-    }
-    assert.equal(fixture.saves(), 6);
     await fixture.finish();
     assert.equal(view.document.getElementById('cap-w'), width, 'OCR status updates must preserve the editable region controls');
 });
@@ -438,7 +426,7 @@ test('invalid capture dimensions never persist and valid boundary values remain 
     await fixture.finish();
 });
 
-test('typing a preset size keeps Personalizada, and choosing custom preserves the current capture size', async () => {
+test('typing a size keeps Personalizada, and choosing it again preserves the current capture size', async () => {
     const fixture = await settingsFixture({ocrScope: 'region'});
     const {view, settings} = fixture;
     const preset = view.document.getElementById('capture-preset');
