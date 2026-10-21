@@ -27,8 +27,8 @@ const USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 /// The build's key for Lens, used when the user has none (see the top of this file).
 const BUILT_IN_API_KEY: Option<&str> = option_env!("LOOKITAN_LENS_API_KEY");
-const MAX_DIMENSION: u32 = 1000;
-const MAX_AREA: u64 = 1_000_000;
+/// The most pixels sent to Lens (see `fit`).
+const MAX_AREA: u64 = 3_000_000;
 const CACHE_SECONDS: u64 = 30;
 
 pub struct LensOcr {
@@ -51,28 +51,19 @@ fn image_hash(img: &RgbaImage) -> u64 {
     h.finish()
 }
 
-/// Shrinks the capture to at most 1000 px on the longest side and one megapixel, like YomiNinja.
+/// Shrinks the capture only past three megapixels, as owocr does. YomiNinja's 1000 px and one
+/// megapixel, used before 2026-10-21, halved a whole 1920 px screen: on a test screen Lens then
+/// read 2 of 5 lines of 12 px text (Japanese and Russian lost or cut) where at full size it read
+/// all 5.
 fn fit(img: &RgbaImage) -> RgbaImage {
     let (w, h) = img.dimensions();
-    let mut nw = w as f64;
-    let mut nh = h as f64;
-    let longest = nw.max(nh);
-    if longest > MAX_DIMENSION as f64 {
-        let s = MAX_DIMENSION as f64 / longest;
-        nw *= s;
-        nh *= s;
+    let area = w as f64 * h as f64;
+    if area <= MAX_AREA as f64 {
+        return img.clone();
     }
-    if nw * nh > MAX_AREA as f64 {
-        let s = (MAX_AREA as f64 / (nw * nh)).sqrt();
-        nw *= s;
-        nh *= s;
-    }
-    let (nw, nh) = ((nw.floor() as u32).max(1), (nh.floor() as u32).max(1));
-    if nw == w && nh == h {
-        img.clone()
-    } else {
-        image::imageops::resize(img, nw, nh, FilterType::Triangle)
-    }
+    let s = (MAX_AREA as f64 / area).sqrt();
+    let (nw, nh) = (((w as f64 * s).floor() as u32).max(1), ((h as f64 * s).floor() as u32).max(1));
+    image::imageops::resize(img, nw, nh, FilterType::Lanczos3)
 }
 
 impl LensOcr {
@@ -122,6 +113,7 @@ impl LensOcr {
                     }),
                     client_context: Some(pb::ClientContext {
                         platform: pb::PLATFORM_WEB,
+                        surface: pb::SURFACE_CHROMIUM,
                         locale_context: Some(pb::LocaleContext { language, region, time_zone: "UTC".into() }),
                         client_filters: Some(pb::AppliedFilters {
                             filter: vec![pb::AppliedFilter { filter_type: pb::FILTER_AUTO }],
@@ -337,6 +329,15 @@ mod tests {
         // The second word reaches its ink past Lens's box, up to the reach.
         assert_eq!((line.chars[6].x0, line.chars[10].x1), (180.0, 230.0));
         assert_eq!((line.chars[5].x0, line.chars[5].x1), (160.0, 180.0), "the space fills the gap");
+    }
+
+    #[test]
+    fn a_whole_1920_screen_goes_to_lens_at_full_size_and_a_4k_one_shrinks_to_3_megapixels() {
+        let full_hd = RgbaImage::new(1920, 1080);
+        assert_eq!(fit(&full_hd).dimensions(), (1920, 1080));
+        let (w, h) = fit(&RgbaImage::new(3840, 2160)).dimensions();
+        assert!(w as u64 * h as u64 <= MAX_AREA && w >= 2300, "{w}x{h}");
+        assert_eq!((w as f32 / h as f32 * 9.0).round(), 16.0, "the aspect is kept");
     }
 
     #[test]

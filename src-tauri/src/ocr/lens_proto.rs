@@ -46,6 +46,8 @@ pub struct RoutingInfo {
 
 /// `lens.Platform.WEB`
 pub const PLATFORM_WEB: i32 = 3;
+/// `lens.Surface.SURFACE_CHROMIUM`, as Chromium and owocr send it
+pub const SURFACE_CHROMIUM: i32 = 4;
 /// `lens.LensOverlayFilterType.AUTO_FILTER`
 pub const FILTER_AUTO: i32 = 7;
 /// `lens.WritingDirection.WRITING_DIRECTION_TOP_TO_BOTTOM`
@@ -55,6 +57,8 @@ pub const WRITING_TOP_TO_BOTTOM: i32 = 2;
 pub struct ClientContext {
     #[prost(int32, tag = "1")]
     pub platform: i32,
+    #[prost(int32, tag = "2")]
+    pub surface: i32,
     #[prost(message, optional, tag = "4")]
     pub locale_context: Option<LocaleContext>,
     #[prost(message, optional, tag = "17")]
