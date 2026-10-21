@@ -83,6 +83,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Google Lens's key when the user has none (ocr/lens.rs); empty for a fork's pull request.
+          LOOKITAN_LENS_API_KEY: ${{ secrets.LOOKITAN_LENS_API_KEY }}
           # linuxdeploy's bundled strip cannot read the .relr.dyn sections of Ubuntu 24.04 binaries.
           NO_STRIP: "true"
           # Run linuxdeploy without mounting it through FUSE.

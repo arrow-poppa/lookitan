@@ -2,8 +2,10 @@
 // `google_lens_ocr_grpc.adapter.ts`: a protobuf `LensOverlayServerRequest` posted to
 // `lensfrontend-pa.googleapis.com/v1/crupload`. This is not an official Google API; it can change
 // or stop working at any time, and every lookup uploads the captured region to Google.
-// Without a key of the user's, it sends Chromium's public Lens key, as owocr and chrome-lens-ocr
-// do (the user's choice, 2026-10-21); a key pasted in Configurações › OCR is sent instead.
+// Without a key of the user's, it sends the key the build was given in LOOKITAN_LENS_API_KEY (the
+// GitHub Actions secret of the same name, Chromium's public Lens key as owocr and chrome-lens-ocr
+// send it), so the key is not in the source. A key pasted in Configurações › OCR is sent instead;
+// a build without the secret (local, or a fork's pull request) needs the user's key.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
@@ -23,8 +25,8 @@ use super::{OcrChar, OcrLine};
 const ENDPOINT: &str = "https://lensfrontend-pa.googleapis.com/v1/crupload";
 const USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
-/// Chromium's public key for Lens, used when the user has none.
-const CHROMIUM_API_KEY: &str = "";
+/// The build's key for Lens, used when the user has none (see the top of this file).
+const BUILT_IN_API_KEY: Option<&str> = option_env!("LOOKITAN_LENS_API_KEY");
 const MAX_DIMENSION: u32 = 1000;
 const MAX_AREA: u64 = 1_000_000;
 const CACHE_SECONDS: u64 = 30;
@@ -83,7 +85,11 @@ impl LensOcr {
     }
 
     pub fn recognize(&self, img: &RgbaImage, api_key: &str, language_tag: &str) -> Result<Vec<OcrLine>> {
-        let api_key = if api_key.trim().is_empty() { CHROMIUM_API_KEY } else { api_key.trim() };
+        let api_key = match (api_key.trim(), BUILT_IN_API_KEY.map(str::trim)) {
+            ("", Some(built_in)) if !built_in.is_empty() => built_in,
+            ("", _) => bail!("Google Lens needs an API key (Settings › OCR): this build came without one"),
+            (key, _) => key,
+        };
         let key = image_hash(img);
         if let Some((k, at, lines)) = self.cache.lock().as_ref() {
             if *k == key && at.elapsed().as_secs() < CACHE_SECONDS {
