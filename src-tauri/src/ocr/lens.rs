@@ -14,6 +14,7 @@ use image::RgbaImage;
 use parking_lot::Mutex;
 use prost::Message;
 
+use super::ink;
 use super::lens_proto as pb;
 use super::{OcrChar, OcrLine};
 
@@ -149,7 +150,10 @@ impl LensOcr {
         }
         log::info!("Google Lens answered in {} ms", started.elapsed().as_millis());
 
-        let lines = to_lines(&decoded, img.width() as f32, img.height() as f32);
+        let mut lines = to_lines(&decoded, img.width() as f32, img.height() as f32);
+        for line in &mut lines {
+            snap_to_ink(img, line);
+        }
         *self.cache.lock() = Some((key, Instant::now(), lines.clone()));
         Ok(lines)
     }
@@ -160,6 +164,82 @@ fn rect(g: &Option<pb::Geometry>, w: f32, h: f32) -> Option<(f32, f32, f32, f32)
     let x0 = (b.center_x - b.width / 2.0) * w;
     let y0 = (b.center_y - b.height / 2.0) * h;
     Some((x0, y0, x0 + b.width * w, y0 + b.height * h))
+}
+
+/// How far past Lens's word box its ink is looked for, in line heights.
+const INK_REACH: f32 = 0.15;
+
+/// Snaps a Lens line to the ink of the capture, as the local recognizer's lines are (ocr/ink.rs):
+/// the line's ink rows go in `ink_y`, and each word's ends move to its first and last ink column,
+/// near Lens's word box and never past halfway to the next word. Spaces fill the gaps between
+/// words. Lens's boxes are loose and a little off, so without this the highlight did not hug the
+/// word. Vertical lines and crops with no clear ink keep Lens's boxes.
+fn snap_to_ink(img: &RgbaImage, line: &mut OcrLine) {
+    let (iw, ih) = img.dimensions();
+    let height = line.y1 - line.y0;
+    if height <= 0.0 || height > (line.x1 - line.x0) * 1.5 {
+        return;
+    }
+    let reach = height * INK_REACH;
+    let x = ((line.x0 - reach).floor().max(0.0) as u32).min(iw.saturating_sub(1));
+    let y = (line.y0.floor().max(0.0) as u32).min(ih.saturating_sub(1));
+    let cw = (((line.x1 + reach).ceil().max(0.0) as u32).min(iw)).saturating_sub(x);
+    let ch = ((line.y1.ceil().max(0.0) as u32).min(ih)).saturating_sub(y);
+    if cw < 2 || ch < 2 {
+        return;
+    }
+    let crop = image::imageops::crop_imm(img, x, y, cw, ch).to_image();
+    let lum: Vec<u8> = crop.pixels().map(|p| ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8).collect();
+    let Some(found) = ink::measure(&lum, cw as usize, ch as usize) else { return };
+    line.ink_y = Some((y as f32 + found.y0 as f32, y as f32 + found.y1 as f32));
+
+    let cols = &found.cols;
+    let last_col = cols.len() as isize - 1;
+    let col = |at: f32| ((at - x as f32).floor() as isize).clamp(0, last_col) as usize;
+    // The words: runs of characters that are not spaces.
+    let mut words: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < line.chars.len() {
+        if line.chars[i].ch.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < line.chars.len() && !line.chars[i].ch.is_whitespace() {
+            i += 1;
+        }
+        words.push((start, i));
+    }
+    let ends: Vec<(f32, f32)> = words.iter().map(|&(a, b)| (line.chars[a].x0, line.chars[b - 1].x1)).collect();
+    let mut snapped = ends.clone();
+    for (k, &(x0, x1)) in ends.iter().enumerate() {
+        let middle = (x0 + x1) / 2.0;
+        let lo = if k == 0 { x0 - reach } else { (x0 - reach).max((ends[k - 1].1 + x0) / 2.0) };
+        let hi = if k + 1 == ends.len() { x1 + reach } else { (x1 + reach).min((x1 + ends[k + 1].0) / 2.0) };
+        let first = (col(lo)..=col(middle)).find(|&c| cols[c]);
+        let last = (col(middle)..=col(hi)).rev().find(|&c| cols[c]);
+        if let (Some(first), Some(last)) = (first, last) {
+            snapped[k] = (x as f32 + first as f32, x as f32 + last as f32 + 1.0);
+        }
+    }
+    for (k, &(a, b)) in words.iter().enumerate() {
+        let (x0, x1) = snapped[k];
+        let step = (x1 - x0) / (b - a) as f32;
+        for (j, c) in line.chars[a..b].iter_mut().enumerate() {
+            c.x0 = x0 + step * j as f32;
+            c.x1 = x0 + step * (j as f32 + 1.0);
+        }
+        // The spaces after the word share the gap to the next one.
+        let next = words.get(k + 1).map_or(line.chars.len(), |w| w.0);
+        if next > b {
+            let to = snapped.get(k + 1).map_or(x1, |w| w.0).max(x1);
+            let width = (to - x1) / (next - b) as f32;
+            for (j, c) in line.chars[b..next].iter_mut().enumerate() {
+                c.x0 = x1 + width * j as f32;
+                c.x1 = x1 + width * (j as f32 + 1.0);
+            }
+        }
+    }
 }
 
 /// Converts paragraphs/lines/words to lines with per-character spans. Lens returns word boxes;
@@ -206,4 +286,57 @@ fn to_lines(resp: &pb::ServerResponse, w: f32, h: f32) -> Vec<OcrLine> {
     }
     out.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A white capture with dark blocks as letters, at `x0..x1`, rows 104..116.
+    fn capture(words: &[(u32, u32)]) -> RgbaImage {
+        RgbaImage::from_fn(400, 200, |px, py| {
+            let inked = (104..116).contains(&py) && words.iter().any(|&(a, b)| (a..b).contains(&px));
+            if inked { image::Rgba([20, 20, 20, 255]) } else { image::Rgba([250, 250, 250, 255]) }
+        })
+    }
+
+    fn lens_line(words: &[(&str, f32, f32)]) -> OcrLine {
+        let mut text = String::new();
+        let mut chars = Vec::new();
+        for (k, &(word, x0, x1)) in words.iter().enumerate() {
+            let step = (x1 - x0) / word.chars().count() as f32;
+            for (i, c) in word.chars().enumerate() {
+                chars.push(OcrChar { ch: c, x0: x0 + step * i as f32, x1: x0 + step * (i as f32 + 1.0) });
+                text.push(c);
+            }
+            if k + 1 < words.len() {
+                chars.push(OcrChar { ch: ' ', x0: x1, x1 });
+                text.push(' ');
+            }
+        }
+        OcrLine { text, x0: words[0].1, y0: 98.0, x1: words.last().unwrap().2, y1: 122.0, chars, ink_y: None }
+    }
+
+    #[test]
+    fn lens_words_are_snapped_to_their_ink_like_the_local_models() {
+        // Lens's boxes are loose and a little shifted; the letters are at 100..160 and 180..230.
+        let img = capture(&[(100, 160), (180, 230)]);
+        let mut line = lens_line(&[("hello", 96.0, 166.0), ("world", 172.0, 228.0)]);
+        snap_to_ink(&img, &mut line);
+        assert_eq!(line.ink_y, Some((104.0, 116.0)), "the rows of the ink");
+        let (first, last) = (&line.chars[0], &line.chars[4]);
+        assert_eq!((first.x0, last.x1), (100.0, 160.0));
+        // The second word reaches its ink past Lens's box, up to the reach.
+        assert_eq!((line.chars[6].x0, line.chars[10].x1), (180.0, 230.0));
+        assert_eq!((line.chars[5].x0, line.chars[5].x1), (160.0, 180.0), "the space fills the gap");
+    }
+
+    #[test]
+    fn a_lens_line_without_clear_ink_keeps_its_boxes() {
+        let img = RgbaImage::from_pixel(400, 200, image::Rgba([250, 250, 250, 255]));
+        let mut line = lens_line(&[("hello", 96.0, 166.0)]);
+        let before = line.clone();
+        snap_to_ink(&img, &mut line);
+        assert_eq!(format!("{line:?}"), format!("{before:?}"));
+    }
 }

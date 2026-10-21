@@ -141,7 +141,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Boxes keep a little room around the ink (`INK_PAD_Y` 12% of the ink height above and below, `INK_PAD_X` 8% at the sides), never past the detected line box, and neighbours that touch share the gap. Raise these two constants if the highlight still looks tight.
   - Drawn box and hit area are separate, so the tight box does not make words hard to hit. `WordBox.hit` (`OverlayWord.hit`, `[x, y, w, h]`) spans the line's whole detected height and reaches halfway to the neighbouring words, or 0.25 × line height past a line's ends. In the overlay, `.w` is that area and takes the clicks and the hover, and its `.ink` child (`pointer-events: none`) draws the highlight and the cut-out. The pointer mode never used these boxes.
   - `Pick::is_under` tests the drawn box, the same one the user sees highlighted. Before 2026-10-15 it reached a quarter of the line height past the word box, which then spanned the whole line height and half the spaces. That made the space between words and lines count as on a word, so the block outline almost never appeared.
-  - With little contrast, under 40 levels, the old halfway estimates stay. Google Lens lines have no ink.
+  - With little contrast, under 40 levels, the old halfway estimates stay.
+  - Google Lens lines are snapped too (`snap_to_ink` in ocr/lens.rs, since 2026-10-21): `ink::measure` on the line's box in the capture gives `ink_y`, and each word's ends move to its first and last ink column within 0.15 line heights of Lens's word box (`INK_REACH`), never past halfway to the next word. Vertical lines keep Lens's boxes.
 - **OCR languages (`ocr::LANGUAGES`):** the same 38 entries and models as Lookupper's table.
   - Latin scripts use `rec_tiny`, except Romanian. Romanian, Japanese and Chinese use `rec_small`. Korean, Arabic and Greek use their own PP-OCRv5 models. Russian, Ukrainian, Bulgarian and Serbian (Cyrillic) use `rec_cyrillic`.
   - Names are in English and the list is sorted by them. An unknown tag falls back to `DEFAULT_LANGUAGE` (en-US).
@@ -216,6 +217,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): with Google Lens the word highlight did not hug the ink as with the local models: Lens lines had no `ink_y` and kept Lens's loose word boxes. `snap_to_ink` now measures the ink of each Lens line in the capture.
 - 2026-10-21 (Claude, `main`/`without-fade`): at the user's request, `main` and `without-fade` were fast-forwarded to `tests` again, with the Edge v2 token fix.
 - 2026-10-21 (Claude, `tests`): the Edge voices failed most of the time (and so did `{sentence-audio}`, whose failure left the field empty without a word): the service moved to the v2 Sec-MS-GEC on 2026-10-13. Lookitan now sends v2 to `speech.platform.bing.com` first, with `api.msedgeservices.com` and one more try as fallbacks, and the pop-up says when a note was added without the sentence audio.
 - 2026-10-21 (Claude, `main`/`without-fade`): at the user's request, `main` and `without-fade` were fast-forwarded to `tests`, with the WinUI pop-up placement.
