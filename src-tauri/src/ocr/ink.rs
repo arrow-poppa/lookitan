@@ -90,8 +90,11 @@ pub fn measure(lum: &[u8], w: usize, h: usize) -> Option<Ink> {
 /// `centers` are the characters' CTC step centres and `blank` marks the spaces among them. The
 /// line's box runs from `lo` to `hi`, one CTC step is `step` pixels wide, and the crop's first
 /// column is at `origin`. Without ink, each boundary is halfway between two centres. With ink,
-/// the boundary between two characters is the widest blank gap between them, and the line's
-/// first and last characters end at its first and last ink, so a word's box hugs its letters.
+/// the boundary between two characters is the widest blank gap in the middle half of the way
+/// between their centres, and the line's first and last characters end at its first and last ink,
+/// so a word's box hugs its letters. A gap nearer a centre is inside a character (那, 你 or 川
+/// over a busy background) and is not a boundary; with no gap in the middle the boundary stays
+/// halfway.
 pub fn spans(centers: &[f32], blank: &[bool], ink: Option<&Ink>, origin: f32, lo: f32, hi: f32, step: f32) -> Vec<(f32, f32)> {
     let n = centers.len();
     let mut out: Vec<(f32, f32)> = (0..n)
@@ -113,8 +116,9 @@ pub fn spans(centers: &[f32], blank: &[bool], ink: Option<&Ink>, origin: f32, lo
 
     for pair in glyphs.windows(2) {
         let (a, b) = (pair[0], pair[1]);
-        // The widest run of blank columns between the two centres...
-        let (from, to) = (col(centers[a]), col(centers[b]));
+        // The widest run of blank columns in the middle half between the two centres...
+        let quarter = (centers[b] - centers[a]) / 4.0;
+        let (from, to) = (col(centers[a] + quarter), col(centers[b] - quarter));
         let (mut run, mut best) = (None::<usize>, None::<(usize, usize)>);
         for k in from..=to {
             if !cols[k] {
@@ -209,6 +213,17 @@ mod tests {
         assert_eq!((spans[1].1, spans[3].0), (130.0, 140.0), "the word ends where its ink ends");
         assert_eq!(spans[2], (130.0, 140.0), "the space fills the gap");
         assert_eq!(spans[4].1, 160.0, "the line ends at its last ink");
+    }
+
+    #[test]
+    fn a_gap_inside_a_character_is_not_a_boundary() {
+        // 那 is ink at 10..25 and 28..40 with its own gap between; 你 follows at 40..60 with no
+        // blank column before it, as over a video behind a subtitle.
+        let lum = crop(70, &[10..25, 28..60]);
+        let ink = measure(&lum, 70, 20).unwrap();
+        let spans = spans(&[126.0, 150.0], &[false, false], Some(&ink), 100.0, 100.0, 170.0, 6.0);
+        assert_eq!((spans[0].1, spans[1].0), (138.0, 138.0), "the boundary stays halfway, not in 那's gap");
+        assert_eq!(spans[0].0, 110.0);
     }
 
     #[test]

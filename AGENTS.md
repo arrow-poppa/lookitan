@@ -266,6 +266,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): a Chinese subtitle over a video highlighted half of 那: `ink::spans` put the boundary between two characters at the widest blank gap between their CTC centres, and with the video behind the text the only blank columns were inside 那 (between 尹 and 阝). The boundary is now looked for only in the middle half between the centres, and stays halfway when there is no gap there (test `a_gap_inside_a_character_is_not_a_boundary`; checked on the user's screenshot with a Python copy of the pipeline).
 - 2026-10-21 (Claude, `tests`): at the user's request, Lookupper's 0.15 downward box shift was removed again (1–2 px, no visible gain).
 - 2026-10-21 (Claude, `main`, then `tests`): at the user's request `main` was fast-forwarded to `tests` (2f8f838) as a rollback point. Then the detector took Lookupper's 20 px white border, binarization 0.3 (was 0.2, which merged close lines of Chinese), unclip 1.35 (was 1.4) and its 0.15 downward shift. Its 0.8 box score and 0.65 line confidence were left out, at the user's request, so faint words are not lost.
 - 2026-10-21 (Claude, `tests`): at the user's request, the GPU detector sees up to 1920 px, as Lookupper's (the CPU keeps 1280). On a 1080p screen small Chinese text is no longer shrunk to 2/3 before detection; GPU detection costs about 2.2× the pixels.
