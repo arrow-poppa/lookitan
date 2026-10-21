@@ -23,7 +23,7 @@ Since 2026-10-16 the repository has these branches:
 | `main` | Only the user | The user merges `tests` into `main` after testing it. |
 | `with-fade` | Snapshot requested by the user | Preserves the overlay fade version at `3dcd0f0`; do not update unless the user asks. |
 | `image-ai-backup` | Snapshot requested by the user | The "Imagem AI" generated pictures, as they were when the user asked to take them out of `tests` (`634bd8e`; the `image-prompts` branch it grew in was deleted on 2026-10-21). Do not update unless the user asks. |
-| `without-fade` | Only the user, or an agent the user asks | The user has it updated together with `main` (fast-forwarded to `tests` on 2026-10-20 and again on 2026-10-21). |
+| `without-fade` | Only the user, or an agent the user asks | The user has it updated together with `main` (fast-forwarded to `tests` on 2026-10-20 and twice on 2026-10-21). |
 | `edge-tts` | Nobody: merged | The Edge neural voices, tested apart from 2026-10-20. On 2026-10-21 the user had it brought into `tests` and `main` (both fast-forwarded to `6508a5a`), so the voices are part of `tests` now. Do not commit here; work on `tests`. |
 
 - **Never commit, push, merge or open a PR into `main`.** That includes Claude in the cloud, which by default creates its own `claude/…` branch: check out `tests` instead.
@@ -216,6 +216,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `main`/`without-fade`): at the user's request, `main` and `without-fade` were fast-forwarded to `tests` again, with the Edge v2 token fix.
 - 2026-10-21 (Claude, `tests`): the Edge voices failed most of the time (and so did `{sentence-audio}`, whose failure left the field empty without a word): the service moved to the v2 Sec-MS-GEC on 2026-10-13. Lookitan now sends v2 to `speech.platform.bing.com` first, with `api.msedgeservices.com` and one more try as fallbacks, and the pop-up says when a note was added without the sentence audio.
 - 2026-10-21 (Claude, `main`/`without-fade`): at the user's request, `main` and `without-fade` were fast-forwarded to `tests`, with the WinUI pop-up placement.
 - 2026-10-21 (Claude, `tests`): pop-up placement is now WinUI's TeachingTip algorithm, read from its source, as Lookupper's popup uses it (REA/strings showed the TeachingTip and its XAML). The gap is 8 px, a word near a side gets the popup beside it before a shifted one, and the shifted variants keep the word 20 px into the card.
