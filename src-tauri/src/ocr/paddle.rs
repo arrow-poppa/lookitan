@@ -244,8 +244,10 @@ mod tests {
 
 const DET_THRESH: f32 = 0.2;
 const UNCLIP_RATIO: f32 = 1.4;
-/// Same detector limit as the original working lookup.
-const DET_MAX_SIDE: f32 = 1280.0;
+/// Longest side of the image the detector sees, as in Lookupper: the GPU detector gets more
+/// pixels, so small text (dense CJK above all) is not shrunk as much.
+const DET_MAX_SIDE_GPU: f32 = 1920.0;
+const DET_MAX_SIDE_CPU: f32 = 1280.0;
 // Bound intermediate tensors without shrinking small UI text further. Adjacent bands overlap
 // so text crossing a seam can still be detected as a complete line.
 const DET_BAND_HEIGHT: u32 = 512;
@@ -682,6 +684,10 @@ impl PaddleOcr {
         self.det_on_gpu.load(Ordering::Relaxed)
     }
 
+    fn det_max_side(&self) -> f32 {
+        if self.det_on_gpu() { DET_MAX_SIDE_GPU } else { DET_MAX_SIDE_CPU }
+    }
+
     pub fn rec_on_gpu(&self) -> bool {
         self.rec_on_gpu.load(Ordering::Relaxed)
     }
@@ -737,7 +743,7 @@ impl PaddleOcr {
         if w < 8 || h < 8 {
             return Ok(Vec::new());
         }
-        let scale = (DET_MAX_SIDE / w.max(h) as f32).min(1.0);
+        let scale = (self.det_max_side() / w.max(h) as f32).min(1.0);
         let round32 = |v: f32| -> u32 { (((v / 32.0).round() as u32) * 32).max(32) };
         let rw = round32(w as f32 * scale);
         let rh = round32(h as f32 * scale);
@@ -776,8 +782,9 @@ impl PaddleOcr {
             return Ok(Vec::new());
         }
         let longest = w.max(h) as f32;
-        let scale = if longest > DET_MAX_SIDE {
-            DET_MAX_SIDE / longest
+        let max_side = self.det_max_side();
+        let scale = if longest > max_side {
+            max_side / longest
         } else {
             1.0
         };
