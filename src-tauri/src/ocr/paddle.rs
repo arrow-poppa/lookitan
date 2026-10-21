@@ -17,7 +17,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
-use super::{ink, OcrChar, OcrLine};
+use super::{ink, is_rtl_text, reverse_rtl, OcrChar, OcrLine};
 use crate::settings::GpuPreference;
 
 macro_rules! ortx {
@@ -860,8 +860,12 @@ impl PaddleOcr {
         let blank: Vec<bool> = decoded.iter().map(|(c, _)| c.is_whitespace()).collect();
         // Word edges snap to the ink of the line, as in Lookupper.
         let spans = ink::spans(&centers, &blank, crop.ink.as_ref(), x as f32, b.x0, b.x1, step_w);
-        let chars = decoded.iter().zip(spans).map(|((c, _), (x0, x1))| OcrChar { ch: *c, x0, x1 }).collect();
-        let text: String = decoded.iter().map(|(c, _)| *c).collect();
+        let mut chars: Vec<OcrChar> = decoded.iter().zip(spans).map(|((c, _), (x0, x1))| OcrChar { ch: *c, x0, x1 }).collect();
+        // The recognizer reads right-to-left text as drawn; like Lookupper, turn it to reading order.
+        if is_rtl_text(chars.iter().map(|c| c.ch)) {
+            chars = reverse_rtl(&chars);
+        }
+        let text: String = chars.iter().map(|c| c.ch).collect();
         let ink_y = crop.ink.as_ref().map(|ink| (crop.y as f32 + ink.y0 as f32, crop.y as f32 + ink.y1 as f32));
         Some(OcrLine {
             text,

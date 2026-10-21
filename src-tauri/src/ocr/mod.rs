@@ -113,9 +113,137 @@ pub fn is_unspaced_script(c: char) -> bool {
     )
 }
 
+/// Right-to-left letters, as Lookupper's `IsRtlCharacter`: U+0590–U+08FF (Hebrew, Arabic, Syriac,
+/// Thaana, N'Ko and more) and the Hebrew and Arabic presentation forms.
+pub fn is_rtl(c: char) -> bool {
+    matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF)
+}
+
+/// Whether text reads right to left: more right-to-left characters than other letters, as
+/// Lookupper decides for a recognized line and for a paragraph.
+pub fn is_rtl_text(text: impl IntoIterator<Item = char>) -> bool {
+    let (mut rtl, mut other) = (0usize, 0usize);
+    for c in text {
+        if is_rtl(c) {
+            rtl += 1;
+        } else if c.is_alphabetic() {
+            other += 1;
+        }
+    }
+    rtl > other
+}
+
+/// Turns a right-to-left line from the order it is drawn in, left to right, to the order it is
+/// read in; the same turn takes it back. The recognizer reads Arabic as drawn, and Lookupper
+/// reverses such a line a letter at a time, each letter with its marks. Here, as in PaddleOCR,
+/// digits and left-to-right words also keep their own order ("سنة 2024", not "سنة 4202"), and
+/// brackets turn with the text.
+pub fn reverse_rtl(chars: &[OcrChar]) -> Vec<OcrChar> {
+    // Each letter with the marks drawn on it.
+    let mut clusters: Vec<std::ops::Range<usize>> = Vec::new();
+    for (i, c) in chars.iter().enumerate() {
+        match clusters.last_mut() {
+            Some(last) if attaches(c.ch) => last.end = i + 1,
+            _ => clusters.push(i..i + 1),
+        }
+    }
+    let base = |k: usize| chars[clusters[k].start].ch;
+    let ltr = |c: char| c.is_numeric() || (c.is_alphanumeric() && !is_rtl(c));
+    let joins = |c: char| matches!(c, ' ' | '.' | ',' | ':' | '/' | '%' | '+' | '-' | '*' | '\u{066B}' | '\u{066C}');
+    // Runs of left-to-right text stay whole; any other letter is turned on its own.
+    let mut segments: Vec<(std::ops::Range<usize>, bool)> = Vec::new();
+    let mut k = 0;
+    while k < clusters.len() {
+        if !ltr(base(k)) {
+            segments.push((clusters[k].clone(), false));
+            k += 1;
+            continue;
+        }
+        let mut end = k + 1;
+        loop {
+            let mut next = end;
+            while next < clusters.len() && joins(base(next)) {
+                next += 1;
+            }
+            if next < clusters.len() && ltr(base(next)) {
+                end = next + 1;
+            } else {
+                break;
+            }
+        }
+        segments.push((clusters[k].start..clusters[end - 1].end, true));
+        k = end;
+    }
+    let mut out = Vec::with_capacity(chars.len());
+    for (range, run) in segments.into_iter().rev() {
+        for (j, c) in chars[range].iter().enumerate() {
+            let mut c = c.clone();
+            if !run && j == 0 {
+                c.ch = mirrored(c.ch);
+            }
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Characters drawn on the letter before them: combining marks (Arabic harakat, Hebrew points),
+/// the zero-width joiners and variation selectors.
+fn attaches(c: char) -> bool {
+    unicode_normalization::char::is_combining_mark(c)
+        || matches!(c, '\u{200C}' | '\u{200D}' | '\u{FE00}'..='\u{FE0F}')
+}
+
+fn mirrored(c: char) -> char {
+    match c {
+        '(' => ')',
+        ')' => '(',
+        '[' => ']',
+        ']' => '[',
+        '{' => '}',
+        '}' => '{',
+        '<' => '>',
+        '>' => '<',
+        '«' => '»',
+        '»' => '«',
+        _ => c,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn drawn(text: &str) -> Vec<OcrChar> {
+        text.chars().enumerate().map(|(i, ch)| OcrChar { ch, x0: i as f32 * 10.0, x1: i as f32 * 10.0 + 10.0 }).collect()
+    }
+
+    fn text(chars: &[OcrChar]) -> String {
+        chars.iter().map(|c| c.ch).collect()
+    }
+
+    #[test]
+    fn a_right_to_left_line_is_read_backwards_keeping_numbers_marks_and_positions() {
+        // As drawn, left to right: "2024", a space, then سنة from its last letter.
+        let line = drawn("2024 ةنس");
+        assert!(is_rtl_text(line.iter().map(|c| c.ch)));
+        let read = reverse_rtl(&line);
+        assert_eq!(text(&read), "سنة 2024");
+        assert_eq!((read[0].x0, read[7].x1), (70.0, 40.0), "each character keeps its place on screen");
+        assert_eq!(text(&reverse_rtl(&read)), "2024 ةنس", "the same turn takes it back");
+        // كَتَبَ drawn: each letter followed by its fatha, from the last letter.
+        let marked = drawn("\u{628}\u{64E}\u{62A}\u{64E}\u{643}\u{64E}");
+        assert_eq!(text(&reverse_rtl(&marked)), "\u{643}\u{64E}\u{62A}\u{64E}\u{628}\u{64E}");
+        assert_eq!(text(&reverse_rtl(&drawn("(ةملك)"))), "(كلمة)", "brackets turn with the text");
+        assert_eq!(text(&reverse_rtl(&drawn("ةحفص 3.14 ىلإ"))), "إلى 3.14 صفحة");
+    }
+
+    #[test]
+    fn only_lines_mostly_in_right_to_left_letters_read_right_to_left() {
+        assert!(!is_rtl_text("hello عالم world".chars()));
+        assert!(is_rtl_text("مرحبا hi".chars()));
+        assert!(!is_rtl_text("12345".chars()));
+    }
 
     #[test]
     fn languages_are_sorted_unique_and_an_unknown_tag_reads_english() {

@@ -20,7 +20,7 @@ use prost::Message;
 
 use super::ink;
 use super::lens_proto as pb;
-use super::{OcrChar, OcrLine};
+use super::{is_rtl_text, reverse_rtl, OcrChar, OcrLine};
 
 const ENDPOINT: &str = "https://lensfrontend-pa.googleapis.com/v1/crupload";
 const USER_AGENT: &str =
@@ -153,6 +153,7 @@ impl LensOcr {
         let mut lines = to_lines(&decoded, img.width() as f32, img.height() as f32);
         for line in &mut lines {
             snap_to_ink(img, line);
+            to_reading_order(line);
         }
         *self.cache.lock() = Some((key, Instant::now(), lines.clone()));
         Ok(lines)
@@ -242,6 +243,14 @@ fn snap_to_ink(img: &RgbaImage, line: &mut OcrLine) {
     }
 }
 
+/// A right-to-left line, laid out as drawn, in reading order, as the local recognizer's lines are.
+fn to_reading_order(line: &mut OcrLine) {
+    if is_rtl_text(line.chars.iter().map(|c| c.ch)) {
+        line.chars = reverse_rtl(&line.chars);
+        line.text = line.chars.iter().map(|c| c.ch).collect();
+    }
+}
+
 /// Converts paragraphs/lines/words to lines with per-character spans. Lens returns word boxes;
 /// characters are spread evenly across their word so the same pointer-to-word logic applies.
 fn to_lines(resp: &pb::ServerResponse, w: f32, h: f32) -> Vec<OcrLine> {
@@ -263,13 +272,22 @@ fn to_lines(resp: &pb::ServerResponse, w: f32, h: f32) -> Vec<OcrLine> {
             }
             let mut text = String::new();
             let mut chars = Vec::new();
+            // Lens gives each word in reading order; the line is laid out as drawn, left to right,
+            // and turned to reading order once snapped to its ink (to_reading_order).
+            let rtl = !vertical && is_rtl_text(words.iter().flat_map(|w| w.plain_text.chars()));
             for word in words {
                 let (wx0, _, wx1, _) = rect(&word.geometry, w, h).unwrap_or((0.0, 0.0, 0.0, 0.0));
                 let n = word.plain_text.chars().count().max(1) as f32;
                 let step = (wx1 - wx0) / n;
-                for (i, c) in word.plain_text.chars().enumerate() {
-                    chars.push(OcrChar { ch: c, x0: wx0 + step * i as f32, x1: wx0 + step * (i as f32 + 1.0) });
-                    text.push(c);
+                let mut letters: Vec<OcrChar> = word.plain_text.chars().map(|ch| OcrChar { ch, x0: 0.0, x1: 0.0 }).collect();
+                if rtl {
+                    letters = reverse_rtl(&letters);
+                }
+                for (i, mut c) in letters.into_iter().enumerate() {
+                    c.x0 = wx0 + step * i as f32;
+                    c.x1 = wx0 + step * (i as f32 + 1.0);
+                    text.push(c.ch);
+                    chars.push(c);
                 }
                 if let Some(sep) = word.text_separator.as_deref() {
                     for c in sep.chars() {

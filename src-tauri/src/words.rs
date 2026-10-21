@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::ocr::{is_unspaced_script, OcrLine};
+use crate::ocr::{is_rtl_text, is_unspaced_script, OcrChar, OcrLine};
 use crate::segment::{Kind, Segment};
 
 #[derive(Clone, Debug, Serialize)]
@@ -85,6 +85,16 @@ fn pad_x(line: &OcrLine) -> f32 {
     line.ink_y.map_or(0.0, |(a, b)| (b - a) * INK_PAD_X)
 }
 
+/// The left and right of characters `start..end` of a line, with the room at the sides. In
+/// right-to-left text the first character is the rightmost.
+fn span_x(line: &OcrLine, start: usize, end: usize) -> (f32, f32) {
+    let pad = pad_x(line);
+    let chars = &line.chars[start..end.max(start + 1)];
+    let x0 = chars.iter().map(|c| c.x0).fold(f32::INFINITY, f32::min);
+    let x1 = chars.iter().map(|c| c.x1).fold(f32::NEG_INFINITY, f32::max);
+    ((x0 - pad).max(line.x0), (x1 + pad).min(line.x1))
+}
+
 /// Every word of every line as a rectangle. With an analyzer for the language (segment.rs), its
 /// words: each word of Japanese or Chinese text, a Korean word with its particles. Otherwise runs
 /// of unspaced-script characters (CJK, Thai) form one rectangle, and a click inside it still picks
@@ -93,9 +103,11 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
     let analyzed = seg.map(|s| analyzed_spans(lines, s)).unwrap_or_default();
     let mut out: Vec<WordBox> = Vec::new();
     for (li, line) in lines.iter().enumerate() {
+        if noise_line(lines, li) {
+            continue;
+        }
         let chars = &line.chars;
         let first = out.len();
-        let pad = pad_x(line);
         let spans = match analyzed.get(li) {
             Some(Some(spans)) => spans.clone(),
             _ => scanned_spans(line),
@@ -104,16 +116,12 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
             let text: String = chars[start..end].iter().map(|c| c.ch).collect();
             if !text.trim().is_empty() {
                 let (y0, y1) = text_rows(line);
-                out.push(WordBox {
-                    text,
-                    x0: (chars[start].x0 - pad).max(line.x0),
-                    y0,
-                    x1: (chars[end - 1].x1 + pad).min(line.x1),
-                    y1,
-                    hit: (0.0, 0.0, 0.0, 0.0),
-                });
+                let (x0, x1) = span_x(line, start, end);
+                out.push(WordBox { text, x0, y0, x1, y1, hit: (0.0, 0.0, 0.0, 0.0) });
             }
         }
+        // Left to right on screen, whichever way the line reads.
+        out[first..].sort_by(|a, b| a.x0.total_cmp(&b.x0));
         // Neighbours that the room made touch share the space between them.
         for k in first + 1..out.len() {
             if out[k - 1].x1 > out[k].x0 {
@@ -132,35 +140,93 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
     out
 }
 
-/// A line's words as character ranges: runs of word characters, or of unspaced-script ones.
+/// A line's words as character ranges. As in Lookupper's recognizer, a word is a run of characters
+/// without a space, cut where unspaced-script text (CJK, Thai) starts or ends; Lookupper then trims
+/// what is not a letter or digit from its ends, so "(U.S.A.)," is "U.S.A". A run of unspaced-script
+/// characters is one range.
 fn scanned_spans(line: &OcrLine) -> Vec<(usize, usize)> {
     let chars = &line.chars;
     let mut out = Vec::new();
     let mut i = 0;
     while i < chars.len() {
-        let c = chars[i].ch;
-        let unspaced = is_unspaced_script(c);
-        if !(c.is_alphanumeric() || unspaced) {
+        if chars[i].ch.is_whitespace() {
             i += 1;
             continue;
         }
+        let unspaced = is_unspaced_script(chars[i].ch);
         let start = i;
         i += 1;
-        while i < chars.len() {
-            let d = chars[i].ch;
-            let same = if unspaced { is_unspaced_script(d) } else { is_word_char(d) && !is_unspaced_script(d) };
-            if !same {
-                break;
-            }
+        while i < chars.len() && !chars[i].ch.is_whitespace() && is_unspaced_script(chars[i].ch) == unspaced {
             i += 1;
         }
-        let mut end = i;
-        while end > start + 1 && !chars[end - 1].ch.is_alphanumeric() && !unspaced {
-            end -= 1;
+        if unspaced {
+            out.push((start, i));
+        } else if let Some(span) = trimmed(chars, start, i) {
+            out.push(span);
         }
-        out.push((start, end));
     }
     out
+}
+
+/// Characters `start..end` without what is not a letter or digit at their ends.
+fn trimmed(chars: &[OcrChar], mut start: usize, mut end: usize) -> Option<(usize, usize)> {
+    while start < end && !chars[start].ch.is_alphanumeric() {
+        start += 1;
+    }
+    while end > start && !chars[end - 1].ch.is_alphanumeric() {
+        end -= 1;
+    }
+    (start < end).then_some((start, end))
+}
+
+/// Whether a character belongs to a word of a spaced script: anything but a space and the
+/// unspaced scripts.
+fn in_word(c: char) -> bool {
+    !c.is_whitespace() && !is_unspaced_script(c)
+}
+
+/// The pieces of a word between the characters that are neither letters, digits nor apostrophes
+/// ("well-known", or "end.Next" with a space the recognizer missed), the one holding character `ci`
+/// first. Empty for a word in one piece.
+fn parts(chars: &[OcrChar], start: usize, end: usize, ci: usize) -> Vec<String> {
+    let joins = |c: char| c.is_alphanumeric() || matches!(c, '\'' | '’' | '·');
+    let mut pieces: Vec<(usize, usize)> = Vec::new();
+    let mut i = start;
+    while i < end {
+        if !joins(chars[i].ch) {
+            i += 1;
+            continue;
+        }
+        let from = i;
+        while i < end && joins(chars[i].ch) {
+            i += 1;
+        }
+        if let Some(piece) = trimmed(chars, from, i) {
+            pieces.push(piece);
+        }
+    }
+    if pieces.len() < 2 {
+        return Vec::new();
+    }
+    let held = pieces.iter().position(|&(a, b)| a <= ci && ci < b).unwrap_or(0);
+    let first = pieces.remove(held);
+    std::iter::once(first).chain(pieces).map(|(a, b)| chars[a..b].iter().map(|c| c.ch).collect()).collect()
+}
+
+/// Whether a paragraph is noise that Lookupper leaves out: no letter at all, or a single Latin or
+/// Cyrillic one (a stray mark read as "l" or "о").
+fn is_noise(lines: &[OcrLine], order: &[usize]) -> bool {
+    let mut letters = order.iter().flat_map(|&li| lines[li].chars.iter().map(|c| c.ch)).filter(|c| c.is_alphabetic());
+    match (letters.next(), letters.next()) {
+        (None, _) => true,
+        (Some(c), None) => matches!(c as u32, 0x41..=0x5A | 0x61..=0x7A | 0xC0..=0x24F | 0x400..=0x52F),
+        _ => false,
+    }
+}
+
+/// Whether line `idx` is in a noise paragraph. A line with two letters never is.
+fn noise_line(lines: &[OcrLine], idx: usize) -> bool {
+    lines[idx].chars.iter().filter(|c| c.ch.is_alphabetic()).nth(1).is_none() && is_noise(lines, &paragraph(lines, idx))
 }
 
 /// Whether the analyzer reads this line.
@@ -223,23 +289,8 @@ fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) ->
     }
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, idx, start..end);
     let (y0, y1) = text_rows(line);
-    let pad = pad_x(line);
-    Some(Pick {
-        word,
-        candidates,
-        sentence,
-        sentence_lines,
-        context,
-        context_at,
-        x0: (line.chars[start].x0 - pad).max(line.x0),
-        y0,
-        x1: (line.chars[end - 1].x1 + pad).min(line.x1),
-        y1,
-    })
-}
-
-fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '\'' || c == '’' || c == '-' || c == '·'
+    let (x0, x1) = span_x(line, start, end);
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1 })
 }
 
 /// The word under the pointer, found through `seg` when it reads that word's script.
@@ -251,7 +302,7 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
         .min_by(|(_, a), (_, b)| dist(a, px, py).total_cmp(&dist(b, px, py)))
         .map(|(i, _)| i)?;
     let line = &lines[line_idx];
-    if dist(line, px, py) > (line.y1 - line.y0).max(12.0) * 1.5 {
+    if dist(line, px, py) > (line.y1 - line.y0).max(12.0) * 1.5 || noise_line(lines, line_idx) {
         return None;
     }
 
@@ -273,11 +324,24 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
                 .unwrap_or(0)
         });
     let mut ci = ci;
-    // Pointer on a space or punctuation: prefer the word just to its left, then to its right.
-    if !is_word_char(chars[ci].ch) && !is_unspaced_script(chars[ci].ch) {
-        if ci > 0 && is_word_char(chars[ci - 1].ch) {
+    // Off any word: a space, or punctuation with no letter or digit beside it ("—", "。").
+    let off = |i: usize| {
+        let c = chars[i].ch;
+        if c.is_whitespace() {
+            return true;
+        }
+        if is_unspaced_script(c) || c.is_alphanumeric() {
+            return false;
+        }
+        let from = (0..i).rev().take_while(|&k| in_word(chars[k].ch)).last().unwrap_or(i);
+        let to = (i + 1..chars.len()).take_while(|&k| in_word(chars[k].ch)).last().map_or(i + 1, |k| k + 1);
+        !chars[from..to].iter().any(|c| c.ch.is_alphanumeric())
+    };
+    // Pointer off a word: prefer the word just before it, then the one after.
+    if off(ci) {
+        if ci > 0 && !off(ci - 1) {
             ci -= 1;
-        } else if ci + 1 < chars.len() && is_word_char(chars[ci + 1].ch) {
+        } else if ci + 1 < chars.len() && !off(ci + 1) {
             ci += 1;
         } else {
             return None;
@@ -299,33 +363,22 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
         let candidates: Vec<String> = (1..=run.len()).rev().map(|n| run[..n].iter().collect()).collect();
         (ci, end, candidates)
     } else {
+        // The word as scanned_spans cuts it: the run without a space, trimmed ("(word)," -> "word").
         let mut start = ci;
-        while start > 0 && is_word_char(chars[start - 1].ch) {
+        while start > 0 && in_word(chars[start - 1].ch) {
             start -= 1;
         }
         let mut end = ci + 1;
-        while end < chars.len() && is_word_char(chars[end].ch) {
+        while end < chars.len() && in_word(chars[end].ch) {
             end += 1;
         }
-        // Trim hyphens and apostrophes at the edges ("-word'" -> "word").
-        while start < end && !chars[start].ch.is_alphanumeric() {
-            start += 1;
-        }
-        while end > start && !chars[end - 1].ch.is_alphanumeric() {
-            end -= 1;
-        }
-        if start >= end {
-            return None;
-        }
+        let (start, end) = trimmed(chars, start, end)?;
         let word: String = chars[start..end].iter().map(|c| c.ch).collect();
         let mut candidates = crate::dict::candidate_forms(&word);
-        // "well-known" -> also try "well" and "known" if the compound is not in the dictionary.
-        if word.contains('-') {
-            for part in word.split('-') {
-                if !part.is_empty() {
-                    candidates.extend(crate::dict::candidate_forms(part));
-                }
-            }
+        // "well-known" -> also "known" (the part under the pointer) and "well", if the dictionary
+        // lacks the compound.
+        for part in parts(chars, start, end, ci) {
+            candidates.extend(crate::dict::candidate_forms(&part));
         }
         (start, end, candidates)
     };
@@ -340,19 +393,8 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
     let span = if unspaced { ci..ci + 1 } else { start..end };
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, line_idx, span);
     let (y0, y1) = text_rows(line);
-    let pad = pad_x(line);
-    Some(Pick {
-        word,
-        candidates,
-        sentence,
-        sentence_lines,
-        context,
-        context_at,
-        x0: (chars[start].x0 - pad).max(line.x0),
-        y0,
-        x1: (chars[end.saturating_sub(1).max(start)].x1 + pad).min(line.x1),
-        y1,
-    })
+    let (x0, x1) = span_x(line, start, end);
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1 })
 }
 
 fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
@@ -405,7 +447,8 @@ fn joins(a: &OcrLine, b: &OcrLine) -> bool {
 }
 
 /// The lines of the paragraph holding `idx`, in reading order: rows top to bottom, the pieces of
-/// a row left to right.
+/// a row left to right, or right to left in a right-to-left paragraph (as Lookupper's
+/// `IsRtlParagraph` decides).
 fn paragraph(lines: &[OcrLine], idx: usize) -> Vec<usize> {
     let mut members = vec![idx];
     let mut seen = vec![false; lines.len()];
@@ -422,6 +465,7 @@ fn paragraph(lines: &[OcrLine], idx: usize) -> Vec<usize> {
         k += 1;
     }
     members.sort_by(|&a, &b| lines[a].y0.total_cmp(&lines[b].y0));
+    let rtl = is_rtl_text(members.iter().flat_map(|&m| lines[m].text.chars()));
     let mut rows: Vec<Vec<usize>> = Vec::new();
     for m in members {
         match rows.last_mut() {
@@ -432,6 +476,9 @@ fn paragraph(lines: &[OcrLine], idx: usize) -> Vec<usize> {
     rows.into_iter()
         .flat_map(|mut row| {
             row.sort_by(|&a, &b| lines[a].x0.total_cmp(&lines[b].x0));
+            if rtl {
+                row.reverse();
+            }
             row
         })
         .collect()
@@ -457,7 +504,7 @@ fn join(lines: &[OcrLine], order: &[usize]) -> (Vec<char>, Vec<Piece>) {
         let Some(first) = cs.iter().position(|c| !c.is_whitespace()) else { continue };
         let last = cs.iter().rposition(|c| !c.is_whitespace()).map_or(first, |i| i + 1);
         let n = text.len();
-        if n >= 2 && text[n - 1] == '-' && text[n - 2].is_alphabetic() && cs[first].is_lowercase() {
+        if hyphenated(&text, cs[first]) {
             text.pop();
             if let Some(p) = pieces.last_mut() {
                 p.len -= 1;
@@ -469,6 +516,19 @@ fn join(lines: &[OcrLine], order: &[usize]) -> (Vec<char>, Vec<Piece>) {
         text.extend_from_slice(&cs[first..last]);
     }
     (text, pieces)
+}
+
+/// Whether a paragraph's text so far ends in the first part of a word hyphenated across the line
+/// break, and `next` starts its second part. As Lookupper decides: a hyphen (-, U+2010, U+2011)
+/// after a letter, and then a lowercase letter, or a capital after a word with no lowercase
+/// ("EXAM-" "PLE", but not "Anglo-" "Saxon").
+fn hyphenated(text: &[char], next: char) -> bool {
+    let n = text.len();
+    if n < 2 || !matches!(text[n - 1], '-' | '\u{2010}' | '\u{2011}') || !text[n - 2].is_alphabetic() {
+        return false;
+    }
+    let start = text.iter().rposition(|c| c.is_whitespace()).map_or(0, |i| i + 1);
+    next.is_lowercase() || (next.is_uppercase() && !text[start..].iter().any(|c| c.is_lowercase()))
 }
 
 /// What surrounds a picked word.
@@ -681,6 +741,68 @@ mod tests {
         assert_eq!(p.word, "good");
         assert_eq!(p.sentence, "It was a good example of work.");
         assert_eq!(p.sentence_lines, [1, 2]);
+    }
+
+    #[test]
+    fn a_line_end_hyphen_joins_as_lookupper_decides() {
+        let sentence = |a: &str, b: &str| pick(&[line(a, 100.0, 100.0), line(b, 100.0, 125.0)], 105.0, 110.0, None).unwrap().sentence;
+        assert_eq!(sentence("an exam\u{2010}", "ple here."), "an example here.");
+        assert_eq!(sentence("THE EXAM-", "PLE IS HERE."), "THE EXAMPLE IS HERE.");
+        assert_eq!(sentence("the Anglo-", "Saxon king."), "the Anglo- Saxon king.", "a capital after lowercase starts a new word");
+    }
+
+    #[test]
+    fn a_word_is_the_run_without_spaces_trimmed_at_its_ends() {
+        let lines = [line("in the (U.S.A.), end.Next one", 100.0, 100.0)];
+        // On the "(" and on the "S".
+        assert_eq!(pick(&lines, 175.0, 110.0, None).unwrap().word, "U.S.A");
+        assert_eq!(pick(&lines, 205.0, 110.0, None).unwrap().word, "U.S.A");
+        // On the "N".
+        let p = pick(&lines, 315.0, 110.0, None).unwrap();
+        assert_eq!(p.word, "end.Next");
+        let at = |w: &str| p.candidates.iter().position(|c| c == w).unwrap();
+        assert!(at("Next") < at("end"), "the part under the pointer first: {:?}", p.candidates);
+        let texts: Vec<String> = super::word_boxes(&lines, None).into_iter().map(|b| b.text).collect();
+        assert_eq!(texts, ["in", "the", "U.S.A", "end.Next", "one"]);
+        // Punctuation standing alone picks the word just before it.
+        assert_eq!(pick(&[line("今日は雨。", 100.0, 100.0)], 145.0, 110.0, None).unwrap().word, "雨");
+    }
+
+    #[test]
+    fn a_paragraph_without_two_letters_is_noise() {
+        assert!(pick(&[line("a", 100.0, 100.0)], 105.0, 110.0, None).is_none());
+        assert!(pick(&[line("2024", 100.0, 100.0)], 115.0, 110.0, None).is_none());
+        assert!(super::word_boxes(&[line("l", 100.0, 100.0)], None).is_empty());
+        let lines = [line("a", 100.0, 100.0), line("cat sat", 100.0, 125.0)];
+        assert_eq!(pick(&lines, 105.0, 110.0, None).unwrap().word, "a", "a letter in a paragraph of text");
+        assert_eq!(pick(&[line("日", 100.0, 100.0)], 105.0, 110.0, None).unwrap().word, "日");
+    }
+
+    /// A right-to-left line in reading order, its first character at the right end `x1`.
+    fn rtl_line(text: &str, x1: f32, y0: f32) -> OcrLine {
+        let n = text.chars().count();
+        let chars: Vec<OcrChar> = text.chars().enumerate()
+            .map(|(i, ch)| OcrChar { ch, x0: x1 - (i + 1) as f32 * 10.0, x1: x1 - i as f32 * 10.0 })
+            .collect();
+        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None }
+    }
+
+    #[test]
+    fn right_to_left_words_and_paragraphs_read_from_the_right() {
+        let l = rtl_line("مرحبا بالعالم", 300.0, 100.0);
+        let boxes = super::word_boxes(std::slice::from_ref(&l), None);
+        let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["بالعالم", "مرحبا"], "boxes left to right on screen");
+        assert!(boxes[0].x0 < boxes[0].x1 && boxes[0].x1 <= boxes[1].x0, "{boxes:?}");
+        let p = pick(std::slice::from_ref(&l), 285.0, 110.0, None).unwrap();
+        assert_eq!(p.word, "مرحبا");
+        assert_eq!((p.x0, p.x1), (250.0, 300.0));
+        // Two pieces of one row: the right one is read first.
+        let lines = [rtl_line("بالعالم", 170.0, 200.0), rtl_line("مرحبا", 250.0, 200.0)];
+        let p = pick(&lines, 105.0, 210.0, None).unwrap();
+        assert_eq!(p.word, "بالعالم");
+        assert_eq!(p.sentence, "مرحبا بالعالم");
+        assert_eq!(p.sentence_lines, [1, 0]);
     }
 
     #[test]
