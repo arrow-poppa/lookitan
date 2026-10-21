@@ -61,7 +61,9 @@ async function renderDetail() {
     const rows = [
         ['Forma de dicionário', w.dictionaryForm], ['Tradução', w.translation], ['Definição', w.definition],
         ['Frase', w.sentence], ['Tradução da frase', (w.contextTranslation || '').replace(/\*\*/g, '')],
-        ['IPA', w.ipa ? `/${w.ipa}/` : ''], ['CEFR', w.cefr], ['Classe gramatical', (w.partOfSpeech || []).join(', ')],
+        ['Leitura', w.reading], ['IPA', w.ipa ? `/${w.ipa}/` : ''], ['CEFR', w.cefr], ['Classe gramatical', (w.partOfSpeech || []).join(', ')],
+        ['Sinônimos', (w.synonyms || []).join(', ')],
+        ['Componentes', (w.components || []).map((c) => `${c.part}${c.reading ? ` (${c.reading})` : ''}: ${c.meaning}`).join(' · ')],
         ['Explicação', w.explanation], ['Janela', w.windowTitle], ['Salva em', new Date(w.createdAt).toLocaleString('pt-BR')],
     ].filter(([, v]) => v);
     const dl = el('dl');

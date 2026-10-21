@@ -254,11 +254,21 @@ async function audioForAnki(lookup, term) {
 
 // ------------------------------------------------------------------ AI word card
 
+/** The card's synonyms and components, as the pop-up and the saved cards show them. */
+function cardExtrasHtml(card, components) {
+    const synonyms = card.synonyms || [];
+    const parts = components ? (card.components || []) : [];
+    return `${synonyms.length ? `<div class="synonyms"><span class="muted">Sinônimos:</span> ${synonyms.map(escapeHtml).join(', ')}</div>` : ''}
+        ${parts.length ? `<div class="components"><div class="components-title">Componentes</div>${parts.map((c) => `
+            <div class="component"><span class="part">${escapeHtml(c.part)}</span><span class="part-text">${c.reading ? `<span class="part-reading">${escapeHtml(c.reading)}</span>` : ''}<span class="part-meaning">${escapeHtml(c.meaning)}</span></span></div>`).join('')}</div>` : ''}`;
+}
+
 function renderCard(body, card, pending = false) {
     const p = state.payload;
     const headword = card.headword || p.word;
     const chips = [];
     if (card.cefr && /^[ABC][12]$/.test(card.cefr)) { chips.push(`<span class="cefr ${card.cefr.toLowerCase()}">${card.cefr}</span>`); }
+    if (card.reading) { chips.push(`<span class="reading">${escapeHtml(card.reading)}</span>`); }
     if (card.ipa) { chips.push(`<span class="ipa">/${escapeHtml(card.ipa)}/</span>`); }
     for (const pos of card.partOfSpeech) { chips.push(`<span class="chip">${escapeHtml(pos)}</span>`); }
     for (const l of card.labels) { chips.push(`<span class="chip">${escapeHtml(l)}</span>`); }
@@ -268,6 +278,7 @@ function renderCard(body, card, pending = false) {
         ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
+        ${cardExtrasHtml(card, ai.cardComponents !== false)}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
         ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div>${markContext(p)}</div></div></details>` : ''}`;
     bindSentence(body, p.context || p.sentence);
@@ -1011,6 +1022,7 @@ ${savedCardHtml(c, c.id === lookup.savedId)}
  */
 function savedCardHtml(c, current) {
     const chips = [
+        c.reading ? `<span class="reading">${escapeHtml(c.reading)}</span>` : '',
         c.ipa ? `<span class="ipa">/${escapeHtml(c.ipa)}/</span>` : '',
         c.cefr && /^[ABC][12]$/.test(c.cefr) ? `<span class="cefr ${c.cefr.toLowerCase()}">${c.cefr}</span>` : '',
         ...[...(c.partOfSpeech || []), ...(c.labels || [])].map((t) => `<span class="chip">${escapeHtml(t)}</span>`),
@@ -1024,6 +1036,7 @@ function savedCardHtml(c, current) {
         ${c.dictionaryForm && c.word && c.dictionaryForm.toLowerCase() !== c.word.toLowerCase() ? `<div class="muted saved-form">Na tela: ${escapeHtml(c.word)}</div>` : ''}
         ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
         ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
+        ${cardExtrasHtml(c, true)}
         ${c.explanation ? `<div class="explanation ai-text">${renderMarkdown(c.explanation)}</div>` : ''}
         ${text ? `<blockquote>${markWord(text, c.word)}</blockquote>` : ''}
         ${c.contextTranslation ? `<p class="ctx-tr">${highlightStars(c.contextTranslation)}</p>` : ''}

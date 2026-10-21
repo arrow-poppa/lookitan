@@ -1,11 +1,24 @@
 // Prompts and parsing for the two built-in AI "dictionaries": the word card (word in context, with
-// IPA, CEFR level, part of speech, definition and translation) and the context translator.
+// IPA, CEFR level, part of speech, definition, translation and synonyms; for Chinese and Japanese the
+// reading, and, when switched on, the word's components) and the context translator.
 
 /** Default instruction for the card's "translation" key (the "Prompt da tradução da palavra"). */
 export const WORD_TRANSLATION_PROMPT = 'the translation of the word in this context into {{translationLanguage}}';
 
 /** Where the card prompt receives the translation key; empty when the word translation is off. */
 export const TRANSLATION_FIELD = '{{translationField}}';
+
+/** Where the card prompt receives the reading (pinyin, kana), for Chinese and Japanese only. */
+export const READING_FIELD = '{{readingField}}';
+
+/** Where the card prompt receives the components; empty when they are switched off. */
+export const COMPONENTS_FIELD = '{{componentsField}}';
+
+/** The synonyms key of the card prompt, for every language. */
+export const SYNONYMS_KEY = ', "synonyms": [up to three synonyms of the word in this sense, in the same language, or []]';
+
+/** What was added to the card prompt after the translation's marker, for migration. */
+export const SYNONYMS_READING_AND_COMPONENTS = SYNONYMS_KEY + READING_FIELD + COMPONENTS_FIELD;
 
 /** The translation clause of the card prompt before it had its own field (for migration). */
 export const LEGACY_TRANSLATION_FIELD = `, "translation": ${WORD_TRANSLATION_PROMPT}`;
@@ -20,7 +33,23 @@ export const CARD_PROMPT =
     '"partOfSpeech": ["noun", ...], ' +
     '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
     '"definition": a one or two sentence definition in {{definitionLanguage}}' +
-    TRANSLATION_FIELD + '}';
+    TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + '}';
+
+const READINGS = {
+    zh: 'the pinyin of the headword with tone marks, e.g. "qīxǔ"',
+    ja: 'the reading of the headword in hiragana',
+};
+
+const COMPONENTS =
+    ', "components": [the parts the word is built from, in order: each character for Chinese and Japanese, ' +
+    'otherwise its roots, affixes or the words of a compound; [] for a word of one part. Each is ' +
+    '{"part": the part as written, "reading": its pinyin or kana reading for Chinese and Japanese, otherwise "", ' +
+    '"meaning": its short meaning in {{definitionLanguage}}}]';
+
+/** The base language of a BCP 47 tag ("zh-Hant-TW" -> "zh"). */
+function baseLanguage(tag) {
+    return String(tag || '').split('-')[0].toLowerCase();
+}
 
 export const CONTEXT_PROMPT =
     'Translate the text below into {{translationLanguage}}. ' +
@@ -50,16 +79,31 @@ export function fillLanguages(template, settings) {
 /**
  * The word-card prompt as sent. {{translationField}} becomes the "translation" key with the word
  * translation prompt, or nothing when the word translation is turned off, so the model spends no
- * tokens on it. A card prompt without the marker is sent as written.
+ * tokens on it. Likewise {{readingField}} asks for the reading only in Chinese and Japanese, and
+ * {{componentsField}} for the components only when they are switched on. A card prompt without a marker is sent as written.
  * @param {string} template
- * @param {{showWordTranslation?: boolean}} settings
- * @param {{wordTranslationPrompt?: string}} [ai]
+ * @param {{showWordTranslation?: boolean, ocrLanguage?: string}} settings
+ * @param {{wordTranslationPrompt?: string, cardComponents?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
     const instruction = typeof ai.wordTranslationPrompt === 'string' && ai.wordTranslationPrompt.trim() !== '' ?
         ai.wordTranslationPrompt.trim() : WORD_TRANSLATION_PROMPT;
     const field = settings.showWordTranslation === false ? '' : `, "translation": ${instruction}`;
-    return fillLanguages(template.replaceAll(TRANSLATION_FIELD, field), settings);
+    const language = baseLanguage(settings.ocrLanguage);
+    const reading = READINGS[language] ? `, "reading": ${READINGS[language]}` : '';
+    const components = ai.cardComponents === false ? '' : COMPONENTS;
+    return fillLanguages(template
+        .replaceAll(TRANSLATION_FIELD, field)
+        .replaceAll(READING_FIELD, reading)
+        .replaceAll(COMPONENTS_FIELD, components), settings);
+}
+
+/** The components of a reply: objects with a part, its reading and its meaning. */
+function componentList(value) {
+    if (!Array.isArray(value)) { return []; }
+    return value
+        .filter((c) => typeof c === 'object' && c !== null && c.part)
+        .map((c) => ({part: String(c.part), reading: String(c.reading || ''), meaning: String(c.meaning || '')}));
 }
 
 /**
@@ -82,6 +126,9 @@ export function parseCard(text) {
             labels: list(obj.labels),
             definition: String(obj.definition || ''),
             translation: String(obj.translation || ''),
+            reading: String(obj.reading || ''),
+            synonyms: list(obj.synonyms),
+            components: componentList(obj.components),
         };
     } catch (_e) {
         return null;
@@ -127,8 +174,8 @@ export function parseCardProgress(text) {
     // A stream may stop in a key, immediately after a colon, or inside a string/list.
     for (const filler of ['', 'null', ':null']) {
         const card = parseCard(prefix + filler + suffix);
-        if (card && (card.headword || card.ipa || card.cefr || card.definition || card.translation ||
-            card.partOfSpeech.length || card.labels.length)) { return card; }
+        if (card && (card.headword || card.ipa || card.cefr || card.definition || card.translation || card.reading ||
+            card.partOfSpeech.length || card.labels.length || card.synonyms.length || card.components.length)) { return card; }
     }
     return null;
 }

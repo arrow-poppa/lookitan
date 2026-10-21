@@ -197,6 +197,32 @@ test('turning the word translation off drops it from the prompt and from the car
     assert(shown.innerHTML.includes('correr'));
 });
 
+test('synonyms are asked in every language, the reading only in Chinese and Japanese, the components only when on', async () => {
+    const answer = '{"headword":"期許","reading":"qīxǔ","definition":"expectation","synonyms":["期望","期待"],' +
+        '"components":[{"part":"期","reading":"qī","meaning":"period of time; to expect"},{"part":"許","reading":"xǔ","meaning":"to allow"}]}';
+    const prompts = [];
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => { prompts.push(request.prompt); return answer; }});
+    view.ai.cardPrompt = CARD_PROMPT;
+    view.settings.ocrLanguage = 'zh-TW';
+    const body = new Element();
+    await view.popup.runCard(body);
+    assert(prompts[0].includes('"synonyms"') && prompts[0].includes('pinyin') && prompts[0].includes('"components"'));
+    assert(!/\{\{\w+Field\}\}/.test(prompts[0]), 'every marker is filled');
+    for (const shown of ['qīxǔ', 'Sinônimos:', '期望, 期待', 'Componentes', 'period of time; to expect', 'xǔ']) {
+        assert(body.innerHTML.includes(shown), shown);
+    }
+    view.settings.ocrLanguage = 'ja-JP';
+    await view.popup.runCard(new Element());
+    assert(prompts[1].includes('hiragana') && !prompts[1].includes('pinyin of the headword'));
+    view.settings.ocrLanguage = 'en-US';
+    view.ai.cardComponents = false;
+    const off = new Element();
+    await view.popup.runCard(off);
+    assert(prompts[2].includes('"synonyms"') && prompts[2].includes('"ipa"'), 'synonyms and IPA in every language');
+    assert(!prompts[2].includes('"reading"') && !prompts[2].includes('"components"'));
+    assert(!off.innerHTML.includes('Componentes'), 'switched off, components are not shown');
+});
+
 test('the popup grows from the word like a TeachingTip and a new lookup cancels a pending close', async () => {
     const view = await fixture({explain: async () => '{}'});
     const card = view.document.getElementById('card');

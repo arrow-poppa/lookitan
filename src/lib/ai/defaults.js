@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -65,6 +65,11 @@ function baseAiOptions() {
         systemPrompt: '',
         // The word card ("IA — palavra no contexto").
         autoGenerateOnLookup: true,
+        // The card's "Componentes": the parts of the word, in any language. Off, the prompt does
+        // not ask for them.
+        cardComponents: true,
+        // Bumped when markers are added to the card prompt, so a saved prompt gets them once.
+        cardPromptVersion: 2,
         // The context translator has its own switch.
         autoTranslateContext: true,
         // Blurs the context translation until it is clicked, like hideWordTranslation.
@@ -102,7 +107,7 @@ export function normalizeAiOptions(stored) {
         return defaultAiOptions();
     }
     const out = {...base, ...stored};
-    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation']) {
+    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'cardComponents']) {
         if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
     }
     // One switch used to start both the word card and the context translation: until the
@@ -122,6 +127,14 @@ export function normalizeAiOptions(stored) {
     // clause to the {{translationField}} marker and keep the rest of the user's edits.
     if (!out.cardPrompt.includes(TRANSLATION_FIELD) && out.cardPrompt.includes(LEGACY_TRANSLATION_FIELD)) {
         out.cardPrompt = out.cardPrompt.replace(LEGACY_TRANSLATION_FIELD, TRANSLATION_FIELD);
+    }
+    // Card prompts saved before the synonyms, reading and components: they go right after the
+    // translation's marker, once, so a user who later takes them out keeps them out.
+    if (stored.cardPromptVersion !== 2) {
+        if (!out.cardPrompt.includes(COMPONENTS_FIELD) && out.cardPrompt.includes(TRANSLATION_FIELD)) {
+            out.cardPrompt = out.cardPrompt.replace(TRANSLATION_FIELD, TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS);
+        }
+        out.cardPromptVersion = 2;
     }
     return out;
 }

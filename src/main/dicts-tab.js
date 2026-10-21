@@ -308,7 +308,7 @@ function renderAiWord(root) {
     const vars = escapeHtml('{{target}} (palavra), {{sentence}} (o parágrafo em volta da palavra), {{definitionLanguage}}, {{translationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-word']),
-        el('p', {class: 'lead'}, 'Explica a palavra no sentido exato em que aparece na tela, com forma de dicionário, IPA, nível CEFR, classe gramatical, definição e tradução. Usa o seu provedor e o seu modelo (BYOK); nada passa por servidores do Lookitan.'),
+        el('p', {class: 'lead'}, 'Explica a palavra no sentido exato em que aparece na tela, com forma de dicionário, IPA, nível CEFR, classe gramatical, definição, tradução e sinônimos, a leitura em pinyin ou kana no chinês e no japonês e, se quiser, os componentes da palavra. Usa o seu provedor e o seu modelo (BYOK); nada passa por servidores do Lookitan.'),
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             ...languageRows(),
@@ -316,6 +316,8 @@ function renderAiWord(root) {
                 control: toggle(s.showWordTranslation !== false, (v) => { s.showWordTranslation = v; save(); renderDetail(); })}),
             s.showWordTranslation !== false ? cardRow({icon: 'eyeOff', title: 'Ocultar a tradução da palavra', desc: 'A tradução só aparece quando você clica nela.',
                 control: toggle(s.hideWordTranslation, (v) => { s.hideWordTranslation = v; save(); })}) : null,
+            cardRow({icon: 'book', title: 'Componentes', desc: 'As partes da palavra, em qualquer idioma: cada caractere no chinês e no japonês (com a leitura), raízes, afixos ou as palavras de um composto nos outros. Também vão para o Anki em {ai-card} e {ai-components}. Desligado, a IA nem gera os componentes, o que gasta menos tokens.',
+                control: aiControl('cardComponents', 'Componentes', toggle(ai.cardComponents !== false, (v) => { ai.cardComponents = v; save(); }))}),
             cardRow({icon: 'sparkle', title: 'Gerar o card automaticamente ao abrir o popup', desc: 'Desligado: o card só é gerado quando você clica em Gerar.',
                 control: aiControl('autoGenerateOnLookup', 'Gerar o card automaticamente ao abrir o popup', toggle(ai.autoGenerateOnLookup, (v) => { ai.autoGenerateOnLookup = v; save(); }))}),
             cardRow({icon: 'sparkle', title: 'Explicar automaticamente ao consultar', desc: 'Desligado: gera a explicação somente ao clicar em Explicar.',
@@ -326,7 +328,7 @@ function renderAiWord(root) {
         providerSection(),
         el('h3', {}, 'Prompts'),
         el('div', {class: 'group'},
-            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
+            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada; ${escapeHtml('{{readingField}}')} pede a leitura só no chinês (pinyin) e no japonês (kana); ${escapeHtml('{{componentsField}}')} pede os componentes só com a opção Componentes ligada.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
             promptCard('Prompt da tradução da palavra', `O que a IA põe no campo "translation" do card. Só é enviado com a tradução da palavra ligada. Variáveis: ${vars}.`, () => ai.wordTranslationPrompt, (v) => { ai.wordTranslationPrompt = v; }, WORD_TRANSLATION_PROMPT, 'wordTranslationPrompt'),
             promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT, 'customPrompt'),
             el('div', {class: 'card-row stack'},

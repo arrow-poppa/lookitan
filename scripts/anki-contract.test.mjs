@@ -168,6 +168,26 @@ class FakeDOMParser {
     }
 }
 
+test('the AI card carries the reading, synonyms and components, which also have markers of their own', async () => {
+    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); }, {DOMParser: FakeDOMParser});
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
+        A: {value: '{ai-card}'}, B: {value: '{ai-card-plain}'}, C: {value: '{reading}'}, D: {value: '{ai-synonyms}'},
+        E: {value: '{ai-components}'}, F: {value: '{ai-components-plain}'}, G: {value: '{ai-reading}'}}}];
+    const aiCard = {definition: 'expectation', ipa: '', reading: 'qīxǔ', synonyms: ['期望', '期待'],
+        components: [{part: '期', reading: 'qī', meaning: 'period of time'}, {part: '許', reading: 'xǔ', meaning: 'to allow'}]};
+    const f = (await notes.buildNote({word: '期許', sentence: 's', aiCard}, options, null)).fields;
+    assert(f.A.includes('<b>期許</b> qīxǔ') && f.A.includes('<i>期望, 期待</i>') && f.A.includes('<div><b>期</b> qī — period of time</div>'));
+    assert.equal(f.B, '期許 qīxǔ<br>expectation<br>期望, 期待<br>期 (qī): period of time<br>許 (xǔ): to allow');
+    assert.equal(f.C, 'qīxǔ', '{reading} is the pinyin or kana when there is one');
+    assert.equal(f.D, '期望, 期待');
+    assert.equal(f.E, '<div><b>期</b> qī — period of time</div><div><b>許</b> xǔ — to allow</div>');
+    assert.equal(f.F, '期 (qī): period of time<br>許 (xǔ): to allow');
+    assert.equal(f.G, 'qīxǔ');
+    const plain = (await notes.buildNote({word: 'run', sentence: 's', aiCard: {definition: 'move fast', ipa: 'rʌn'}}, options, null)).fields;
+    assert.equal(plain.C, 'rʌn', 'without a reading, {reading} is still the IPA');
+    assert.equal(plain.E, '');
+});
+
 test('{ai-card} is the AI part alone by default, and also carries the dictionaries when chosen', async () => {
     const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); }, {DOMParser: FakeDOMParser});
     options.cardFormats = [{deck: 'D', model: 'Basic', fields: {Back: {value: '{ai-card}'}, Plain: {value: '{ai-card-plain}'}}}];

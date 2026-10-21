@@ -47,7 +47,7 @@ export const MARKERS = [
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
     'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
-    'translation', 'context-translation', 'cefr', 'part-of-speech', 'tags', 'document-title', 'search-query',
+    'translation', 'context-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
 ];
 
 /** Name of the AI word card when it is listed as a dictionary in glossary markers. */
@@ -205,21 +205,34 @@ function definitions(clean, ai, order) {
     return defs.map((d, i) => ({d, i})).sort((a, b) => (rank(a.d.dictionary) - rank(b.d.dictionary)) || (a.i - b.i)).map(({d}) => d);
 }
 
+/** The card's components ("期 (qī): period of time"), one per line, as HTML. */
+function componentsHtml(ai) {
+    return (ai.components || []).map((c) =>
+        `<div><b>${escapeHtml(c.part)}</b>${c.reading ? ` ${escapeHtml(c.reading)}` : ''} — ${escapeHtml(c.meaning)}</div>`).join('');
+}
+
+function componentsPlain(ai) {
+    return (ai.components || []).map((c) => `${c.part}${c.reading ? ` (${c.reading})` : ''}: ${c.meaning}`);
+}
+
 /**
- * The AI word card: headword, IPA, CEFR, part of speech and labels, translation, definition and
- * the explanation if it was generated. With `dictionaries` (aiCardMode 'dictionaries') the
+ * The AI word card: headword with its reading (pinyin, kana) and IPA, CEFR, part of speech and
+ * labels, translation, definition, synonyms, components and the explanation if it was generated. With `dictionaries` (aiCardMode 'dictionaries') the
  * dictionaries' entries follow it. The context is left out: it goes in {sentence}.
  */
 function aiCardHtml(headword, ai, explanation, dictionaries = []) {
     const glossary = glossaryHtml(dictionaries);
     if (!ai.definition && !ai.translation && !explanation) { return glossary; }
     const head = [`<b>${escapeHtml(headword)}</b>`];
+    if (ai.reading) { head.push(escapeHtml(ai.reading)); }
     if (ai.ipa) { head.push(`/${escapeHtml(ai.ipa)}/`); }
     const tags = [ai.cefr, ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
     const parts = [`<div>${head.join(' ')}</div>`];
     if (tags.length) { parts.push(`<div><i>${tags.map(escapeHtml).join(', ')}</i></div>`); }
     if (ai.translation) { parts.push(`<div>${escapeHtml(ai.translation)}</div>`); }
     if (ai.definition) { parts.push(`<div>${escapeHtml(ai.definition)}</div>`); }
+    if (ai.synonyms?.length) { parts.push(`<div><i>${ai.synonyms.map(escapeHtml).join(', ')}</i></div>`); }
+    if (ai.components?.length) { parts.push(`<div>${componentsHtml(ai)}</div>`); }
     if (explanation) { parts.push(`<div>${renderMarkdown(explanation)}</div>`); }
     if (glossary) { parts.push(`<hr>${glossary}`); }
     return `<div style="text-align: left;">${parts.join('')}</div>`;
@@ -229,10 +242,12 @@ function aiCardPlain(headword, ai, explanation, dictionaries = []) {
     const glossary = glossaryPlain(dictionaries);
     if (!ai.definition && !ai.translation && !explanation) { return glossary; }
     const tags = [ai.cefr, ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
-    const lines = [`${headword}${ai.ipa ? ` /${ai.ipa}/` : ''}`];
+    const lines = [`${headword}${ai.reading ? ` ${ai.reading}` : ''}${ai.ipa ? ` /${ai.ipa}/` : ''}`];
     if (tags.length) { lines.push(`(${tags.join(', ')})`); }
     if (ai.translation) { lines.push(ai.translation); }
     if (ai.definition) { lines.push(ai.definition); }
+    if (ai.synonyms?.length) { lines.push(ai.synonyms.join(', ')); }
+    lines.push(...componentsPlain(ai));
     if (explanation) { lines.push(markdownToText(explanation)); }
     const text = escapeHtml(lines.join('\n')).replace(/\n/g, '<br>');
     return glossary ? `${text}<br>${glossary}` : text;
@@ -252,7 +267,7 @@ function cloze(sentence, word) {
  * @property {string} [sentence]
  * @property {string} [context] The paragraph around the word, used when contextMode is 'paragraph'.
  * @property {{name: string, html: string}[]} [glossaries]
- * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string}} [aiCard]
+ * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string, reading?: string, synonyms?: string[], components?: {part: string, reading: string, meaning: string}[]}} [aiCard]
  * @property {string} [aiExplanation]
  * @property {string} [contextTranslation]
  * @property {() => Promise<string|null>} [screenshot] Base64 PNG of the capture.
@@ -287,7 +302,7 @@ export async function buildNote(ctx, anki, conn) {
     const cardDictionaries = anki.aiCardMode === 'dictionaries' ? defs.filter((d) => d.dictionary !== AI_GLOSSARY_NAME) : [];
     const values = {
         'expression': escapeHtml(ctx.headword || ctx.word),
-        'reading': escapeHtml(ai.ipa || ''),
+        'reading': escapeHtml(ai.reading || ai.ipa || ''),
         'glossary': glossaryHtml(defs),
         'glossary-brief': glossaryHtml(defs, {brief: true}),
         'glossary-no-dictionary': glossaryHtml(defs, {noDictionary: true}),
@@ -312,6 +327,10 @@ export async function buildNote(ctx, anki, conn) {
         'context-translation': escapeHtml((ctx.contextTranslation || '').replace(/\*\*/g, '')),
         'cefr': escapeHtml(ai.cefr || ''),
         'part-of-speech': escapeHtml((ai.partOfSpeech || []).join(', ')),
+        'ai-reading': escapeHtml(ai.reading || ''),
+        'ai-synonyms': escapeHtml((ai.synonyms || []).join(', ')),
+        'ai-components': componentsHtml(ai),
+        'ai-components-plain': componentsPlain(ai).map(escapeHtml).join('<br>'),
         'tags': escapeHtml([...(ai.labels || [])].join(', ')),
         'document-title': escapeHtml(ctx.title || ''),
         'search-query': escapeHtml(ctx.query || ctx.word),

@@ -10,6 +10,13 @@ test('card fields appear before the JSON response is complete', () => {
     assert.equal(card.translation, '');
 });
 
+test('components keep their part, reading and meaning, and odd items are left out', () => {
+    const card = parseCardProgress('{"headword":"期許","synonyms":["期望"],"components":[{"part":"期","reading":"qī","meaning":"period"},"x",{"meaning":"no part"},{"part":"許"}]}');
+    assert.deepEqual(card.synonyms, ['期望']);
+    assert.deepEqual(card.components, [{part: '期', reading: 'qī', meaning: 'period'}, {part: '許', reading: '', meaning: ''}]);
+    assert.deepEqual(parseCardProgress('{"headword":"run"}').components, []);
+});
+
 test('split JSON escapes wait for complete unicode and retain escaped quotes and braces', () => {
     const text = '{"headword":"café","definition":"a \\"quoted\\" {word}';
     assert.equal(parseCardProgress(text).definition, 'a "quoted" {word}');

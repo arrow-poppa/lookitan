@@ -2,6 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {defaultAiOptions, normalizeAiOptions} from '../src/lib/ai/defaults.js';
 
+test('a saved card prompt gets the synonyms, reading and components once, and components start on', async () => {
+    const {CARD_PROMPT, COMPONENTS_FIELD, READING_FIELD, TRANSLATION_FIELD} = await import('../src/lib/ai/word-card.js');
+    const old = CARD_PROMPT.replace(/, "synonyms".*\{\{componentsField\}\}/, '');
+    assert(!old.includes(COMPONENTS_FIELD) && old.includes(TRANSLATION_FIELD));
+    const migrated = normalizeAiOptions({cardPrompt: old});
+    assert.equal(migrated.cardPrompt, CARD_PROMPT);
+    assert.equal(migrated.cardPromptVersion, 2);
+    assert.equal(migrated.cardComponents, true);
+    const taken = normalizeAiOptions({cardPrompt: old, cardPromptVersion: 2, cardComponents: false});
+    assert.equal(taken.cardPrompt, old, 'a prompt the user changed after the migration stays as it is');
+    assert.equal(taken.cardComponents, false);
+    assert(defaultAiOptions().cardPrompt.includes(READING_FIELD));
+});
+
 test('explanation stays manual for new and existing AI settings without autoExplain', () => {
     assert.equal(defaultAiOptions().autoExplain, false);
     assert.equal(normalizeAiOptions(null).autoExplain, false);
