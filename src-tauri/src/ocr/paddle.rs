@@ -248,8 +248,6 @@ const UNCLIP_RATIO: f32 = 1.35;
 /// White border around the detector's image, in detector pixels, as Lookupper's WhitePadding:
 /// text touching the edge of a capture is still found whole.
 const DET_PADDING: u32 = 20;
-/// Lookupper moves each grown box down by this fraction of its area / perimeter.
-const DET_SHIFT_DOWN: f32 = 0.15;
 /// Longest side of the image the detector sees, as in Lookupper: the GPU detector gets more
 /// pixels, so small text (dense CJK above all) is not shrunk as much.
 const DET_MAX_SIDE_GPU: f32 = 1920.0;
@@ -876,13 +874,11 @@ impl PaddleOcr {
                 continue;
             }
             // DB predicts shrunk text kernels; grow them back by area * ratio / perimeter.
-            let area_per_perimeter = bw * bh / (2.0 * (bw + bh));
-            let d = area_per_perimeter * UNCLIP_RATIO;
-            let down = area_per_perimeter * DET_SHIFT_DOWN;
+            let d = bw * bh * UNCLIP_RATIO / (2.0 * (bw + bh));
             let x0 = ((minx as f32 - d) * sx).max(0.0);
-            let y0 = ((miny as f32 - d + down) * sy).max(0.0);
+            let y0 = ((miny as f32 - d) * sy).max(0.0);
             let x1 = (((maxx + 1) as f32 + d) * sx).min(w as f32);
-            let y1 = (((maxy + 1) as f32 + d + down) * sy).min(h as f32);
+            let y1 = (((maxy + 1) as f32 + d) * sy).min(h as f32);
             if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
                 boxes.push(TextBox { x0, y0, x1, y1 });
             }
