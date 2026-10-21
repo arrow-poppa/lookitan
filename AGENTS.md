@@ -122,15 +122,22 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
     - PaddleOCR (`paddle.rs` `decode_line`) reads RTL text as drawn. Lens gives words in reading order, so `lens.rs` lays them out as drawn for the ink snapping, then reverses once.
     - Characters of an RTL line run right to left on screen, so boxes take the min/max of their characters (`span_x`), and the pieces of a row in an RTL paragraph read right to left.
   - Lemmas: Lookupper has Hunspell only for de/en/es/fr/pt/ru, and uses one stem only when the word as written finds nothing (`StemAsync` `0x140243a40`, lookup `0x1402a5bb0`). Lookitan tries more forms; uk, bg, el and ar have no lemmas in either.
-- **Vertical text (`OcrLine.vertical`):** as in Lookupper (REA on 2026-10-21):
+- **Vertical text (`OcrLine.flow`: `Across`, `Down`, `Up`):** as in Lookupper (REA on 2026-10-21), plus bottom-to-top text, which Lookupper does not read (it ships no orientation model):
   - A detected box with height ≥ 1.5 × width is read on its side: XpressOCR's test is at `0x140949830`; PaddleOCR rotates it the same way.
   - Lookupper sorts a paragraph as columns when most of its lines are taller than 1.2 × their width (`SortParagraphLines` `0x14015ed00`, with the lambda `0x14015f6c0`).
   - Lookitan:
-    - `paddle.rs` `rec_crop` turns the crop a quarter left (`rotate270`), so the top of the column is at the left. `decode_line` maps the CTC steps down the column, so `OcrChar.x0..x1` are y spans on a vertical line, and `ink_y` holds its ink columns.
+    - `paddle.rs` `rec_crop` turns a vertical crop a quarter left (`Turn::Left`, `rotate270`), so the top of the column is at the left. `decode_line` maps the CTC steps down the column, so `OcrChar.x0..x1` are y spans on a vertical line, and `ink_y` holds its ink columns.
+    - Lookitan's own additions, with no extra model:
+      - A vertical box under 3 × as tall as wide (one or two characters, maybe an "I" alone) is also read upright. A turned reading must beat the upright one by 0.05 mean confidence.
+      - When the top-to-bottom reading scores under 0.85, the box is also read turned right (`Turn::Right`, `Flow::Up`, bottom to top, as on Portuguese book spines and chart axes).
+      - Horizontal boxes and well-read columns cost nothing extra.
     - Lens spreads a vertical paragraph's letters down each word.
     - `split_focus` takes the columns beside a vertical target.
-    - words.rs `upright` turns a vertical line to lie horizontal, with its top at the left and its right side at the top. So columns read right to left like rows, and all the picking, paragraphs and sentences are reused. `on_screen` turns the boxes back.
-    - A column never joins a row in one paragraph.
+    - words.rs `upright` turns a vertical line to lie the way it reads, and all the picking, paragraphs and sentences are reused. `on_screen` turns the boxes back.
+      - `Down`: top at the left, columns right to left.
+      - `Up`: bottom at the left, lines left to right.
+    - Lens lines from a vertical paragraph are `Down`. A line Lens gives turned a quarter is `Down` or `Up` by its words' order.
+    - Lines with different flows never join in one paragraph.
 - **Words of Japanese, Chinese and Korean (`segment/`, used by words.rs `pick`, `word_boxes` and `manual_candidates`):** as in Lookupper, the word under the pointer is the analyzed word holding that character, not the longest match from the pointer.
   - Lookupper (REA on 2026-10-21; addresses are in the exe with SHA-256 16af03f1…):
     - `OcrWordResegmenter.ResegmentParagraph` (`0x14015f940`) joins the paragraph's OCR words into one text, with no space between CJK characters, even across lines. It analyzes that text and rebuilds the word boxes from the words, a piece on each line for a word broken across lines.
@@ -259,6 +266,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request, short vertical boxes are also read upright (an "I" alone is no longer read sideways as "一"). Vertical boxes read badly top to bottom are also read bottom to top (`Flow::Up`), so text turned a quarter left reads. Lookupper has neither, and ships no orientation model.
 - 2026-10-21 (Claude, `tests`): at the user's request, vertical text (Chinese columns) is read as Lookupper does. Before, a whole column was one word: PaddleOCR squeezed the tall crop instead of turning it, and every character got almost the same x. Now a box with height ≥ 1.5 × width is recognized on its side. Characters run down the column, and words, boxes and sentences follow it, with columns read right to left.
 - 2026-10-21 (Claude, `tests`): at the user's request, a paragraph with a digit is never noise, so a number alone (a price, a date, "٢٠٢٤") can be looked up. Lookupper drops it. Only a single Latin or Cyrillic letter is still noise.
 - 2026-10-21 (Claude, `main`, then `tests`): at the user's request `main` was fast-forwarded to `tests` (670c870). Then, on `tests`, words of other scripts are cut as in Lookupper. Arabic and Hebrew lines from PaddleOCR and Lens are put in reading order; before, PaddleOCR's Arabic came out backwards and found nothing. The line-end hyphen follows Lookupper's rule, and paragraphs with no letter or a single Latin or Cyrillic one are noise.

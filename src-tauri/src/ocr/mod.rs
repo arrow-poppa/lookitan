@@ -9,8 +9,8 @@ pub mod paddle;
 
 use serde::Serialize;
 
-/// A character's span along its line: `x0..x1` across a horizontal line, and top to bottom
-/// (`y0..y1` in capture pixels) down a vertical one.
+/// A character's span along its line: `x0..x1` across a horizontal line, and its `y0..y1` in
+/// capture pixels on a vertical one (see `Flow`).
 #[derive(Clone, Debug, Serialize)]
 pub struct OcrChar {
     pub ch: char,
@@ -30,8 +30,28 @@ pub struct OcrLine {
     /// rows, or the columns of a vertical line. `None` when the engine gives no ink or the crop
     /// had none.
     pub ink_y: Option<(f32, f32)>,
-    /// Written top to bottom (a column of CJK text): its characters' spans are along y.
-    pub vertical: bool,
+    /// Which way the text runs.
+    pub flow: Flow,
+}
+
+/// Which way a line's text runs on screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum Flow {
+    /// A horizontal line.
+    #[default]
+    Across,
+    /// Top to bottom: a column of CJK text, or text turned a quarter right. Its characters' spans
+    /// are along y, going down.
+    Down,
+    /// Bottom to top: text turned a quarter left, as on many book spines and chart axes. Its
+    /// characters' spans are along y, going up.
+    Up,
+}
+
+impl OcrLine {
+    pub fn vertical(&self) -> bool {
+        self.flow != Flow::Across
+    }
 }
 
 /// Whether a text box reads top to bottom: as tall as one and a half times its width, as in

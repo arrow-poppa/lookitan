@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::ocr::{is_rtl_text, is_unspaced_script, OcrChar, OcrLine};
+use crate::ocr::{is_rtl_text, is_unspaced_script, Flow, OcrChar, OcrLine};
 use crate::segment::{Kind, Segment};
 
 #[derive(Clone, Debug, Serialize)]
@@ -143,40 +143,60 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
             let right = if k + 1 < out.len() { (out[k].x1 + out[k + 1].x0) / 2.0 } else { (out[k].x1 + reach).min(line.x1) };
             out[k].hit = (left, line.y0, right, line.y1);
         }
-        if line.vertical {
+        if line.vertical() {
             for b in &mut out[first..] {
-                (b.x0, b.y0, b.x1, b.y1) = on_screen(true, (b.x0, b.y0, b.x1, b.y1));
-                b.hit = on_screen(true, b.hit);
+                (b.x0, b.y0, b.x1, b.y1) = on_screen(line.flow, (b.x0, b.y0, b.x1, b.y1));
+                b.hit = on_screen(line.flow, b.hit);
             }
         }
     }
     out
 }
 
-// A vertical line (a column of CJK text) is picked as a horizontal one: `upright` turns it a
-// quarter so its top is at the left and its right side at the top. Its characters' spans, down the
-// column, become spans across, and columns read right to left become rows read top to bottom, so
-// paragraphs, sentences and word boxes need nothing else. Boxes found there are turned back with
-// `on_screen`.
+// A vertical line is picked as a horizontal one: `upright` turns it a quarter to lie the way it
+// reads. A line running down (a column of CJK text) gets its top at the left and its right side at
+// the top, so columns read right to left become rows read top to bottom. A line running up (text
+// turned a quarter left) gets its bottom at the left and its left side at the top, so lines read
+// left to right become rows read top to bottom. Its characters' spans, along the line, become
+// spans across, so paragraphs, sentences and word boxes need nothing else. Boxes found there are
+// turned back with `on_screen`.
 
 /// `line`, turned to lie horizontal if it is vertical.
 fn upright(line: &OcrLine) -> OcrLine {
     let mut out = line.clone();
-    if line.vertical {
-        (out.x0, out.y0, out.x1, out.y1) = (line.y0, -line.x1, line.y1, -line.x0);
-        out.ink_y = line.ink_y.map(|(a, b)| (-b, -a));
+    match line.flow {
+        Flow::Across => {}
+        Flow::Down => {
+            (out.x0, out.y0, out.x1, out.y1) = (line.y0, -line.x1, line.y1, -line.x0);
+            out.ink_y = line.ink_y.map(|(a, b)| (-b, -a));
+        }
+        Flow::Up => {
+            (out.x0, out.y0, out.x1, out.y1) = (-line.y1, line.x0, -line.y0, line.x1);
+            for c in &mut out.chars {
+                (c.x0, c.x1) = (-c.x1, -c.x0);
+            }
+        }
     }
     out
 }
 
-/// A capture point in the frame of `upright` for a line that is `vertical` or not.
-fn upright_point(vertical: bool, x: f32, y: f32) -> (f32, f32) {
-    if vertical { (y, -x) } else { (x, y) }
+/// A capture point in the frame of `upright` for a line running `flow`.
+fn upright_point(flow: Flow, x: f32, y: f32) -> (f32, f32) {
+    match flow {
+        Flow::Across => (x, y),
+        Flow::Down => (y, -x),
+        Flow::Up => (-y, x),
+    }
 }
 
-/// A box `(x0, y0, x1, y1)` from the frame of `upright` back on the capture.
-fn on_screen(vertical: bool, (x0, y0, x1, y1): (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
-    if vertical { (-y1, x0, -y0, x1) } else { (x0, y0, x1, y1) }
+/// A box `(x0, y0, x1, y1)` from the frame of `upright` for a line running `flow` back on the
+/// capture.
+fn on_screen(flow: Flow, (x0, y0, x1, y1): (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+    match flow {
+        Flow::Across => (x0, y0, x1, y1),
+        Flow::Down => (-y1, x0, -y0, x1),
+        Flow::Up => (y0, -x1, y1, -x0),
+    }
 }
 
 /// A line's words as character ranges. As in Lookupper's recognizer, a word is a run of characters
@@ -344,7 +364,7 @@ fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) ->
 pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> Option<Pick> {
     let lines: Vec<OcrLine> = lines.iter().map(upright).collect();
     let near = |l: &OcrLine| {
-        let (x, y) = upright_point(l.vertical, px, py);
+        let (x, y) = upright_point(l.flow, px, py);
         dist(l, x, y)
     };
     let line_idx = lines
@@ -353,11 +373,11 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
         .filter(|(_, l)| !l.chars.is_empty())
         .min_by(|(_, a), (_, b)| near(a).total_cmp(&near(b)))
         .map(|(i, _)| i)?;
-    let vertical = lines[line_idx].vertical;
-    let (px, py) = upright_point(vertical, px, py);
+    let flow = lines[line_idx].flow;
+    let (px, py) = upright_point(flow, px, py);
     let mut pick = pick_upright(&lines, line_idx, px, py, seg)?;
-    (pick.x0, pick.y0, pick.x1, pick.y1) = on_screen(vertical, (pick.x0, pick.y0, pick.x1, pick.y1));
-    pick.vertical = vertical;
+    (pick.x0, pick.y0, pick.x1, pick.y1) = on_screen(flow, (pick.x0, pick.y0, pick.x1, pick.y1));
+    pick.vertical = flow != Flow::Across;
     Some(pick)
 }
 
@@ -495,8 +515,8 @@ fn same_row(a: &OcrLine, b: &OcrLine) -> bool {
 /// Whether `b` continues the paragraph of `a`: the line right above or below it in the same
 /// column, or another piece of the same row, in a similar text size.
 fn joins(a: &OcrLine, b: &OcrLine) -> bool {
-    // A column and a row are in different frames (see `upright`), and different text.
-    if a.vertical != b.vertical {
+    // Lines running different ways are in different frames (see `upright`), and different text.
+    if a.flow != b.flow {
         return false;
     }
     let (ha, hb) = (height(a), height(b));
@@ -684,14 +704,14 @@ fn around(text: &[char], ranges: &[std::ops::Range<usize>], from: usize, to: usi
 #[cfg(test)]
 mod tests {
     use super::pick;
-    use crate::ocr::{OcrChar, OcrLine};
+    use crate::ocr::{Flow, OcrChar, OcrLine};
     use crate::segment::{Kind, Segment, Word};
 
     fn line(text: &str, x0: f32, y0: f32) -> OcrLine {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x0 + i as f32 * 10.0, x1: x0 + i as f32 * 10.0 + 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None, vertical: false }
+        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across }
     }
 
     #[test]
@@ -853,7 +873,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x1 - (i + 1) as f32 * 10.0, x1: x1 - i as f32 * 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None, vertical: false }
+        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across }
     }
 
     #[test]
@@ -880,7 +900,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: y0 + i as f32 * 20.0, x1: y0 + (i + 1) as f32 * 20.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0, x1: x0 + 20.0, y1: y0 + n as f32 * 20.0, chars, ink_y: None, vertical: true }
+        OcrLine { text: text.into(), x0, y0, x1: x0 + 20.0, y1: y0 + n as f32 * 20.0, chars, ink_y: None, flow: Flow::Down }
     }
 
     #[test]
@@ -908,6 +928,30 @@ mod tests {
         assert_eq!(p.sentence, "今日は晴れ。");
         assert_eq!(p.sentence_lines, [1, 0]);
         assert_eq!(pick(&lines, 105.0, 30.0, None).unwrap().word, "Title", "a row is apart from the columns");
+    }
+
+    /// A line running up 20 wide at `x0`, its characters 20 tall from `bottom` up.
+    fn rising(text: &str, x0: f32, bottom: f32) -> OcrLine {
+        let n = text.chars().count();
+        let chars: Vec<OcrChar> = text.chars().enumerate()
+            .map(|(i, ch)| OcrChar { ch, x0: bottom - (i + 1) as f32 * 20.0, x1: bottom - i as f32 * 20.0 })
+            .collect();
+        OcrLine { text: text.into(), x0, y0: bottom - n as f32 * 20.0, x1: x0 + 20.0, y1: bottom, chars, ink_y: None, flow: Flow::Up }
+    }
+
+    #[test]
+    fn text_turned_a_quarter_left_reads_up_the_screen_and_its_lines_left_to_right() {
+        let lines = [rising("goes on.", 125.0, 400.0), rising("hello world", 100.0, 400.0)];
+        let boxes = super::word_boxes(&lines[1..], None);
+        let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["hello", "world"]);
+        assert_eq!((boxes[1].x0, boxes[1].y0, boxes[1].x1, boxes[1].y1), (100.0, 180.0, 120.0, 280.0));
+        // On the "w", near the top.
+        let p = pick(&lines, 110.0, 270.0, None).unwrap();
+        assert_eq!(p.word, "world");
+        assert_eq!((p.x0, p.y0, p.x1, p.y1), (100.0, 180.0, 120.0, 280.0));
+        assert_eq!(p.sentence, "hello world goes on.");
+        assert_eq!(p.sentence_lines, [1, 0]);
     }
 
     #[test]

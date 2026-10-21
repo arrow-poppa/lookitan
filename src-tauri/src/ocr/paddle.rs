@@ -17,7 +17,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
-use super::{ink, is_rtl_text, is_vertical_box, reverse_rtl, OcrChar, OcrLine};
+use super::{ink, is_rtl_text, is_vertical_box, reverse_rtl, Flow, OcrChar, OcrLine};
 use crate::settings::GpuPreference;
 
 macro_rules! ortx {
@@ -202,25 +202,43 @@ mod tests {
     }
 
     #[test]
-    fn a_vertical_box_is_read_on_its_side_with_its_top_at_the_left() {
-        // A white 20 x 100 column at (40, 10), inked in its top 30 rows and right 12 columns.
+    fn a_vertical_box_is_read_on_its_side_both_ways() {
+        // A white 20 x 100 column at (40, 10), inked in its top 30 rows and right 8 columns.
         let img = RgbaImage::from_fn(100, 200, |x, y| {
             let inked = (52..60).contains(&x) && (10..40).contains(&y);
             if inked { Rgba([0, 0, 0, 255]) } else { Rgba([255, 255, 255, 255]) }
         });
         let b = TextBox { x0: 40.0, y0: 10.0, x1: 60.0, y1: 110.0 };
-        let crop = rec_crop(&img, b).unwrap();
-        assert!(crop.vertical);
-        assert_eq!(crop.image.height(), REC_HEIGHT);
-        assert_eq!(crop.tw, rec_width(100, 20), "as long as the column is tall");
-        assert_eq!(box_rec_width(&b), crop.tw);
-        let ink = crop.ink.unwrap();
-        // The top of the column is at the left of the turned crop...
+        assert_eq!(first_turns(&b), [Turn::Left], "a tall box is read top to bottom first");
+        let left = rec_crop(&img, b, Turn::Left).unwrap();
+        assert_eq!(left.image.height(), REC_HEIGHT);
+        assert_eq!(left.tw, rec_width(100, 20), "as long as the column is tall");
+        assert_eq!(box_rec_width(&b), left.tw);
+        let ink = left.ink.unwrap();
+        // Turned left: the top of the column is at the left, and its right side at the top.
         assert!(ink.cols[..30].iter().all(|&c| c) && !ink.cols[40..].iter().any(|&c| c), "{:?}", ink.cols);
-        // ...and its right side at the top: ink in columns 52..60 is in rows 0..8.
         assert_eq!((ink.y0, ink.y1), (0, 8));
-        let horizontal = rec_crop(&img, TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 40.0 }).unwrap();
-        assert!(!horizontal.vertical);
+        // Turned right: the top is at the right, and the right side at the bottom.
+        let ink = rec_crop(&img, b, Turn::Right).unwrap().ink.unwrap();
+        assert!(ink.cols[70..].iter().all(|&c| c) && !ink.cols[..60].iter().any(|&c| c), "{:?}", ink.cols);
+        assert_eq!((ink.y0, ink.y1), (12, 20));
+        assert_eq!(first_turns(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 40.0 }), [Turn::Upright]);
+    }
+
+    #[test]
+    fn a_short_vertical_box_is_also_read_upright_and_bottom_to_top_only_when_needed() {
+        let short = TextBox { x0: 0.0, y0: 0.0, x1: 10.0, y1: 25.0 };
+        assert_eq!(first_turns(&short), [Turn::Upright, Turn::Left], "an \"I\" alone may stand in such a box");
+        let tall = TextBox { x0: 0.0, y0: 0.0, x1: 20.0, y1: 100.0 };
+        assert!(!needs_right(&tall, Some(0.95)), "read well top to bottom: no second reading");
+        assert!(needs_right(&tall, Some(0.4)) && needs_right(&tall, None));
+        assert!(!needs_right(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 20.0 }, None), "never a horizontal box");
+        // A turned reading must beat an upright one by a margin.
+        assert!(!better((Turn::Left, 0.93), Some((Turn::Upright, 0.9))));
+        assert!(better((Turn::Left, 0.99), Some((Turn::Upright, 0.9))));
+        assert!(better((Turn::Upright, 0.88), Some((Turn::Left, 0.9))));
+        assert!(better((Turn::Right, 0.9), Some((Turn::Left, 0.5))));
+        assert!(!better((Turn::Right, 0.5), Some((Turn::Left, 0.5))), "a tie keeps top to bottom");
     }
 }
 
@@ -271,8 +289,70 @@ pub fn plan_batches(boxes: &[TextBox]) -> Vec<Vec<TextBox>> {
     out
 }
 
-/// A text box cut out of the capture and resized to the recognizer's height. A vertical box is
-/// turned a quarter left first, as PaddleOCR does, so its top is at the left.
+/// How a crop is turned before it is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Turn {
+    /// As it is: a horizontal line.
+    Upright,
+    /// A quarter left, so the top of a column is at the left: text read top to bottom, as
+    /// PaddleOCR and Lookupper's recognizer read every vertical box.
+    Left,
+    /// A quarter right, so the bottom is at the left: text read bottom to top. Neither PaddleOCR's
+    /// usual pipeline nor Lookupper tries it.
+    Right,
+}
+
+/// A vertical box under this many times as tall as wide holds one or two characters; it may be a
+/// narrow letter standing alone ("I", "1", "!"), so it is also read upright.
+const SHORT_VERTICAL: f32 = 3.0;
+
+/// Below this mean confidence, a vertical box read top to bottom is also read bottom to top.
+const TURN_CONFIDENT: f32 = 0.85;
+
+/// How much more confident a turned reading of a short box must be than its upright one.
+const UPRIGHT_MARGIN: f32 = 0.05;
+
+/// The turns a box is read in first: upright for a horizontal box; top to bottom for a vertical
+/// one, and also upright when it is short. `Turn::Right` comes later, only when needed
+/// (`needs_right`).
+fn first_turns(b: &TextBox) -> &'static [Turn] {
+    let (w, h) = ((b.x1 - b.x0).max(1.0), (b.y1 - b.y0).max(1.0));
+    if !is_vertical_box(w, h) {
+        &[Turn::Upright]
+    } else if h < SHORT_VERTICAL * w {
+        &[Turn::Upright, Turn::Left]
+    } else {
+        &[Turn::Left]
+    }
+}
+
+/// Whether a vertical box whose best reading so far scored `best` is also read bottom to top.
+fn needs_right(b: &TextBox, best: Option<f32>) -> bool {
+    is_vertical_box(b.x1 - b.x0, b.y1 - b.y0) && best.is_none_or(|score| score < TURN_CONFIDENT)
+}
+
+/// Whether reading `new` beats the best so far.
+fn better(new: (Turn, f32), best: Option<(Turn, f32)>) -> bool {
+    let Some((turn, score)) = best else { return true };
+    let margin = |t: Turn| if t == Turn::Upright { UPRIGHT_MARGIN } else { 0.0 };
+    new.1 + margin(new.0) > score + margin(turn)
+}
+
+/// A box's line as read in one turn, with the mean confidence of its characters.
+struct Reading {
+    line: OcrLine,
+    turn: Turn,
+    score: f32,
+}
+
+/// Keeps `new` in `best` if it is the better reading of its box.
+fn keep(best: &mut Option<Reading>, new: Reading) {
+    if better((new.turn, new.score), best.as_ref().map(|r| (r.turn, r.score))) {
+        *best = Some(new);
+    }
+}
+
+/// A text box cut out of the capture, turned as asked, and resized to the recognizer's height.
 struct RecCrop {
     b: TextBox,
     /// Left edge, top, width and height of the crop in capture pixels.
@@ -280,15 +360,15 @@ struct RecCrop {
     y: u32,
     cw: u32,
     ch: u32,
-    vertical: bool,
+    turn: Turn,
     /// Width after resizing.
     tw: u32,
     image: RgbaImage,
-    /// The ink of the crop (turned, if vertical) at capture resolution, to snap the word edges to.
+    /// The ink of the turned crop at capture resolution, to snap the word edges to.
     ink: Option<ink::Ink>,
 }
 
-fn rec_crop(img: &RgbaImage, b: TextBox) -> Option<RecCrop> {
+fn rec_crop(img: &RgbaImage, b: TextBox, turn: Turn) -> Option<RecCrop> {
     let (iw, ih) = img.dimensions();
     let x = (b.x0.floor().max(0.0) as u32).min(iw.saturating_sub(1));
     let y = (b.y0.floor().max(0.0) as u32).min(ih.saturating_sub(1));
@@ -298,16 +378,17 @@ fn rec_crop(img: &RgbaImage, b: TextBox) -> Option<RecCrop> {
         return None;
     }
     let mut crop = image::imageops::crop_imm(img, x, y, cw, ch).to_image();
-    let vertical = is_vertical_box(cw as f32, ch as f32);
-    if vertical {
-        crop = image::imageops::rotate270(&crop);
+    match turn {
+        Turn::Upright => {}
+        Turn::Left => crop = image::imageops::rotate270(&crop),
+        Turn::Right => crop = image::imageops::rotate90(&crop),
     }
     let (w, h) = crop.dimensions();
     let lum: Vec<u8> = crop.pixels().map(|p| ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8).collect();
     let ink = ink::measure(&lum, w as usize, h as usize);
     let tw = rec_width(w, h);
     let image = image::imageops::resize(&crop, tw, REC_HEIGHT, FilterType::Triangle);
-    Some(RecCrop { b, x, y, cw, ch, vertical, tw, image, ink })
+    Some(RecCrop { b, x, y, cw, ch, turn, tw, image, ink })
 }
 
 /// Writes one crop into its slot of a recognizer input (3 planes of REC_HEIGHT x `padded_w`,
@@ -789,12 +870,27 @@ impl PaddleOcr {
     }
 
     fn recognize_box(&self, img: &RgbaImage, b: TextBox) -> Result<Option<OcrLine>> {
-        let Some(crop) = rec_crop(img, b) else { return Ok(None) };
+        let mut best: Option<Reading> = None;
+        for &turn in first_turns(&b) {
+            self.read_turn(img, b, turn, &mut best)?;
+        }
+        if needs_right(&b, best.as_ref().map(|r| r.score)) {
+            self.read_turn(img, b, Turn::Right, &mut best)?;
+        }
+        Ok(best.map(|r| r.line))
+    }
+
+    /// Reads box `b` turned `turn`, and keeps the reading in `best` if it is better.
+    fn read_turn(&self, img: &RgbaImage, b: TextBox, turn: Turn, best: &mut Option<Reading>) -> Result<()> {
+        let Some(crop) = rec_crop(img, b, turn) else { return Ok(()) };
         let pw = crop.tw as usize;
         let mut data = vec![0f32; 3 * REC_HEIGHT as usize * pw];
         fill_rec_input(&mut data, &crop.image, pw);
         let (steps, classes, probs) = self.run_rec(data, 1, pw)?;
-        Ok(self.decode_line(&crop, &probs, steps, classes, pw))
+        if let Some(reading) = self.decode_line(&crop, &probs, steps, classes, pw) {
+            keep(best, reading);
+        }
+        Ok(())
     }
 
     /// Recognizes the boxes in as few recognizer runs as `plan_batches` allows. A batch that
@@ -815,26 +911,47 @@ impl PaddleOcr {
     }
 
     fn recognize_batch(&self, img: &RgbaImage, boxes: &[TextBox]) -> Result<Vec<OcrLine>> {
-        let crops: Vec<RecCrop> = boxes.iter().filter_map(|b| rec_crop(img, *b)).collect();
-        if crops.is_empty() {
-            return Ok(Vec::new());
+        let mut best: Vec<Option<Reading>> = boxes.iter().map(|_| None).collect();
+        let first: Vec<(usize, Turn)> =
+            boxes.iter().enumerate().flat_map(|(i, b)| first_turns(b).iter().map(move |&t| (i, t))).collect();
+        self.read_batch(img, boxes, &first, &mut best)?;
+        // Vertical boxes not read well top to bottom, bottom to top.
+        let right: Vec<(usize, Turn)> = boxes
+            .iter()
+            .enumerate()
+            .filter(|&(i, b)| needs_right(b, best[i].as_ref().map(|r| r.score)))
+            .map(|(i, _)| (i, Turn::Right))
+            .collect();
+        if !right.is_empty() {
+            self.read_batch(img, boxes, &right, &mut best)?;
         }
-        let pw = crops.iter().map(|c| c.tw).max().unwrap_or(16) as usize;
+        Ok(best.into_iter().flatten().map(|r| r.line).collect())
+    }
+
+    /// Reads `boxes[i]` turned `t` for every `(i, t)` of `reads` in one recognizer run, and keeps
+    /// in `best[i]` the better reading.
+    fn read_batch(&self, img: &RgbaImage, boxes: &[TextBox], reads: &[(usize, Turn)], best: &mut [Option<Reading>]) -> Result<()> {
+        let crops: Vec<(usize, RecCrop)> = reads.iter().filter_map(|&(i, t)| rec_crop(img, boxes[i], t).map(|c| (i, c))).collect();
+        if crops.is_empty() {
+            return Ok(());
+        }
+        let pw = crops.iter().map(|(_, c)| c.tw).max().unwrap_or(16) as usize;
         let slot = 3 * REC_HEIGHT as usize * pw;
         let mut data = vec![0f32; crops.len() * slot];
-        for (i, c) in crops.iter().enumerate() {
-            fill_rec_input(&mut data[i * slot..(i + 1) * slot], &c.image, pw);
+        for (k, (_, c)) in crops.iter().enumerate() {
+            fill_rec_input(&mut data[k * slot..(k + 1) * slot], &c.image, pw);
         }
         let (steps, classes, probs) = self.run_rec(data, crops.len(), pw)?;
         let per_item = steps * classes;
         if probs.len() < per_item * crops.len() {
             bail!("recognizer returned {} values for {} lines", probs.len(), crops.len());
         }
-        Ok(crops
-            .iter()
-            .enumerate()
-            .filter_map(|(i, c)| self.decode_line(c, &probs[i * per_item..(i + 1) * per_item], steps, classes, pw))
-            .collect())
+        for (k, (i, c)) in crops.iter().enumerate() {
+            if let Some(reading) = self.decode_line(c, &probs[k * per_item..(k + 1) * per_item], steps, classes, pw) {
+                keep(&mut best[*i], reading);
+            }
+        }
+        Ok(())
     }
 
     /// Runs the recognizer on `n` crops padded to `padded_w`; returns (steps, classes, probs).
@@ -851,15 +968,16 @@ impl PaddleOcr {
         })
     }
 
-    /// CTC-decodes one crop's output rows into a line with per-character spans.
-    fn decode_line(&self, crop: &RecCrop, probs: &[f32], steps: usize, classes: usize, padded_w: usize) -> Option<OcrLine> {
+    /// CTC-decodes one crop's output rows into a line with per-character spans, and the mean
+    /// confidence of its characters.
+    fn decode_line(&self, crop: &RecCrop, probs: &[f32], steps: usize, classes: usize, padded_w: usize) -> Option<Reading> {
         if steps == 0 || classes == 0 {
             return None;
         }
         let b = crop.b;
         // Where the line starts and how long it is in capture pixels, and its ends: across, or
-        // top to bottom for a vertical line.
-        let (start, len, lo, hi) = if crop.vertical { (crop.y, crop.ch, b.y0, b.y1) } else { (crop.x, crop.cw, b.x0, b.x1) };
+        // down a turned crop (from the top for `Turn::Left`; `Turn::Right` is mirrored below).
+        let (start, len, lo, hi) = if crop.turn == Turn::Upright { (crop.x, crop.cw, b.x0, b.x1) } else { (crop.y, crop.ch, b.y0, b.y1) };
         // In a batch, the steps past this crop's own width only see padding.
         let content_steps = steps as f32 * crop.tw as f32 / padded_w as f32;
         let valid = (content_steps.ceil() as usize).clamp(1, steps);
@@ -867,6 +985,7 @@ impl PaddleOcr {
         let has_space = classes == self.dict.len() + 2;
 
         let mut decoded: Vec<(char, usize)> = Vec::new();
+        let (mut sure, mut read) = (0f32, 0usize);
         let mut prev = 0usize;
         for t in 0..valid {
             let row = &probs[t * classes..(t + 1) * classes];
@@ -889,6 +1008,8 @@ impl PaddleOcr {
                 for c in s.chars() {
                     decoded.push((c, t));
                 }
+                sure += best_p;
+                read += 1;
             }
             prev = best;
         }
@@ -904,31 +1025,36 @@ impl PaddleOcr {
             .collect();
         let blank: Vec<bool> = decoded.iter().map(|(c, _)| c.is_whitespace()).collect();
         // Word edges snap to the ink of the line, as in Lookupper.
-        let spans = ink::spans(&centers, &blank, crop.ink.as_ref(), start as f32, lo, hi, step_w);
+        let mut spans = ink::spans(&centers, &blank, crop.ink.as_ref(), start as f32, lo, hi, step_w);
+        if crop.turn == Turn::Right {
+            // The crop's left was the bottom of the line: its characters go up.
+            let mirror = 2.0 * crop.y as f32 + crop.ch as f32;
+            for span in &mut spans {
+                *span = (mirror - span.1, mirror - span.0);
+            }
+        }
         let mut chars: Vec<OcrChar> = decoded.iter().zip(spans).map(|((c, _), (x0, x1))| OcrChar { ch: *c, x0, x1 }).collect();
         // The recognizer reads right-to-left text as drawn; like Lookupper, turn it to reading order.
-        if !crop.vertical && is_rtl_text(chars.iter().map(|c| c.ch)) {
+        if crop.turn == Turn::Upright && is_rtl_text(chars.iter().map(|c| c.ch)) {
             chars = reverse_rtl(&chars);
         }
         let text: String = chars.iter().map(|c| c.ch).collect();
-        // The turned crop's rows are the columns of a vertical line, its last row at the left.
-        let ink_y = crop.ink.as_ref().map(|ink| {
-            if crop.vertical {
+        // A turned crop's rows are the columns of the line: from its right side when turned left,
+        // from its left side when turned right.
+        let ink_y = crop.ink.as_ref().map(|ink| match crop.turn {
+            Turn::Upright => (crop.y as f32 + ink.y0 as f32, crop.y as f32 + ink.y1 as f32),
+            Turn::Left => {
                 let right = (crop.x + crop.cw) as f32;
                 (right - ink.y1 as f32, right - ink.y0 as f32)
-            } else {
-                (crop.y as f32 + ink.y0 as f32, crop.y as f32 + ink.y1 as f32)
             }
+            Turn::Right => (crop.x as f32 + ink.y0 as f32, crop.x as f32 + ink.y1 as f32),
         });
-        Some(OcrLine {
-            text,
-            x0: b.x0,
-            y0: b.y0,
-            x1: b.x1,
-            y1: b.y1,
-            chars,
-            ink_y,
-            vertical: crop.vertical,
-        })
+        let flow = match crop.turn {
+            Turn::Upright => Flow::Across,
+            Turn::Left => Flow::Down,
+            Turn::Right => Flow::Up,
+        };
+        let line = OcrLine { text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, chars, ink_y, flow };
+        Some(Reading { line, turn: crop.turn, score: sure / read.max(1) as f32 })
     }
 }

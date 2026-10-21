@@ -20,7 +20,7 @@ use prost::Message;
 
 use super::ink;
 use super::lens_proto as pb;
-use super::{is_rtl_text, reverse_rtl, OcrChar, OcrLine};
+use super::{is_rtl_text, reverse_rtl, Flow, OcrChar, OcrLine};
 
 const ENDPOINT: &str = "https://lensfrontend-pa.googleapis.com/v1/crupload";
 const USER_AGENT: &str =
@@ -160,6 +160,21 @@ impl LensOcr {
     }
 }
 
+/// Which way a line of a horizontal paragraph runs: down or up the screen when Lens gives it
+/// turned a quarter (text set on its side), as told by its words' order (Lens gives them in
+/// reading order) or, for one word, by the turn.
+fn turned(line: &pb::Line, center: &dyn Fn(&pb::Word) -> (f32, f32)) -> Flow {
+    let Some(turn) = line.geometry.as_ref().and_then(|g| g.bounding_box.as_ref()).map(|b| b.rotation_z) else { return Flow::Across };
+    if turn.sin().abs() < 0.7 {
+        return Flow::Across;
+    }
+    let down = match (line.words.first(), line.words.last()) {
+        (Some(first), Some(last)) if line.words.len() > 1 => center(last).1 > center(first).1,
+        _ => turn.sin() > 0.0,
+    };
+    if down { Flow::Down } else { Flow::Up }
+}
+
 /// The upright box around a Lens box, which may be turned (`rotation_z`, as for a column of text
 /// set on its side).
 fn rect(g: &Option<pb::Geometry>, w: f32, h: f32) -> Option<(f32, f32, f32, f32)> {
@@ -183,7 +198,7 @@ const INK_REACH: f32 = 0.15;
 fn snap_to_ink(img: &RgbaImage, line: &mut OcrLine) {
     let (iw, ih) = img.dimensions();
     let height = line.y1 - line.y0;
-    if line.vertical || height <= 0.0 || height > (line.x1 - line.x0) * 1.5 {
+    if line.vertical() || height <= 0.0 || height > (line.x1 - line.x0) * 1.5 {
         return;
     }
     let reach = height * INK_REACH;
@@ -250,7 +265,7 @@ fn snap_to_ink(img: &RgbaImage, line: &mut OcrLine) {
 
 /// A right-to-left line, laid out as drawn, in reading order, as the local recognizer's lines are.
 fn to_reading_order(line: &mut OcrLine) {
-    if !line.vertical && is_rtl_text(line.chars.iter().map(|c| c.ch)) {
+    if !line.vertical() && is_rtl_text(line.chars.iter().map(|c| c.ch)) {
         line.chars = reverse_rtl(&line.chars);
         line.text = line.chars.iter().map(|c| c.ch).collect();
     }
@@ -267,43 +282,50 @@ fn to_lines(resp: &pb::ServerResponse, w: f32, h: f32) -> Vec<OcrLine> {
     for para in &layout.paragraphs {
         let vertical = para.writing_direction == pb::WRITING_TOP_TO_BOTTOM;
         for line in &para.lines {
+            let center = |word: &pb::Word| word.geometry.as_ref().and_then(|g| g.bounding_box.as_ref()).map_or((0.0, 0.0), |b| (b.center_x, b.center_y));
+            let flow = if vertical { Flow::Down } else { turned(line, &center) };
             let mut words: Vec<&pb::Word> = line.words.iter().collect();
-            // Left to right, or top to bottom down a vertical line.
-            let along = |word: &pb::Word| {
-                word.geometry.as_ref().and_then(|g| g.bounding_box.as_ref()).map(|b| if vertical { b.center_y } else { b.center_x }).unwrap_or(0.0)
-            };
-            words.sort_by(|a, b| along(a).total_cmp(&along(b)));
+            // Left to right, or down or up the screen along a vertical line.
+            words.sort_by(|a, b| match flow {
+                Flow::Across => center(a).0.total_cmp(&center(b).0),
+                Flow::Down => center(a).1.total_cmp(&center(b).1),
+                Flow::Up => center(b).1.total_cmp(&center(a).1),
+            });
             let mut text = String::new();
             let mut chars = Vec::new();
             // Lens gives each word in reading order; the line is laid out as drawn, left to right,
             // and turned to reading order once snapped to its ink (to_reading_order).
-            let rtl = !vertical && is_rtl_text(words.iter().flat_map(|w| w.plain_text.chars()));
+            let rtl = flow == Flow::Across && is_rtl_text(words.iter().flat_map(|w| w.plain_text.chars()));
             for word in words {
                 let (bx0, by0, bx1, by1) = rect(&word.geometry, w, h).unwrap_or((0.0, 0.0, 0.0, 0.0));
-                // A vertical line's characters are spread top to bottom.
-                let (wx0, wx1) = if vertical { (by0, by1) } else { (bx0, bx1) };
+                // Where the word starts and ends in its reading direction.
+                let (from, to) = match flow {
+                    Flow::Across => (bx0, bx1),
+                    Flow::Down => (by0, by1),
+                    Flow::Up => (by1, by0),
+                };
                 let n = word.plain_text.chars().count().max(1) as f32;
-                let step = (wx1 - wx0) / n;
+                let step = (to - from) / n;
                 let mut letters: Vec<OcrChar> = word.plain_text.chars().map(|ch| OcrChar { ch, x0: 0.0, x1: 0.0 }).collect();
                 if rtl {
                     letters = reverse_rtl(&letters);
                 }
                 for (i, mut c) in letters.into_iter().enumerate() {
-                    c.x0 = wx0 + step * i as f32;
-                    c.x1 = wx0 + step * (i as f32 + 1.0);
+                    let (a, b) = (from + step * i as f32, from + step * (i as f32 + 1.0));
+                    (c.x0, c.x1) = (a.min(b), a.max(b));
                     text.push(c.ch);
                     chars.push(c);
                 }
                 if let Some(sep) = word.text_separator.as_deref() {
                     for c in sep.chars() {
-                        chars.push(OcrChar { ch: c, x0: wx1, x1: wx1 });
+                        chars.push(OcrChar { ch: c, x0: to, x1: to });
                         text.push(c);
                     }
                 }
             }
             let Some((x0, y0, x1, y1)) = rect(&line.geometry, w, h) else { continue };
             if !text.trim().is_empty() {
-                out.push(OcrLine { text, x0, y0, x1, y1, chars, ink_y: None, vertical });
+                out.push(OcrLine { text, x0, y0, x1, y1, chars, ink_y: None, flow });
             }
         }
     }
@@ -337,7 +359,7 @@ mod tests {
                 text.push(' ');
             }
         }
-        OcrLine { text, x0: words[0].1, y0: 98.0, x1: words.last().unwrap().2, y1: 122.0, chars, ink_y: None, vertical: false }
+        OcrLine { text, x0: words[0].1, y0: 98.0, x1: words.last().unwrap().2, y1: 122.0, chars, ink_y: None, flow: Flow::Across }
     }
 
     #[test]
