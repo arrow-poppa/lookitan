@@ -11,6 +11,7 @@ const root = document.getElementById('words');
 const frame = document.getElementById('frame');
 const dim = document.getElementById('dim');
 const block = document.getElementById('block');
+const lensNotice = document.getElementById('lens-notice');
 /** Margin around the highlighted block, in CSS pixels. */
 const BLOCK_PAD = 6;
 /** Same darkness as the frozen frame's brightness(0.85). */
@@ -19,6 +20,13 @@ const DIM_ALPHA = 0.15;
 const FADE_IN = {duration: 220, easing: 'ease-out'};
 let current = null;
 let selected = null;
+
+/** Says Google Lens failed, when no pop-up opened to say it (a word lookup shows it there). */
+function showNotice(text) {
+    if (!lensNotice) { return; }
+    lensNotice.textContent = text || '';
+    lensNotice.style.display = text ? 'block' : 'none';
+}
 /** Words already looked up in this overlay; they keep a faint highlight, as in Lookupper. */
 let seen = [];
 
@@ -156,6 +164,7 @@ void listen('overlay-closed', (event) => {
     // Drop the old words, so a click before the next lookup arrives cannot pick one of them.
     current = null;
     root.replaceChildren();
+    showNotice('');
     confirmBlank(event?.payload?.token);
 });
 
@@ -183,6 +192,7 @@ void listen('overlay', (event) => {
         selected = i >= 0 ? p.words[i] || null : null;
     }
     current = p;
+    showNotice(selected ? '' : p.notice);
     render();
 });
 
@@ -194,6 +204,7 @@ document.addEventListener('mousedown', (ev) => {
         if (selected) { seen.push(selected); }
         target.classList.remove('seen');
         target.classList.add('sel');
+        showNotice('');
         const scale = viewportScale();
         void invoke('overlay_pick', {x: ev.clientX / scale.x, y: ev.clientY / scale.y});
     } else {

@@ -73,6 +73,8 @@ struct Recognition {
     block: Option<TextBox>,
     engine: String,
     ocr_ms: u64,
+    /// Why the chosen engine was not used (Google Lens failed), shown by the overlay.
+    notice: Option<String>,
 }
 
 pub struct AppState {
@@ -166,6 +168,9 @@ struct OverlayPayload {
     viewport_width: f64,
     viewport_height: f64,
     complete: bool,
+    /// Google Lens failed and the local OCR read the screen: the overlay says so when no pop-up
+    /// opened (a whole-screen lookup), as the pop-up does otherwise.
+    notice: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -534,6 +539,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
         block: text_block.filter(|_| pick.is_none()),
         engine: engine.clone(),
         ocr_ms,
+        notice: notice.clone(),
     });
 
     // Like Lookupper, the whole-screen overlay appears only once the whole screen is read: the
@@ -659,7 +665,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     if kind == OcrEngineKind::Lens {
         match cached_lens(state, image, key, settings) {
             Ok(lines) => return Ok(OcrPass { lines, engine: "Google Lens".into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None }),
-            Err(e) => notice = Some(format!("Google Lens failed, used PP-OCRv6 instead: {e:#}")),
+            Err(e) => notice = Some(format!("O Google Lens falhou e o OCR local (PP-OCRv6) leu no lugar: {e:#}")),
         }
     }
     let p = ensure_paddle(state)?;
@@ -772,6 +778,7 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             viewport_width,
             viewport_height,
             complete,
+            notice: r.notice.clone(),
         }
     };
     let _ = app.emit_to("overlay", "overlay", &payload);

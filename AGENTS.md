@@ -150,7 +150,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - The tag also sets the pop-up's speech voice (`speak` in popup/main.js) and is saved on word cards. That is why the variants were kept, while Lookupper shows one Spanish.
 - **Definition and translation languages (`LANGUAGES` in src/main/ui.js):** Lookupper's 58 entries: the 53 languages it translates into, plus en-US/en-GB, es-ES/es-419, pt-BR/pt-PT, Serbian Cyrillic/Latin and Chinese Simplified/Traditional. They are named in English. The AI prompt names them with `Intl.DisplayNames` in English (`languageName` in word-card.js). `settings::migrate` turns the older tags `es-MX`, `zh-CN` and `zh-TW` into `es-419`, `zh-Hans-CN` and `zh-Hant-TW`.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
-- **Google Lens:** chosen in Configurações › OCR › Motor de OCR. It works without a key (Chromium's public key; both it and YomiNinja's default `AIzaSyA2Kl…` answered 200 on 2026-10-21); the user's key, if pasted, overrides it. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
+- **Google Lens:** chosen in Configurações › OCR › Motor de OCR. It works without a key (Chromium's public key; both it and YomiNinja's default `AIzaSyA2Kl…` answered 200 on 2026-10-21); the user's key, if pasted, overrides it. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google. When Lens fails, that pass is read by PP-OCRv6 and the next lookup tries Lens again. The reason is shown in Portuguese: in the pop-up (`notice`), or, when no pop-up opened (a whole-screen lookup), in the overlay's `#lens-notice` strip at the top, which a word click hides.
 - **KDE Wayland:**
   - The cursor comes from the KWin script over D-Bus (`io.github.arrowpoppa.Lookitan` `/Cursor`).
   - Capture uses `org.kde.KWin.ScreenShot2.CaptureArea`, which is authorized only when Lookitan runs from the installed `.desktop` entry.
@@ -217,6 +217,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request a whole-screen lookup also says when Google Lens failed: `Recognition.notice` goes to the overlay, which shows it at the top of the screen while no pop-up is open. The message is now in Portuguese.
 - 2026-10-21 (Claude, `tests`): at the user's request Configurações › OCR › Região de captura offers only Automático and Personalizada; the fixed-size formats (Original 900 × 260, 16:9, 4:3, 1:1) were removed. A saved fixed size shows as Personalizada with its size.
 - 2026-10-21 (Claude, `tests`): at the user's request Google Lens works without pasting a key: it sends Chromium's public Lens key, and the user's key still overrides it. The hard constraint was changed to match.
 - 2026-10-21 (Claude, `tests`): with Google Lens the word highlight did not hug the ink as with the local models: Lens lines had no `ink_y` and kept Lens's loose word boxes. `snap_to_ink` now measures the ink of each Lens line in the capture.

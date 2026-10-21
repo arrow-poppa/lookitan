@@ -43,7 +43,7 @@ async function fixture(userAgent = 'Mozilla/5.0 (X11; Linux x86_64)') {
         for (const [key, value] of Object.entries(stubs[name])) { this.setExport(key, value); }
     }, {context}));
     await module.evaluate();
-    return {root, frame, body, dim: others.dim, block: others.block, window, handlers, requests,
+    return {root, frame, body, dim: others.dim, block: others.block, window, handlers, requests, document: {getElementById: (id) => (others[id] ||= new Element())},
         emit: (payload) => listeners.overlay({payload}), close: (payload = null) => listeners['overlay-closed']({payload})};
 }
 
@@ -259,6 +259,24 @@ test('a closed overlay confirms its empty frame so Linux hides it only then (no 
     const count = view.requests.length;
     view.close();
     assert.equal(view.requests.length, count);
+});
+
+test('a whole-screen lookup says when Google Lens failed, and a word lookup leaves it to the pop-up', async () => {
+    const view = await fixture();
+    const notice = view.document.getElementById('lens-notice');
+    const word = {text: 'target', x: 10, y: 20, w: 50, h: 18};
+    view.emit({id: 1, words: [word], notice: 'O Google Lens falhou e o OCR local (PP-OCRv6) leu no lugar: HTTP 403'});
+    assert.equal(notice.style.display, 'block');
+    assert(notice.textContent.includes('Google Lens falhou'));
+    view.handlers.mousedown({preventDefault() {}, target: view.root.children[0], clientX: 20, clientY: 25});
+    assert.equal(notice.style.display, 'none', 'the pop-up opens and says it');
+    view.emit({id: 2, words: [word], selected: word, notice: 'O Google Lens falhou'});
+    assert.equal(notice.style.display, 'none', 'a word lookup has the pop-up');
+    view.emit({id: 3, words: [word], notice: 'O Google Lens falhou'});
+    view.close();
+    assert.equal(notice.style.display, 'none');
+    view.emit({id: 4, words: [word]});
+    assert.equal(notice.style.display, 'none', 'Lens worked');
 });
 
 test('the overlay shows no hint pill over the screen, in any lookup', async () => {
