@@ -34,7 +34,7 @@ Since 2026-10-16 the repository has these branches:
 ## Hard constraints
 
 - **Behavior clone only.** Never copy Lookupper's decompiled code, assets, branding, UI text or servers (`gateway.lookupper.com` and the others).
-- **Never embed a Google Lens API key.** The user pastes their own in Settings › OCR.
+- **Google Lens key:** the only key shipped is Chromium's public Lens key (`CHROMIUM_API_KEY` in ocr/lens.rs, as owocr and chrome-lens-ocr send it), at the user's request on 2026-10-21. A key the user pastes in Settings › OCR is sent instead. Never embed any other key.
 - **No local Rust builds.** The user's PC has little RAM. Rust compiles and installers come from GitHub Actions only. Locally, `npm run build` (Vite) and `npm test` are fine.
 - **Never put the user's email in commits, requests or files.** Commits use the GitHub noreply address set in the repo's local git config.
 - **Installers:** Windows ships the NSIS `.exe` only, with no `.msi`. Linux ships `.deb`, `.rpm` and `.AppImage`.
@@ -150,7 +150,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - The tag also sets the pop-up's speech voice (`speak` in popup/main.js) and is saved on word cards. That is why the variants were kept, while Lookupper shows one Spanish.
 - **Definition and translation languages (`LANGUAGES` in src/main/ui.js):** Lookupper's 58 entries: the 53 languages it translates into, plus en-US/en-GB, es-ES/es-419, pt-BR/pt-PT, Serbian Cyrillic/Latin and Chinese Simplified/Traditional. They are named in English. The AI prompt names them with `Intl.DisplayNames` in English (`languageName` in word-card.js). `settings::migrate` turns the older tags `es-MX`, `zh-CN` and `zh-TW` into `es-419`, `zh-Hans-CN` and `zh-Hant-TW`.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
-- **Google Lens:** chosen in Configurações › OCR › Motor de OCR, and it needs the user's key. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
+- **Google Lens:** chosen in Configurações › OCR › Motor de OCR. It works without a key (Chromium's public key; both it and YomiNinja's default `AIzaSyA2Kl…` answered 200 on 2026-10-21); the user's key, if pasted, overrides it. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google.
 - **KDE Wayland:**
   - The cursor comes from the KWin script over D-Bus (`io.github.arrowpoppa.Lookitan` `/Cursor`).
   - Capture uses `org.kde.KWin.ScreenShot2.CaptureArea`, which is authorized only when Lookitan runs from the installed `.desktop` entry.
@@ -217,6 +217,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request Google Lens works without pasting a key: it sends Chromium's public Lens key, and the user's key still overrides it. The hard constraint was changed to match.
 - 2026-10-21 (Claude, `tests`): with Google Lens the word highlight did not hug the ink as with the local models: Lens lines had no `ink_y` and kept Lens's loose word boxes. `snap_to_ink` now measures the ink of each Lens line in the capture.
 - 2026-10-21 (Claude, `main`/`without-fade`): at the user's request, `main` and `without-fade` were fast-forwarded to `tests` again, with the Edge v2 token fix.
 - 2026-10-21 (Claude, `tests`): the Edge voices failed most of the time (and so did `{sentence-audio}`, whose failure left the field empty without a word): the service moved to the v2 Sec-MS-GEC on 2026-10-13. Lookitan now sends v2 to `speech.platform.bing.com` first, with `api.msedgeservices.com` and one more try as fallbacks, and the pop-up says when a note was added without the sentence audio.

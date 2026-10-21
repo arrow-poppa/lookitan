@@ -2,6 +2,8 @@
 // `google_lens_ocr_grpc.adapter.ts`: a protobuf `LensOverlayServerRequest` posted to
 // `lensfrontend-pa.googleapis.com/v1/crupload`. This is not an official Google API; it can change
 // or stop working at any time, and every lookup uploads the captured region to Google.
+// Without a key of the user's, it sends Chromium's public Lens key, as owocr and chrome-lens-ocr
+// do (the user's choice, 2026-10-21); a key pasted in Configurações › OCR is sent instead.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
@@ -21,6 +23,8 @@ use super::{OcrChar, OcrLine};
 const ENDPOINT: &str = "https://lensfrontend-pa.googleapis.com/v1/crupload";
 const USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+/// Chromium's public key for Lens, used when the user has none.
+const CHROMIUM_API_KEY: &str = "";
 const MAX_DIMENSION: u32 = 1000;
 const MAX_AREA: u64 = 1_000_000;
 const CACHE_SECONDS: u64 = 30;
@@ -79,9 +83,7 @@ impl LensOcr {
     }
 
     pub fn recognize(&self, img: &RgbaImage, api_key: &str, language_tag: &str) -> Result<Vec<OcrLine>> {
-        if api_key.trim().is_empty() {
-            bail!("Google Lens needs an API key (Settings › OCR)");
-        }
+        let api_key = if api_key.trim().is_empty() { CHROMIUM_API_KEY } else { api_key.trim() };
         let key = image_hash(img);
         if let Some((k, at, lines)) = self.cache.lock().as_ref() {
             if *k == key && at.elapsed().as_secs() < CACHE_SECONDS {
@@ -132,7 +134,7 @@ impl LensOcr {
             .client
             .post(ENDPOINT)
             .header("content-type", "application/x-protobuf")
-            .header("x-goog-api-key", api_key.trim())
+            .header("x-goog-api-key", api_key)
             .header("accept-language", "en-US,en;q=0.9")
             .body(request.encode_to_vec())
             .send()
