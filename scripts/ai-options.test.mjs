@@ -67,3 +67,12 @@ test('the context translator gets its own automatic switch, starting from the ol
     assert.equal(normalizeAiOptions({autoGenerateOnLookup: true, autoTranslateContext: false}).autoTranslateContext, false);
     assert.equal(normalizeAiOptions({}).imageMemeMode, false);
 });
+
+test('the old default explanation and context prompts become the ones that put the lookup text last', async () => {
+    const {CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT} = await import('../src/lib/ai/word-card.js');
+    const migrated = normalizeAiOptions({customPrompt: LEGACY_EXPLAIN_PROMPT, contextPrompt: LEGACY_CONTEXT_PROMPT});
+    assert.equal(migrated.customPrompt, EXPLAIN_PROMPT);
+    assert.equal(migrated.contextPrompt, CONTEXT_PROMPT);
+    const own = normalizeAiOptions({customPrompt: 'Target: {{target}}\n\nSentence: {{sentence}}'});
+    assert.equal(own.customPrompt, 'Target: {{target}}\n\nSentence: {{sentence}}', "the user's own prompt stays as written");
+});

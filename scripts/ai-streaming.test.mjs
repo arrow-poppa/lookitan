@@ -220,3 +220,34 @@ test('a synchronously failing cache producer is removed and may be retried', asy
     assert.equal(await cache.run('word', async () => 'recovered'), 'recovered');
     assert.equal(cache.peek('word'), 'recovered');
 });
+
+test('fixed instructions go first as the system message and the lookup text last, for prompt caches', async () => {
+    const requests = [];
+    const {provider} = await fixture(async (url, init) => {
+        requests.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({choices: [{message: {content: 'answer'}}]}));
+    });
+    const deepseek = new provider.DeepSeekProvider({...config});
+    await deepseek.generateExplanation('carro', 'Ele comprou um carro.', 'Word: {{target}}\nContext: {{sentence}}\n\nDescribe the word.\nAs JSON.',
+        'Target: {{target}}\n\nSentence: {{sentence}}\nBe brief.');
+    assert.deepEqual(requests.at(-1).messages, [
+        {role: 'system', content: 'Be brief.\n\nDescribe the word.\nAs JSON.'},
+        {role: 'user', content: 'Sentence: Ele comprou um carro.\nContext: Ele comprou um carro.\nTarget: carro\nWord: carro'},
+    ]);
+    // The same variable line in the system prompt and the prompt is sent once.
+    await deepseek.generateExplanation('carro', 'Frase.', 'Explain it.\n\nSentence: {{sentence}}\nTarget: {{target}}', 'Target: {{target}}\n\nSentence: {{sentence}}');
+    assert.deepEqual(requests.at(-1).messages, [
+        {role: 'system', content: 'Explain it.'},
+        {role: 'user', content: 'Sentence: Frase.\nTarget: carro'},
+    ]);
+    // A prompt without the variables is sent as written.
+    await deepseek.generateExplanation('carro', 'Frase.', 'Just say hi.', 'Be brief.');
+    assert.deepEqual(requests.at(-1).messages, [{role: 'system', content: 'Be brief.'}, {role: 'user', content: 'Just say hi.'}]);
+    // Through OpenRouter, Claude caches only from a marked breakpoint at the end of the system message.
+    await new provider.CustomProvider({...config, endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: 'anthropic/claude-sonnet-4.5'})
+        .generateExplanation('carro', 'Frase.', 'Explain it.\n\nTarget: {{target}}');
+    assert.deepEqual(requests.at(-1).messages[0], {role: 'system', content: [{type: 'text', text: 'Explain it.', cache_control: {type: 'ephemeral'}}]});
+    await new provider.CustomProvider({...config, endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: 'deepseek/deepseek-chat'})
+        .generateExplanation('carro', 'Frase.', 'Explain it.\n\nTarget: {{target}}');
+    assert.deepEqual(requests.at(-1).messages[0], {role: 'system', content: 'Explain it.'});
+});

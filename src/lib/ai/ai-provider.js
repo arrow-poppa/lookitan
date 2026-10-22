@@ -319,6 +319,66 @@ export class AIProvider {
     }
 
     /**
+     * The prompts as sent, laid out for the providers' prefix caches (DeepSeek, OpenAI, Gemini,
+     * OpenRouter): what is the same for every lookup comes first, the lookup's own text last. A
+     * line holding {{target}} or {{sentence}} is the lookup's: it moves to the end of the user
+     * message, the lines with the sentence before those with only the word, since several words are
+     * often looked up in one paragraph. Every other line, of the system prompt and then of the
+     * prompt, makes the system message. A line repeated in both is sent once. A prompt without
+     * either variable is sent as written.
+     * @param {string} term
+     * @param {string} sentence
+     * @param {string} customPrompt
+     * @param {string|AbortSignal} [systemPromptOrAbort]
+     * @param {AbortSignal} [abortSignal]
+     * @returns {{prompt: string, systemPrompt: string, signal: (AbortSignal|undefined)}}
+     */
+    _splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal) {
+        const {systemPrompt, signal} = this._resolvePromptArguments(term, sentence, systemPromptOrAbort, abortSignal);
+        const template = customPrompt || '';
+        if (!template.includes('{{target}}') && !template.includes('{{sentence}}')) {
+            return {prompt: this._replacePlaceholders(template, term, sentence), systemPrompt, signal};
+        }
+        const system = typeof systemPromptOrAbort === 'string' ? systemPromptOrAbort : '';
+        const fixed = [];
+        const withSentence = [];
+        const withTarget = [];
+        for (const text of [system, template]) {
+            const kept = [];
+            for (const line of text.split('\n')) {
+                if (line.includes('{{sentence}}')) {
+                    withSentence.push(this._replacePlaceholders(line, term, sentence).trim());
+                } else if (line.includes('{{target}}')) {
+                    withTarget.push(this._replacePlaceholders(line, term, sentence).trim());
+                } else {
+                    kept.push(line);
+                }
+            }
+            const block = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+            if (block) { fixed.push(block); }
+        }
+        const data = [...new Set([...withSentence, ...withTarget])].filter((line) => line !== '');
+        return {prompt: data.join('\n'), systemPrompt: fixed.join('\n\n'), signal};
+    }
+
+    /**
+     * Logs how much of the prompt the provider read from its cache, when the reply says so
+     * (DeepSeek, OpenAI and OpenRouter usage, Gemini usage metadata).
+     * @param {unknown} data
+     */
+    _logCacheUsage(data) {
+        if (!isObjectNotArray(data)) { return; }
+        const usage = isObjectNotArray(data.usage) ? data.usage : null;
+        const meta = isObjectNotArray(data.usageMetadata) ? data.usageMetadata : null;
+        const details = usage !== null && isObjectNotArray(usage.prompt_tokens_details) ? usage.prompt_tokens_details : null;
+        const prompt = usage?.prompt_tokens ?? meta?.promptTokenCount;
+        const cached = usage?.prompt_cache_hit_tokens ?? details?.cached_tokens ?? meta?.cachedContentTokenCount ?? 0;
+        if (typeof prompt === 'number') {
+            console.info(`AI prompt cache: ${cached} of ${prompt} prompt tokens`);
+        }
+    }
+
+    /**
      * Reads a `text/event-stream` body, invoking the callback once per event with its joined
      * `data:` payload. The reader is always cancelled on the way out, so an aborted request
      * tears the connection down instead of leaving the model generating tokens server side.
@@ -448,6 +508,7 @@ export class AIProvider {
             if (typeof error !== 'undefined') {
                 throw this._providerError(`${label} stream`, error, typeof error?.code === 'number' ? error.code : undefined);
             }
+            this._logCacheUsage(parsed);
             const delta = this._extractOpenAIStreamDelta(parsed);
             if (delta) {
                 full += delta;
@@ -492,8 +553,7 @@ export class OpenAIProvider extends AIProvider {
             throw new Error('OpenAI provider is not configured');
         }
 
-        const prompt = this._replacePlaceholders(customPrompt, term, sentence);
-        const {systemPrompt, signal} = this._resolvePromptArguments(term, sentence, systemPromptOrAbort, abortSignal);
+        const {prompt, systemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
 
         return {
             url: 'https://api.openai.com/v1/chat/completions',
@@ -559,6 +619,7 @@ export class OpenAIProvider extends AIProvider {
         }
 
         const data = await readResponseJson(response);
+        this._logCacheUsage(data);
         if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('OpenAI', data.error); }
         const choice = this._getFirstChoice(data);
         const message = choice !== null && isObjectNotArray(choice.message) ? choice.message : null;
@@ -747,8 +808,7 @@ export class GeminiProvider extends AIProvider {
             throw new Error('Gemini provider is not configured');
         }
 
-        const prompt = this._replacePlaceholders(customPrompt, term, sentence);
-        const {systemPrompt: resolvedSystemPrompt, signal} = this._resolvePromptArguments(term, sentence, systemPrompt, abortSignal);
+        const {prompt, systemPrompt: resolvedSystemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPrompt, abortSignal);
 
         const {url, body} = this._resolveRoute(this._config.model || 'gemini-2.5-flash', prompt, resolvedSystemPrompt, true);
         const response = await fetch(url, {
@@ -796,8 +856,7 @@ export class GeminiProvider extends AIProvider {
             throw new Error('Gemini provider is not configured');
         }
 
-        const prompt = this._replacePlaceholders(customPrompt, term, sentence);
-        const {systemPrompt, signal} = this._resolvePromptArguments(term, sentence, systemPromptOrAbort, abortSignal);
+        const {prompt, systemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
 
         const modelIdRaw = this._config.model || 'gemini-2.5-flash';
         const {url, body} = this._resolveRoute(modelIdRaw, prompt, systemPrompt, false);
@@ -812,6 +871,7 @@ export class GeminiProvider extends AIProvider {
         }
 
         const data = await readResponseJson(response);
+        this._logCacheUsage(data);
         if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('Gemini', data.error); }
         const text = this._extractGeminiText(data);
         return text.trim() || 'No explanation available.';
@@ -861,8 +921,7 @@ export class CustomProvider extends AIProvider {
             throw new Error('Custom provider is not configured. Please set endpoint, API key, and model.');
         }
 
-        const prompt = this._replacePlaceholders(customPrompt, term, sentence);
-        const {systemPrompt, signal} = this._resolvePromptArguments(term, sentence, systemPromptOrAbort, abortSignal);
+        const {prompt, systemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
 
         // Build OpenAI v1-style request body
         const messages = systemPrompt ?
@@ -873,6 +932,12 @@ export class CustomProvider extends AIProvider {
 [
     {role: 'user', content: prompt},
 ];
+
+        // Through OpenRouter, Claude and Gemini read their cache only up to a marked breakpoint:
+        // the end of the system message, the part every lookup shares.
+        if (systemPrompt && this._isOpenRouterEndpoint() && /^(anthropic|google)\//.test(String(this._config.model || '').trim())) {
+            messages[0] = {role: 'system', content: [{type: 'text', text: systemPrompt, cache_control: {type: 'ephemeral'}}]};
+        }
 
         const requestBody = {
             model: this._config.model || 'gpt-4o-mini',
@@ -946,6 +1011,7 @@ export class CustomProvider extends AIProvider {
         }
 
         const data = await readResponseJson(response);
+        this._logCacheUsage(data);
         const choice = this._getFirstChoice(data);
         const responseError = isObjectNotArray(data) ? data.error ?? choice?.error : undefined;
         if (typeof responseError !== 'undefined') { throw this._providerError('Custom', responseError); }
@@ -997,8 +1063,7 @@ export class DeepSeekProvider extends AIProvider {
             throw new Error('DeepSeek provider is not configured. Please set API key and model.');
         }
 
-        const prompt = this._replacePlaceholders(customPrompt, term, sentence);
-        const {systemPrompt, signal} = this._resolvePromptArguments(term, sentence, systemPromptOrAbort, abortSignal);
+        const {prompt, systemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
 
         const messages = systemPrompt ?
 [
@@ -1070,6 +1135,7 @@ export class DeepSeekProvider extends AIProvider {
         }
 
         const data = await readResponseJson(response);
+        this._logCacheUsage(data);
         if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('DeepSeek', data.error); }
         const choice = this._getFirstChoice(data);
         const message = choice !== null && isObjectNotArray(choice.message) ? choice.message : null;

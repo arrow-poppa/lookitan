@@ -74,12 +74,28 @@ function baseLanguage(tag) {
     return String(tag || '').split('-')[0].toLowerCase();
 }
 
+// The instructions come first and the lookup's text last, each variable on a line of its own: the
+// provider then sends the instructions as the system message, the same for every lookup, which
+// its prompt cache reuses (see `_splitPrompts` in ai-provider.js).
 export const CONTEXT_PROMPT =
+    'Translate the text into {{translationLanguage}}. ' +
+    'Wrap the translation of the word in double asterisks, like **this**. ' +
+    'Reply with the translation only.\n\n' +
+    'Text: {{sentence}}\n' +
+    "Word: '{{target}}'";
+
+export const EXPLAIN_PROMPT =
+    'Explain the word as it is used in the context. ' +
+    'Write in {{translationLanguage}}. Cover the meaning here, nuance and register, and give two short example sentences.\n\n' +
+    "Context: '{{sentence}}'\n" +
+    "Word: '{{target}}'";
+
+/** The default prompts before they put the lookup's text last (for migration). */
+export const LEGACY_CONTEXT_PROMPT =
     'Translate the text below into {{translationLanguage}}. ' +
     "Wrap the translation of '{{target}}' in double asterisks, like **this**. " +
     'Reply with the translation only.\n\n{{sentence}}';
-
-export const EXPLAIN_PROMPT =
+export const LEGACY_EXPLAIN_PROMPT =
     "Explain '{{target}}' as it is used in: '{{sentence}}'. " +
     'Write in {{translationLanguage}}. Cover the meaning here, nuance and register, and give two short example sentences.';
 

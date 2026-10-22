@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -125,6 +125,10 @@ export function normalizeAiOptions(stored) {
     for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'readingPrompt', 'componentsPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
         if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
     }
+    // The old default explanation and context prompts mixed the word into their instructions; the
+    // new ones put the lookup's text last, so the instructions can be cached.
+    if (out.customPrompt.trim() === LEGACY_EXPLAIN_PROMPT) { out.customPrompt = EXPLAIN_PROMPT; }
+    if (out.contextPrompt.trim() === LEGACY_CONTEXT_PROMPT) { out.contextPrompt = CONTEXT_PROMPT; }
     // Card prompts saved before the translation had its own field: move the default translation
     // clause to the {{translationField}} marker and keep the rest of the user's edits.
     if (!out.cardPrompt.includes(TRANSLATION_FIELD) && out.cardPrompt.includes(LEGACY_TRANSLATION_FIELD)) {
