@@ -59,7 +59,7 @@ src-tauri/src/
   ocr/paddle.rs  PP-OCRv6 det+rec through ONNX Runtime (DirectML on Windows, WebGPU on Linux, CPU fallback)
   ocr/lens.rs    optional Google Lens cloud OCR (protobuf to lensfrontend-pa.googleapis.com/v1/crupload)
   ocr/cache.rs   per-frame cache of boxes and recognized lines
-  segment/       words of Japanese, Chinese and Korean text (Sudachi, jieba-rs, lindera; dictionaries downloaded on first use); words.rs picks with it
+  segment/       words of Japanese, Chinese and Korean text (Sudachi, jieba-rs, Kiwi; downloaded on first use); words.rs picks with it
   platform/      cursor, capture and foreground app; kwin.rs is the KDE Wayland relay and ScreenShot2
   protocol.rs    `lkt:` URI scheme (/e entry HTML, /d dictionary resource, /c capture frame, /m saved media)
   cards.rs       saved words (words.json plus media/)
@@ -154,7 +154,13 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
     - Also in Japanese, a prefix takes the next morpheme, and a number its 助数詞 counter. Particles, auxiliaries alone and symbols are their own words. The lemmas are, in order: the する compound, the prefix + head, the head's dictionary form, then the surface.
     - The Korean chunker is `0x1401a1540`, with its attach rule at `0x1401a17e0` and lemmas at `0x1401a1b00`. Particles and XSN go on a nominal, endings on a verbal, XSV/XSA/VCP on a nominal, a bound noun on a number, and a VX after an EC, never across a space. The lemma is the stem + 다, the noun before 이다/아니다, or the noun (also without 들).
   - Lookitan:
-    - Korean: lindera 6.2.0 (`=6.2.0` in Cargo.toml) reads its release's prebuilt `lindera-ko-dic` (20 MB; the Sejong tags Kiwi uses).
+    - Korean (`segment/kiwi.rs`, since 2026-10-22) is Lookupper's:
+      - The analyzer is Kiwi 0.23.2 (Apache-2.0), the version in Lookupper's `models/kiwi/VERSION`, with its base (CoNg) model.
+      - It is loaded at run time through its C API (`libloading`), with Lookupper's options: `kiwi_init(model, 1, KIWI_BUILD_DEFAULT, 0)` and `kiwi_analyze_w(top_n 1, KIWI_MATCH_ALL_WITH_NORMALIZING, dialect cost 3, typo threshold 2.5)`.
+      - The library comes from the release's archive (Windows x64 `kiwi.dll`, Linux x86_64/aarch64 `libkiwi.so`), and the model from `kiwi_model_v0.23.2_base.tgz`. All are pinned by SHA-256 and kept in `segmenters/kiwi-0.23.2/`.
+      - Morphemes are base forms with their tag (했 → 하/VV + 었/EP); a contracted syllable's morphemes share its characters. korean.rs therefore treats `start <= previous end` as written together.
+      - Kiwi's `-R`/`-I` tag marks are dropped, and `W_*` tags read as SL.
+      - Other platforms keep lindera 6.2.0's prebuilt `lindera-ko-dic` (20 MB; the same Sejong tags). Where Kiwi runs, that folder is deleted.
     - Japanese (`segment/sudachidict.rs`, since 2026-10-22) is Lookupper's:
       - The analyzer is sudachi.rs, pinned by git tag `v0.6.11`. 0.7 reads only the newer dictionary format.
       - It runs in split mode C, with Sudachi's default plugins minus IgnoreYomigana, as Lookupper has them.
@@ -313,6 +319,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-22 (Claude, `tests`): Korean words are found as Lookupper finds them, with Kiwi 0.23.2 and its base model, loaded at run time with Lookupper's options (`segment/kiwi.rs`). mecab-ko-dic stays only for platforms Kiwi has no build for.
 - 2026-10-22 (Claude, `tests`): Japanese words are found as Lookupper finds them (`segment/sudachidict.rs`). The analyzer is sudachi.rs 0.6.11 in mode C, with the default plugins minus IgnoreYomigana, over the same SudachiDict core 20260723 `system.dic`. Lemmas use the dictionary form. It replaces lindera-sudachidict.
 - 2026-10-22 (Claude, `tests`): a word the recognizer read in one piece is split at a wide blank gap in its ink, as Lookupper's `0x140950d00` does (`ink::word_cuts`, `split_at_ink_gaps` in paddle.rs).
 - 2026-10-22 (Claude, `tests`): at the user's request (`main` first fast-forwarded to `b02e615`), Chinese words are found as Lookupper finds them. The analyzer is jieba-rs with the HMM, and the dictionary is jieba's `dict.txt.big` plus the CC-CEDICT words it lacks at frequency 1 (`segment/chinese.rs`). It replaces lindera-jieba.

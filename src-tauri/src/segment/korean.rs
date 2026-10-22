@@ -1,12 +1,14 @@
-//! Korean words from mecab-ko-dic morphemes. Korean puts spaces between words, but a word carries
+//! Korean words from Kiwi's morphemes (or mecab-ko-dic's where Kiwi has no build). Korean puts
+//! spaces between words, but a word carries
 //! its particles and endings (친구들과, 했습니다), which dictionaries do not list. Like Lookupper
 //! with Kiwi, a word is the run of morphemes in one spaced chunk that attach to each other, looked
 //! up by its stem: a verb or adjective as stem + 다 (했습니다 → 하다), a noun without its particles
 //! (친구들과 → 친구들, 친구), a noun before 이다 (학생이었다 → 학생).
 //!
-//! lindera's ko-dic details: tag (several joined by + for an inflected form), meaning class, final
-//! consonant, reading, type, first tag, last tag, and the expression an inflected form unfolds to
-//! (하/VV/*+았/EP/*).
+//! Kiwi's morphemes are base forms with their tag (했 → 하/VV + 었/EP), and the morphemes of one
+//! contracted syllable share its characters. lindera's ko-dic details: tag (several joined by +
+//! for an inflected form), meaning class, final consonant, reading, type, first tag, last tag, and
+//! the expression an inflected form unfolds to (하/VV/*+았/EP/*).
 
 use super::{Kind, Morpheme, Word};
 
@@ -64,7 +66,7 @@ pub fn words(text: &[char], ms: &[Morpheme]) -> Vec<Word> {
             Kind::Punct
         } else {
             // Only morphemes written together: a space always ends the word.
-            while j < ms.len() && ms[j].start == ms[j - 1].end && attaches(&ms[j], &ms[j - 1]) {
+            while j < ms.len() && ms[j].start <= ms[j - 1].end && attaches(&ms[j], &ms[j - 1]) {
                 j += 1;
             }
             if tag.starts_with('J') || tag.starts_with('E') || tag == "XSN" {
@@ -75,7 +77,8 @@ pub fn words(text: &[char], ms: &[Morpheme]) -> Vec<Word> {
                 Kind::Word
             }
         };
-        out.push(Word { start: ms[i].start, end: ms[j - 1].end, kind, lemmas: lemmas(text, &ms[i..j], kind) });
+        let end = ms[i..j].iter().map(|m| m.end).max().unwrap_or(ms[i].end);
+        out.push(Word { start: ms[i].start, end, kind, lemmas: lemmas(text, &ms[i..j], kind) });
         i = j;
     }
     out
@@ -128,7 +131,8 @@ fn lemmas(text: &[char], ms: &[Morpheme], kind: Kind) -> Vec<String> {
             None => {}
         }
     }
-    let surface: String = text[ms[0].start..ms[ms.len() - 1].end].iter().collect();
+    let end = ms.iter().map(|m| m.end).max().unwrap_or(ms[0].end);
+    let surface: String = text[ms[0].start..end].iter().collect();
     out.retain(|s| !s.is_empty() && *s != surface);
     out.dedup();
     out
@@ -187,5 +191,30 @@ mod tests {
         ]);
         assert_eq!(show(&text, &words(&text, &ms)),
             ["공부하고→공부하다/공부", "있다", "학생이었다→학생", "먹지→먹다", "않았어요→않다", "2권을·n→2권"]);
+    }
+
+    /// Kiwi's morphemes (Kiwi 0.23.2, base model, Lookupper's options): base forms, with the
+    /// morphemes of a contracted syllable on the same characters.
+    fn kiwi(text: &str, parts: &[(&str, &str, usize, usize)]) -> (Vec<char>, Vec<super::super::Morpheme>) {
+        let ms = parts
+            .iter()
+            .map(|&(form, tag, start, len)| super::super::Morpheme { start, end: start + len, surface: form.to_string(), details: vec![tag.to_string()] })
+            .collect();
+        (text.chars().collect(), ms)
+    }
+
+    #[test]
+    fn kiwi_base_forms_give_the_stem_and_contracted_syllables_stay_one_word() {
+        let (text, ms) = kiwi("오늘은 친구들과 산책을 했습니다.", &[
+            ("오늘", "NNG", 0, 2), ("은", "JX", 2, 1), ("친구", "NNG", 4, 2), ("들", "XSN", 6, 1), ("과", "JKB", 7, 1),
+            ("산책", "NNG", 9, 2), ("을", "JKO", 11, 1), ("하", "VV", 13, 1), ("었", "EP", 13, 1), ("습니다", "EF", 14, 3), (".", "SF", 17, 1),
+        ]);
+        assert_eq!(show(&text, &words(&text, &ms)), ["오늘은→오늘", "친구들과→친구들/친구", "산책을→산책", "했습니다→하다", ".·p"]);
+        let (text, ms) = kiwi("학생이었다 12명이 왔다 먹어 버렸어요", &[
+            ("학생", "NNG", 0, 2), ("이", "VCP", 2, 1), ("었", "EP", 3, 1), ("다", "EF", 4, 1),
+            ("12", "SN", 6, 2), ("명", "NNB", 8, 1), ("이", "JKS", 9, 1), ("오", "VV", 11, 1), ("었", "EP", 11, 1), ("다", "EF", 12, 1),
+            ("먹", "VV", 14, 1), ("어", "EC", 15, 1), ("버리", "VX", 17, 2), ("었", "EP", 18, 1), ("어요", "EF", 19, 2),
+        ]);
+        assert_eq!(show(&text, &words(&text, &ms)), ["학생이었다→학생", "12명이·n→12명", "왔다→오다", "먹어→먹다", "버렸어요→버리다"]);
     }
 }

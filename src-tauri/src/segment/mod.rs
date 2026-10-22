@@ -5,15 +5,16 @@
 //! the pointer.
 //!
 //! Japanese goes through Sudachi with Lookupper's SudachiDict (sudachidict.rs), Chinese through
-//! jieba-rs with Lookupper's dictionary (chinese.rs). Korean goes through lindera 6.2 (MIT) with
-//! the prebuilt mecab-ko-dic (Apache-2.0) of its GitHub release, whose Sejong tags are the ones
-//! Kiwi uses. All are downloaded on first use, like Lookupper's models, and checked against pinned
+//! jieba-rs with Lookupper's dictionary (chinese.rs), Korean through Kiwi as Lookupper runs it
+//! (kiwi.rs). Where Kiwi has no build, Korean goes through lindera 6.2 (MIT) with the prebuilt
+//! mecab-ko-dic (Apache-2.0) of its GitHub release, whose Sejong tags are the ones Kiwi uses. All are downloaded on first use, like Lookupper's models, and checked against pinned
 //! SHA-256s where the source allows it. Each dictionary keeps its NOTICE.txt. Only the recognition
 //! language's dictionary is loaded; Sudachi's and lindera's are memory-mapped. How morphemes form
 //! words (japanese.rs, korean.rs) is Lookitan's own code, written to match what Lookupper shows.
 
 mod chinese;
 mod japanese;
+mod kiwi;
 mod korean;
 mod sudachidict;
 
@@ -101,6 +102,7 @@ impl Lang {
         match self {
             Lang::Japanese => "Sudachi",
             Lang::Chinese => "jieba + CC-CEDICT",
+            Lang::Korean if kiwi::available() => "Kiwi",
             Lang::Korean => self.pack().map_or("", |p| p.label),
         }
     }
@@ -110,6 +112,7 @@ impl Lang {
         match self {
             Lang::Japanese => sudachidict::WHEEL_BYTES,
             Lang::Chinese => chinese::BYTES,
+            Lang::Korean if kiwi::available() => kiwi::bytes(),
             Lang::Korean => self.pack().map_or(0, |p| p.bytes),
         }
     }
@@ -119,6 +122,7 @@ impl Lang {
         match (self, self.pack()) {
             (Lang::Japanese, _) => sudachidict::ensure(root, progress),
             (Lang::Chinese, _) => chinese::ensure(root, progress),
+            (Lang::Korean, _) if kiwi::available() => kiwi::ensure(root, progress),
             (_, Some(pack)) => ensure(root, pack, progress),
             (_, None) => bail!("no dictionary for {self:?}"),
         }
@@ -156,6 +160,7 @@ enum Engine {
     Lindera(lindera::segmenter::Segmenter),
     Jieba(jieba_rs::Jieba),
     Sudachi(sudachidict::Tokenizer),
+    Kiwi(kiwi::Kiwi),
 }
 
 pub struct Analyzer {
@@ -168,6 +173,7 @@ impl Analyzer {
         let engine = match lang {
             Lang::Chinese => Engine::Jieba(chinese::open(dir)?),
             Lang::Japanese => Engine::Sudachi(sudachidict::open(dir)?),
+            Lang::Korean if kiwi::available() => Engine::Kiwi(kiwi::open(dir)?),
             Lang::Korean => {
                 let dictionary = lindera::dictionary::load_fs_dictionary(dir).map_err(|e| anyhow!("{e}"))?;
                 Engine::Lindera(lindera::segmenter::Segmenter::new(lindera::mode::Mode::Normal, dictionary, None))
@@ -187,6 +193,7 @@ impl Analyzer {
                     .map(|t| Morpheme { start: t.start, end: t.end, surface: t.word.to_string(), details: Vec::new() })
                     .collect();
             }
+            Engine::Kiwi(kiwi) => return kiwi.morphemes(text),
             // Split mode C, as Lookupper's; details as japanese.rs reads them.
             Engine::Sudachi(tokenizer) => {
                 use sudachi::analysis::{Mode, Tokenize};
@@ -468,7 +475,7 @@ pub(crate) mod tests {
     /// Downloads the three dictionaries into `LOOKITAN_SEGMENTERS` (CI caches it) and reads a
     /// sentence of each language with them.
     #[test]
-    #[ignore = "downloads about 105 MB; CI runs it"]
+    #[ignore = "downloads about 270 MB; CI runs it"]
     fn real_dictionaries() {
         let root = PathBuf::from(std::env::var("LOOKITAN_SEGMENTERS").expect("LOOKITAN_SEGMENTERS is the download folder"));
         let check = |lang: Lang, text: &str, expected: &[&str]| {
@@ -487,6 +494,10 @@ pub(crate) mod tests {
         check(Lang::Japanese, "家にいましたと思った", &["家", "に·f", "いました→いる", "と·f", "思った→思う"]);
         check(Lang::Korean, "오늘은 날씨가 좋아서 친구들과 함께 산책을 했습니다.",
             &["오늘은→오늘", "날씨가→날씨", "좋아서→좋다", "친구들과→친구들/친구", "함께", "산책을→산책", "했습니다→하다", ".·p"]);
+        if kiwi::available() {
+            check(Lang::Korean, "학생이었다 12명이 왔다 먹어 버렸어요",
+                &["학생이었다→학생", "12명이·n→12명", "왔다→오다", "먹어→먹다", "버렸어요→버리다"]);
+        }
         check(Lang::Chinese, "我们在北京大学学习中文。", &["我们", "在", "北京大学", "学习", "中文", "。·p"]);
         // Words only CC-CEDICT has stay whole, as in Lookupper (jieba's dict.txt.big alone gives
         // 緬因/貓吧, 最後/一根/稻草 and 3D/打印机).
