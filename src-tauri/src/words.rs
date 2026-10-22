@@ -1016,9 +1016,9 @@ mod tests {
     #[test]
     fn a_turned_line_is_read_in_its_own_frame_and_its_words_are_turned_boxes() {
         let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
-        let line = turned("hello world", 0.3);
-        let t = line.tilt.unwrap();
-        let boxes = super::word_boxes(std::slice::from_ref(&line), None);
+        let turned_line = turned("hello world", 0.3);
+        let t = turned_line.tilt.unwrap();
+        let boxes = super::word_boxes(std::slice::from_ref(&turned_line), None);
         let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
         assert_eq!(texts, ["hello", "world"]);
         let world = &boxes[1];
@@ -1032,7 +1032,7 @@ mod tests {
         assert!(close(world.x0 - world.hit.0, 5.0) && close(world.y0 - world.hit.1, 0.0));
         // On "w" of "world", turned onto the capture.
         let (px, py) = t.to_capture(165.0, 110.0);
-        let p = pick(std::slice::from_ref(&line), px, py, None).unwrap();
+        let p = pick(std::slice::from_ref(&turned_line), px, py, None).unwrap();
         assert_eq!(p.word, "world");
         assert!(close(p.angle, 0.3));
         let (wx, wy) = t.to_capture(185.0, 110.0);
