@@ -1104,7 +1104,12 @@ mod tests {
 
     #[test]
     fn a_paragraph_is_analyzed_whole_so_a_word_broken_across_lines_is_one_word() {
-        let lines = [line("日本語を勉", 100.0, 100.0), line("強しています。", 100.0, 125.0)];
+        // Boxes as wide as their characters: the lower line's first word would not fit after the
+        // upper one, so its end is a natural wrap.
+        let lines = [line("日本語を勉", 100.0, 100.0), line("強しています。", 100.0, 125.0)].map(|mut l| {
+            l.x1 = l.chars.last().unwrap().x1;
+            l
+        });
         let seg = japanese();
         let boxes = super::word_boxes(&lines, Some(&seg));
         let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
