@@ -731,7 +731,7 @@ fn cached_lens(state: &AppState, image: &image::RgbaImage, key: FrameKey, settin
     };
     if let Some(lines) = cached { return Ok(lines); }
     let lines = lens_engine(state)?.recognize(image, &settings.lens_api_key, &settings.ocr_language)?;
-    let boxes: Vec<TextBox> = lines.iter().map(|line| TextBox { x0: line.x0, y0: line.y0, x1: line.x1, y1: line.y1 }).collect();
+    let boxes: Vec<TextBox> = lines.iter().map(|line| TextBox { x0: line.x0, y0: line.y0, x1: line.x1, y1: line.y1, quad: None }).collect();
     let mut cache = state.ocr_cache.lock();
     cache.save_boxes(key, &boxes);
     cache.save_lines(key, &boxes, &lines);

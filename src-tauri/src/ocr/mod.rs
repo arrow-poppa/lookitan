@@ -6,6 +6,7 @@ pub mod cache;
 pub mod ink;
 mod lens_proto;
 pub mod paddle;
+pub mod quad;
 
 use serde::Serialize;
 

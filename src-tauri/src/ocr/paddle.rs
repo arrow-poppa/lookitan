@@ -17,7 +17,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
-use super::{ink, is_rtl_text, is_vertical_box, reverse_rtl, Flow, OcrChar, OcrLine};
+use super::{quad, ink, is_rtl_text, is_vertical_box, reverse_rtl, Flow, OcrChar, OcrLine};
 use crate::settings::GpuPreference;
 
 macro_rules! ortx {
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn batches_group_similar_widths_within_limits() {
-        let line = |w: f32| TextBox { x0: 0.0, y0: 0.0, x1: w, y1: 48.0 };
+        let line = |w: f32| TextBox { x0: 0.0, y0: 0.0, x1: w, y1: 48.0, quad: None };
         let mut boxes: Vec<TextBox> = (0..40).map(|i| line(100.0 + (i % 5) as f32 * 200.0)).collect();
         boxes.push(line(3000.0));
         let batches = plan_batches(&boxes);
@@ -170,6 +170,7 @@ mod tests {
             x1: 220.0,
             y0: 480.0,
             y1: 512.0,
+            quad: None,
         }];
         merge_band_boxes(
             &mut boxes,
@@ -179,18 +180,21 @@ mod tests {
                     x1: 222.0,
                     y0: 480.0,
                     y1: 524.0,
+                    quad: None,
                 },
                 TextBox {
                     x0: 260.0,
                     x1: 460.0,
                     y0: 480.0,
                     y1: 524.0,
+                    quad: None,
                 },
                 TextBox {
                     x0: 20.0,
                     x1: 220.0,
                     y0: 550.0,
                     y1: 590.0,
+                    quad: None,
                 },
             ],
         );
@@ -202,13 +206,27 @@ mod tests {
     }
 
     #[test]
+    fn only_a_turned_kernel_gets_a_turned_rectangle() {
+        let upright: Vec<(usize, usize)> = (10..40).flat_map(|x| (5..9).map(move |y| (x, y))).collect();
+        assert!(turned_kernel(&upright, 5, 8).is_none(), "an upright line keeps its plain box");
+        // A bar 40 long and 4 tall, rising 1 in 4.
+        let tilted: Vec<(usize, usize)> = (0..40).flat_map(|x| (0..4).map(move |y| (x, y + 10 - x / 4))).collect();
+        let r = turned_kernel(&tilted, 0, 13).expect("turned");
+        assert!(r.u[1] < 0.0 && r.half_w > 4.0 * r.half_h, "{r:?}");
+        let b = TextBox { x0: 0.0, y0: 0.0, x1: 50.0, y1: 50.0, quad: Some(r.corners()) };
+        let (w, h) = b.size();
+        assert!(w > 4.0 * h, "the size of a turned box is its own, not its bounds': {w} x {h}");
+        assert_eq!(first_turns(&b), [Turn::Upright]);
+    }
+
+    #[test]
     fn a_vertical_box_is_read_on_its_side_both_ways() {
         // A white 20 x 100 column at (40, 10), inked in its top 30 rows and right 8 columns.
         let img = RgbaImage::from_fn(100, 200, |x, y| {
             let inked = (52..60).contains(&x) && (10..40).contains(&y);
             if inked { Rgba([0, 0, 0, 255]) } else { Rgba([255, 255, 255, 255]) }
         });
-        let b = TextBox { x0: 40.0, y0: 10.0, x1: 60.0, y1: 110.0 };
+        let b = TextBox { x0: 40.0, y0: 10.0, x1: 60.0, y1: 110.0, quad: None };
         assert_eq!(first_turns(&b), [Turn::Left], "a tall box is read top to bottom first");
         let left = rec_crop(&img, b, Turn::Left).unwrap();
         assert_eq!(left.image.height(), REC_HEIGHT);
@@ -222,18 +240,18 @@ mod tests {
         let ink = rec_crop(&img, b, Turn::Right).unwrap().ink.unwrap();
         assert!(ink.cols[70..].iter().all(|&c| c) && !ink.cols[..60].iter().any(|&c| c), "{:?}", ink.cols);
         assert_eq!((ink.y0, ink.y1), (12, 20));
-        assert_eq!(first_turns(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 40.0 }), [Turn::Upright]);
+        assert_eq!(first_turns(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 40.0, quad: None }), [Turn::Upright]);
     }
 
     #[test]
     fn a_short_vertical_box_is_a_column_and_is_read_bottom_to_top_only_when_needed() {
         // 期許。 in a 50 x 94 box: read upright, the squeezed column gave only 期, as sure as 期許.
-        let short = TextBox { x0: 0.0, y0: 0.0, x1: 50.0, y1: 94.0 };
+        let short = TextBox { x0: 0.0, y0: 0.0, x1: 50.0, y1: 94.0, quad: None };
         assert_eq!(first_turns(&short), [Turn::Left], "a short column is read on its side, as in Lookupper");
-        let tall = TextBox { x0: 0.0, y0: 0.0, x1: 20.0, y1: 100.0 };
+        let tall = TextBox { x0: 0.0, y0: 0.0, x1: 20.0, y1: 100.0, quad: None };
         assert!(!needs_right(&tall, Some(0.95)), "read well top to bottom: no second reading");
         assert!(needs_right(&tall, Some(0.4)) && needs_right(&tall, None));
-        assert!(!needs_right(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 20.0 }, None), "never a horizontal box");
+        assert!(!needs_right(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 20.0, quad: None }, None), "never a horizontal box");
         assert!(better(0.9, Some(0.5)));
         assert!(!better(0.5, Some(0.5)), "a tie keeps top to bottom");
     }
@@ -266,7 +284,7 @@ fn rec_width(cw: u32, ch: u32) -> u32 {
 }
 
 fn box_rec_width(b: &TextBox) -> u32 {
-    let (w, h) = ((b.x1 - b.x0).max(1.0), (b.y1 - b.y0).max(1.0));
+    let (w, h) = b.size();
     // A vertical box is read on its side.
     if is_vertical_box(w, h) { rec_width(h as u32, w as u32) } else { rec_width(w as u32, h as u32) }
 }
@@ -315,7 +333,7 @@ const TURN_CONFIDENT: f32 = 0.85;
 /// one, however short, as in Lookupper. `Turn::Right` comes later, only when needed
 /// (`needs_right`).
 fn first_turns(b: &TextBox) -> &'static [Turn] {
-    let (w, h) = ((b.x1 - b.x0).max(1.0), (b.y1 - b.y0).max(1.0));
+    let (w, h) = b.size();
     if !is_vertical_box(w, h) {
         &[Turn::Upright]
     } else {
@@ -325,7 +343,8 @@ fn first_turns(b: &TextBox) -> &'static [Turn] {
 
 /// Whether a vertical box whose best reading so far scored `best` is also read bottom to top.
 fn needs_right(b: &TextBox, best: Option<f32>) -> bool {
-    is_vertical_box(b.x1 - b.x0, b.y1 - b.y0) && best.is_none_or(|score| score < TURN_CONFIDENT)
+    let (w, h) = b.size();
+    is_vertical_box(w, h) && best.is_none_or(|score| score < TURN_CONFIDENT)
 }
 
 /// Whether a reading scoring `new` beats the best so far.
@@ -349,7 +368,8 @@ fn keep(best: &mut Option<Reading>, new: Reading) {
 /// A text box cut out of the capture, turned as asked, and resized to the recognizer's height.
 struct RecCrop {
     b: TextBox,
-    /// Left edge, top, width and height of the crop in capture pixels.
+    /// Left edge, top, width and height of the crop in capture pixels; for a turned box (`b.quad`),
+    /// 0, 0 and the size of its straightened crop.
     x: u32,
     y: u32,
     cw: u32,
@@ -364,14 +384,21 @@ struct RecCrop {
 
 fn rec_crop(img: &RgbaImage, b: TextBox, turn: Turn) -> Option<RecCrop> {
     let (iw, ih) = img.dimensions();
-    let x = (b.x0.floor().max(0.0) as u32).min(iw.saturating_sub(1));
-    let y = (b.y0.floor().max(0.0) as u32).min(ih.saturating_sub(1));
-    let cw = ((b.x1.ceil() as u32).min(iw)).saturating_sub(x);
-    let ch = ((b.y1.ceil() as u32).min(ih)).saturating_sub(y);
-    if cw < 2 || ch < 2 {
-        return None;
-    }
-    let mut crop = image::imageops::crop_imm(img, x, y, cw, ch).to_image();
+    let (x, y, cw, ch, mut crop) = if let Some(q) = &b.quad {
+        // A turned box is straightened first, as Lookupper's recognizer does.
+        let (w, h) = quad::crop_size(q);
+        let (cw, ch) = (w.round().max(2.0) as u32, h.round().max(2.0) as u32);
+        (0, 0, cw, ch, quad::warp(img, q, cw, ch))
+    } else {
+        let x = (b.x0.floor().max(0.0) as u32).min(iw.saturating_sub(1));
+        let y = (b.y0.floor().max(0.0) as u32).min(ih.saturating_sub(1));
+        let cw = ((b.x1.ceil() as u32).min(iw)).saturating_sub(x);
+        let ch = ((b.y1.ceil() as u32).min(ih)).saturating_sub(y);
+        if cw < 2 || ch < 2 {
+            return None;
+        }
+        (x, y, cw, ch, image::imageops::crop_imm(img, x, y, cw, ch).to_image())
+    };
     match turn {
         Turn::Upright => {}
         Turn::Left => crop = image::imageops::rotate270(&crop),
@@ -398,12 +425,15 @@ fn fill_rec_input(slot: &mut [f32], crop: &RgbaImage, padded_w: usize) {
     }
 }
 
+/// A detected text box: the axis-aligned rectangle around it, and for a turned line its corners
+/// (top left, top right, bottom right, bottom left; see quad.rs).
 #[derive(Clone, Copy, Debug)]
 pub struct TextBox {
     pub x0: f32,
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
+    pub quad: Option<quad::Quad>,
 }
 
 /// Splits detected boxes into the line under the pointer with its neighbours (recognized first,
@@ -418,7 +448,8 @@ pub fn split_focus(boxes: &[TextBox], fx: f32, fy: f32) -> (Vec<TextBox>, Vec<Te
         return (Vec::new(), boxes.to_vec());
     };
     // The lines above and below, or the columns beside a vertical one.
-    let vertical = is_vertical_box(target.x1 - target.x0, target.height());
+    let (tw, th) = target.size();
+    let vertical = is_vertical_box(tw, th);
     let across = |b: &TextBox| if vertical { (b.y0, b.y1, b.x0, b.x1) } else { (b.x0, b.x1, b.y0, b.y1) };
     let (t0, t1, s0, s1) = across(&target);
     let h = (s1 - s0).max(4.0);
@@ -460,6 +491,15 @@ impl TextBox {
         self.y1 - self.y0
     }
 
+    /// Width along the line and height across it: the turned rectangle's for a turned box.
+    pub fn size(&self) -> (f32, f32) {
+        let (w, h) = match &self.quad {
+            Some(q) => quad::crop_size(q),
+            None => (self.x1 - self.x0, self.y1 - self.y0),
+        };
+        (w.max(1.0), h.max(1.0))
+    }
+
     pub fn distance_to(&self, x: f32, y: f32) -> f32 {
         let dx = if x < self.x0 {
             self.x0 - x
@@ -488,6 +528,13 @@ fn merge_band_boxes(boxes: &mut Vec<TextBox>, band: Vec<TextBox>) {
             overlap_x > 0.5 * (a.x1 - a.x0).min(b.x1 - b.x0) && overlap_y > 0.5 * a.height().min(b.height())
         });
         if let Some(a) = duplicate {
+            // A turned line found in both bands: one rectangle in the frame of the first piece.
+            let corners = |t: &TextBox| t.quad.unwrap_or([[t.x0, t.y0], [t.x1, t.y0], [t.x1, t.y1], [t.x0, t.y1]]);
+            a.quad = match (a.quad, b.quad) {
+                (None, None) => None,
+                (Some(q), _) => Some(quad::merged(&q, &corners(&b))),
+                (None, Some(q)) => Some(quad::merged(&q, &corners(&*a))),
+            };
             a.x0 = a.x0.min(b.x0);
             a.y0 = a.y0.min(b.y0);
             a.x1 = a.x1.max(b.x1);
@@ -496,6 +543,27 @@ fn merge_band_boxes(boxes: &mut Vec<TextBox>, band: Vec<TextBox>) {
             boxes.push(b);
         }
     }
+}
+
+/// The smallest rectangle around a text kernel's pixels (`pixels`, rows `miny..=maxy`), when it is
+/// turned; `None` for an upright kernel, which keeps its plain box.
+fn turned_kernel(pixels: &[(usize, usize)], miny: usize, maxy: usize) -> Option<quad::Rect> {
+    // The hull needs only each row's ends: the outer corners of its first and last pixels.
+    let mut ends = vec![(usize::MAX, 0usize); maxy - miny + 1];
+    for &(x, y) in pixels {
+        let e = &mut ends[y - miny];
+        *e = (e.0.min(x), e.1.max(x));
+    }
+    let corners: Vec<quad::Point> = ends
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.0 != usize::MAX)
+        .flat_map(|(i, &(a, b))| {
+            let (y, a, b) = ((miny + i) as f32, a as f32, (b + 1) as f32);
+            [[a, y], [b, y], [a, y + 1.0], [b, y + 1.0]]
+        })
+        .collect();
+    quad::min_area_rect(corners).filter(quad::Rect::rotated)
 }
 
 pub struct PaddleOcr {
@@ -703,6 +771,7 @@ impl PaddleOcr {
             y0: 0.0,
             x1: 96.0,
             y1: 32.0,
+            quad: None,
         };
         if let Err(e) = self.recognize_box(&blank, b) {
             log::warn!("recognizer warm-up failed: {e:#}");
@@ -754,6 +823,11 @@ impl PaddleOcr {
             for b in &mut found {
                 b.y0 += y as f32;
                 b.y1 += y as f32;
+                if let Some(q) = &mut b.quad {
+                    for p in q.iter_mut() {
+                        p[1] += y as f32;
+                    }
+                }
             }
             merge_band_boxes(&mut boxes, found);
             if y + height == ph {
@@ -769,6 +843,11 @@ impl PaddleOcr {
             b.x1 = (b.x1 - pad).clamp(0.0, rw) * sx;
             b.y0 = (b.y0 - pad).clamp(0.0, rh) * sy;
             b.y1 = (b.y1 - pad).clamp(0.0, rh) * sy;
+            if let Some(q) = &mut b.quad {
+                for p in q.iter_mut() {
+                    *p = [(p[0] - pad) * sx, (p[1] - pad) * sy];
+                }
+            }
         }
         boxes.retain(|b| b.x1 - b.x0 >= 1.0 && b.y1 - b.y0 >= 1.0);
         Ok(boxes)
@@ -820,6 +899,7 @@ impl PaddleOcr {
         let mut visited = vec![false; mh * mw];
         let mut boxes = Vec::new();
         let mut stack: Vec<usize> = Vec::new();
+        let mut pixels: Vec<(usize, usize)> = Vec::new();
         for start in 0..mh * mw {
             if visited[start] || prob[start] <= DET_THRESH {
                 continue;
@@ -829,8 +909,10 @@ impl PaddleOcr {
             let (mut minx, mut miny, mut maxx, mut maxy) = (usize::MAX, usize::MAX, 0usize, 0usize);
             let mut sum = 0f32;
             let mut count = 0usize;
+            pixels.clear();
             while let Some(i) = stack.pop() {
                 let (x, y) = (i % mw, i / mw);
+                pixels.push((x, y));
                 minx = minx.min(x);
                 maxx = maxx.max(x);
                 miny = miny.min(y);
@@ -858,7 +940,24 @@ impl PaddleOcr {
             }
             let bw = (maxx - minx + 1) as f32;
             let bh = (maxy - miny + 1) as f32;
-            if bw < 3.0 || bh < 3.0 || count == 0 || sum / (count as f32) < box_thresh {
+            if count == 0 || sum / (count as f32) < box_thresh {
+                continue;
+            }
+            // As Lookupper, the kernel's smallest rectangle, which is turned with a turned line.
+            if let Some(r) = turned_kernel(&pixels, miny, maxy) {
+                if 2.0 * r.half_w.min(r.half_h) < 3.0 {
+                    continue;
+                }
+                let (kw, kh) = (2.0 * r.half_w, 2.0 * r.half_h);
+                let q = r.grown(kw * kh * UNCLIP_RATIO / (2.0 * (kw + kh))).corners().map(|p| [p[0] * sx, p[1] * sy]);
+                let (x0, y0, x1, y1) = quad::bounds(&q);
+                let (x0, y0, x1, y1) = (x0.max(0.0), y0.max(0.0), x1.min(w as f32), y1.min(h as f32));
+                if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
+                    boxes.push(TextBox { x0, y0, x1, y1, quad: Some(q) });
+                }
+                continue;
+            }
+            if bw < 3.0 || bh < 3.0 {
                 continue;
             }
             // DB predicts shrunk text kernels; grow them back by area * ratio / perimeter.
@@ -868,7 +967,7 @@ impl PaddleOcr {
             let x1 = (((maxx + 1) as f32 + d) * sx).min(w as f32);
             let y1 = (((maxy + 1) as f32 + d) * sy).min(h as f32);
             if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
-                boxes.push(TextBox { x0, y0, x1, y1 });
+                boxes.push(TextBox { x0, y0, x1, y1, quad: None });
             }
         }
         Ok(boxes)
@@ -982,7 +1081,13 @@ impl PaddleOcr {
         let b = crop.b;
         // Where the line starts and how long it is in capture pixels, and its ends: across, or
         // down a turned crop (from the top for `Turn::Left`; `Turn::Right` is mirrored below).
-        let (start, len, lo, hi) = if crop.turn == Turn::Upright { (crop.x, crop.cw, b.x0, b.x1) } else { (crop.y, crop.ch, b.y0, b.y1) };
+        let (start, len, lo, hi) = match (crop.turn, b.quad.is_some()) {
+            // A straightened crop: positions along it, mapped onto the capture below.
+            (Turn::Upright, true) => (0, crop.cw, 0.0, crop.cw as f32),
+            (_, true) => (0, crop.ch, 0.0, crop.ch as f32),
+            (Turn::Upright, false) => (crop.x, crop.cw, b.x0, b.x1),
+            (_, false) => (crop.y, crop.ch, b.y0, b.y1),
+        };
         // In a batch, the steps past this crop's own width only see padding.
         let content_steps = steps as f32 * crop.tw as f32 / padded_w as f32;
         let valid = (content_steps.ceil() as usize).clamp(1, steps);
@@ -1031,7 +1136,21 @@ impl PaddleOcr {
         let blank: Vec<bool> = decoded.iter().map(|(c, _)| c.is_whitespace()).collect();
         // Word edges snap to the ink of the line, as in Lookupper.
         let mut spans = ink::spans(&centers, &blank, crop.ink.as_ref(), start as f32, lo, hi, step_w);
-        if crop.turn == Turn::Right {
+        if let Some(q) = &b.quad {
+            // Along a turned line, a position maps onto the capture's x (a row) or y (a column)
+            // through the line's middle.
+            let mid = |a: quad::Point, c: quad::Point| [(a[0] + c[0]) / 2.0, (a[1] + c[1]) / 2.0];
+            let (from, to) = match crop.turn {
+                Turn::Upright => (mid(q[0], q[3])[0], mid(q[1], q[2])[0]),
+                Turn::Left => (mid(q[0], q[1])[1], mid(q[3], q[2])[1]),
+                Turn::Right => (mid(q[3], q[2])[1], mid(q[0], q[1])[1]),
+            };
+            let at = |s: f32| from + (to - from) * s / len.max(1) as f32;
+            for span in &mut spans {
+                let (a, c) = (at(span.0), at(span.1));
+                *span = (a.min(c), a.max(c));
+            }
+        } else if crop.turn == Turn::Right {
             // The crop's left was the bottom of the line: its characters go up.
             let mirror = 2.0 * crop.y as f32 + crop.ch as f32;
             for span in &mut spans {
@@ -1046,7 +1165,8 @@ impl PaddleOcr {
         let text: String = chars.iter().map(|c| c.ch).collect();
         // A turned crop's rows are the columns of the line: from its right side when turned left,
         // from its left side when turned right.
-        let ink_y = crop.ink.as_ref().map(|ink| match crop.turn {
+        // A turned line has no rows of ink on the capture's axes.
+        let ink_y = crop.ink.as_ref().filter(|_| b.quad.is_none()).map(|ink| match crop.turn {
             Turn::Upright => (crop.y as f32 + ink.y0 as f32, crop.y as f32 + ink.y1 as f32),
             Turn::Left => {
                 let right = (crop.x + crop.cw) as f32;

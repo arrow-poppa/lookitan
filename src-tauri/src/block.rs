@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 
-use crate::ocr::paddle::TextBox;
+use crate::ocr::{paddle::TextBox, quad};
 
 /// The pointer is on a box when it lies inside it with the box's short side (the text's size)
 /// widened by this share on each side; there is no slack past the ends of a line or a column.
@@ -35,9 +35,16 @@ fn rect(b: &TextBox) -> Rect {
     Rect { x, y, w: b.x1.ceil() as i32 - x + 1, h: b.y1.ceil() as i32 - y + 1 }
 }
 
-/// The first box the pointer is on.
+/// The first box the pointer is on; a turned box is tested turned, as Lookupper's rotated rect.
 fn under_pointer(boxes: &[TextBox], x: f32, y: f32) -> Option<usize> {
     boxes.iter().position(|b| {
+        if let Some(q) = &b.quad {
+            let r = quad::rect_of(q);
+            let (along, across) = r.local([x, y]);
+            let short = 2.0 * r.half_w.min(r.half_h);
+            let (sw, sh) = if r.half_w < r.half_h { (POINTER_SLACK * short, 0.0) } else { (0.0, POINTER_SLACK * short) };
+            return along.abs() <= r.half_w + sw && across.abs() <= r.half_h + sh;
+        }
         let (w, h) = (b.x1 - b.x0, b.y1 - b.y0);
         let (sx, sy) = if w < h { (POINTER_SLACK * w, 0.0) } else { (0.0, POINTER_SLACK * h) };
         x >= b.x0 - sx && x <= b.x1 + sx && y >= b.y0 - sy && y <= b.y1 + sy
@@ -107,7 +114,7 @@ pub fn reads_as_text<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
 /// The rectangle around some boxes.
 pub fn bounds(boxes: &[TextBox]) -> Option<TextBox> {
     let first = *boxes.first()?;
-    Some(boxes.iter().fold(first, |r, b| TextBox { x0: r.x0.min(b.x0), y0: r.y0.min(b.y0), x1: r.x1.max(b.x1), y1: r.y1.max(b.y1) }))
+    Some(boxes.iter().fold(first, |r, b| TextBox { x0: r.x0.min(b.x0), y0: r.y0.min(b.y0), x1: r.x1.max(b.x1), y1: r.y1.max(b.y1), quad: None }))
 }
 
 #[cfg(test)]
@@ -115,7 +122,7 @@ mod tests {
     use super::*;
 
     fn b(x0: f32, y0: f32, x1: f32, y1: f32) -> TextBox {
-        TextBox { x0, y0, x1, y1 }
+        TextBox { x0, y0, x1, y1, quad: None }
     }
 
     #[test]
@@ -165,6 +172,18 @@ mod tests {
         assert_eq!(under(&boxes, 1340.0, 443.0), [0, 1], "neighbouring columns join, the far picture does not");
         assert_eq!(under(&boxes, 1320.0, 443.0), [0, 1], "within a fifth of the column's width");
         assert!(under(&boxes, 1317.0, 443.0).is_empty());
+    }
+
+    #[test]
+    fn a_turned_box_is_under_the_pointer_only_along_its_own_slant() {
+        // A line 200 long and 20 tall rising at 30 degrees from (100, 200).
+        let r = quad::Rect { center: [100.0 + 86.6, 200.0 - 50.0], u: [0.866, -0.5], half_w: 100.0, half_h: 10.0 };
+        let q = r.corners();
+        let (x0, y0, x1, y1) = quad::bounds(&q);
+        let boxes = [TextBox { x0, y0, x1, y1, quad: Some(q) }];
+        assert_eq!(under(&boxes, 186.6, 150.0), [0], "on its middle");
+        assert_eq!(under(&boxes, 186.6 - 0.5 * 13.0, 150.0 - 0.866 * 13.0), [0], "a fifth of its height past its top edge");
+        assert!(under(&boxes, x0 + 5.0, y0 + 5.0).is_empty(), "inside its bounds but off the slanted line");
     }
 
     #[test]
