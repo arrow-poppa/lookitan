@@ -1,6 +1,7 @@
 // Settings tab: essentials, shortcuts, OCR, per-app profiles, word audio, Anki and application options.
 
 import {getVersion} from '@tauri-apps/api/app';
+import {ask} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {icon} from '../lib/icons.js';
 import {renderAnkiSection} from './anki-panel.js';
@@ -129,6 +130,58 @@ function engineStatusText() {
     return status.segmenter ? `${engine} · ${status.segmenter}` : engine;
 }
 
+/**
+ * Japanese, Chinese and Korean: the word analyzer the recognition language downloads, with
+ * buttons to download it, download it again or delete it, as Lookupper's analyzer models have.
+ */
+function segmenterRow() {
+    const row = el('div', {id: 'segmenter-row'});
+    fillSegmenterRow(row);
+    return row;
+}
+
+function fillSegmenterRow(row) {
+    row.replaceChildren();
+    if (!status?.segmenter) { return; }
+    const [, label = '', state = status.segmenter] = /^separação de palavras \(([^)]*)\)\s*:?\s*(.*)$/.exec(status.segmenter) || [];
+    const busy = /baixando|carregando|aguardando/.test(state);
+    const failed = /indisponível/.test(status.segmenter);
+    const error = el('div', {class: 'd', style: 'color: var(--danger)', hidden: true});
+    const run = async (button, action) => {
+        error.hidden = true;
+        button.disabled = true;
+        try { await action(); } catch (e) {
+            error.textContent = String(e?.message || e);
+            error.hidden = false;
+        } finally { button.disabled = false; }
+    };
+    const buttons = [];
+    if (status.segmenterInstalled) {
+        const again = el('button', {html: `${icon('refresh', 'sm')}Baixar de novo`, disabled: busy});
+        again.addEventListener('click', () => void run(again, async () => {
+            if (!await ask(`A separação de palavras (${label}) será apagada e baixada de novo.`,
+                {title: 'Baixar de novo', kind: 'warning', okLabel: 'Baixar de novo', cancelLabel: 'Cancelar'})) { return; }
+            await api.removeSegmenter();
+            await api.installSegmenter();
+        }));
+        const remove = el('button', {html: `${icon('trash', 'sm')}Apagar`, disabled: busy});
+        remove.addEventListener('click', () => void run(remove, async () => {
+            if (!await ask(`Apagar a separação de palavras (${label})? Ela é baixada de novo na próxima consulta neste idioma.`,
+                {title: 'Apagar a separação de palavras', kind: 'warning', okLabel: 'Apagar', cancelLabel: 'Cancelar'})) { return; }
+            await api.removeSegmenter();
+        }));
+        buttons.push(again, remove);
+    } else {
+        const download = el('button', {html: `${icon('download', 'sm')}Baixar`, disabled: busy && !failed});
+        download.addEventListener('click', () => void run(download, () => api.installSegmenter()));
+        buttons.push(download);
+    }
+    row.append(el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('book')}),
+        el('div', {class: 'txt'}, el('div', {class: 't'}, `Separação de palavras (${label})`),
+            el('div', {class: 'd'}, `Divide o texto em palavras e acha a forma de dicionário. Estado: ${state}`), error),
+        el('div', {class: 'ctl'}, ...buttons)));
+}
+
 function captureRegionRows() {
     const s = store.settings;
     const currentPreset = () => (s.captureAuto === true ? 'auto' : 'custom');
@@ -249,6 +302,8 @@ export async function refreshStatus() {
     if (rootEl && status.session !== previousSession) { render(rootEl); return; }
     const s = document.getElementById('engine-status');
     if (s) { s.textContent = engineStatusText(); }
+    const row = document.getElementById('segmenter-row');
+    if (row) { fillSegmenterRow(row); }
 }
 
 function render(root) {
@@ -264,6 +319,7 @@ function render(root) {
     root.append(heading('Essenciais'), el('div', {class: 'group'},
         cardRow({icon: 'scan', title: 'Idioma de reconhecimento', desc: 'O idioma do texto na tela', wide: true,
             control: languageSelect}),
+        segmenterRow(),
         cardRow({icon: 'swap', title: 'Modo do Lookitan', desc: 'Dicionário popup para uma palavra, ou tradução de todo o texto da tela',
             control: segmented([
                 {value: 'popup', label: 'Dicionário popup', icon: 'book'},

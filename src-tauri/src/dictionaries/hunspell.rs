@@ -1,7 +1,8 @@
-//! Dictionary forms through Hunspell, as Lookupper's stemmer does, for German, English, Spanish,
-//! French, Portuguese and Russian. The affix and word files are the same upstream releases that
-//! Lookupper ships (wooorm/dictionaries on npm), fetched at build time by scripts/fetch-assets.py
-//! into `resources/hunspell/<lang>.aff` and `<lang>.dic`.
+//! Dictionary forms through Hunspell, as Lookupper's stemmer does. Lookupper has German, English,
+//! Spanish, French, Portuguese and Russian; Lookitan adds every other recognition language with a
+//! wooorm/dictionaries package. The affix and word files (for those six, the same releases
+//! Lookupper ships) are fetched at build time by scripts/fetch-assets.py into
+//! `resources/hunspell/<lang>.aff` and `<lang>.dic`. Finnish, Indonesian and Arabic have none.
 //!
 //! Only one language is kept in memory: the recognition language. Loading the Portuguese files
 //! takes a few tenths of a second, so `warm` runs where the dictionaries load.
@@ -12,7 +13,10 @@ use std::sync::OnceLock;
 use parking_lot::Mutex;
 
 /// Languages with a bundled Hunspell dictionary.
-pub const LANGUAGES: [&str; 6] = ["de", "en", "es", "fr", "pt", "ru"];
+pub const LANGUAGES: [&str; 25] = [
+    "de", "en", "es", "fr", "pt", "ru",
+    "bg", "cs", "da", "el", "hr", "hu", "it", "la", "nb", "nl", "pl", "ro", "sk", "sl", "sr", "sr-latn", "sv", "tr", "uk",
+];
 const MAX_WORD_BYTES: usize = 256;
 const MAX_STEMS: usize = 16;
 
@@ -58,10 +62,18 @@ pub fn set_root(dir: PathBuf) {
     let _ = ROOT.set(dir);
 }
 
-/// The bundled dictionary for a BCP 47 tag ("pt-BR" uses "pt").
+/// The bundled dictionary for a BCP 47 tag ("pt-BR" uses "pt", "sr-Latn-RS" "sr-latn"). Bosnian
+/// uses the Croatian one: its only npm package is not wooorm's and declares no encoding.
 fn language(tag: &str) -> Option<&'static str> {
-    let base = tag.split(['-', '_']).next().unwrap_or("").to_ascii_lowercase();
-    LANGUAGES.iter().copied().find(|l| *l == base)
+    let tag = tag.to_ascii_lowercase();
+    let mut parts = tag.split(['-', '_']);
+    let base = parts.next().unwrap_or("");
+    let key = match base {
+        "sr" if parts.any(|p| p == "latn") => "sr-latn",
+        "bs" => "hr",
+        _ => base,
+    };
+    LANGUAGES.iter().copied().find(|l| *l == key)
 }
 
 fn with_stemmer<T>(tag: &str, f: impl FnOnce(&Stemmer) -> T) -> Option<T> {
@@ -109,7 +121,41 @@ mod tests {
         assert!(Stemmer::open(&dir.join("missing.aff"), &dic).is_none());
         assert_eq!(language("pt-BR"), Some("pt"));
         assert_eq!(language("ja-JP"), None);
+        assert_eq!(language("sr-Cyrl-RS"), Some("sr"));
+        assert_eq!(language("sr-Latn-RS"), Some("sr-latn"));
+        assert_eq!(language("bs-Latn-BA"), Some("hr"));
+        assert_eq!(language("nb-NO"), Some("nb"));
+        assert_eq!(language("fi-FI"), None);
         drop(stemmer);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With the bundled files (CI fetches them before the tests), each added language finds the
+    /// dictionary form of an inflected word.
+    #[test]
+    fn bundled_dictionaries_find_dictionary_forms() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/hunspell");
+        if !root.join("uk.dic").is_file() {
+            eprintln!("no bundled Hunspell files in {}; skipped", root.display());
+            return;
+        }
+        let cases = [
+            ("bg", "книгата", "книга"), ("cs", "ženy", "žena"), ("it", "case", "casa"), ("nl", "huizen", "huis"),
+            ("pl", "kotami", "kot"), ("sv", "husen", "hus"), ("tr", "evler", "ev"), ("uk", "книги", "книга"),
+        ];
+        let mut wrong = Vec::new();
+        for (lang, word, form) in cases {
+            let stems = Stemmer::open(&root.join(format!("{lang}.aff")), &root.join(format!("{lang}.dic")))
+                .map(|s| s.stems(word));
+            if !stems.as_ref().is_some_and(|s| s.iter().any(|x| x == form)) {
+                wrong.push(format!("{lang} {word}: {stems:?}, expected {form}"));
+            }
+        }
+        for lang in LANGUAGES {
+            if Stemmer::open(&root.join(format!("{lang}.aff")), &root.join(format!("{lang}.dic"))).is_none() {
+                wrong.push(format!("{lang}: no files"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 }

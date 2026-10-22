@@ -93,7 +93,9 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   serialized in AppState, with atomic index publication and safe ZIP extraction. Cleanup at start
   deletes only `.unpacking-*` folders and copies marked `.lookitan-removed`, never unmarked ones.
   Morphology uses the OCR language. Order of forms: on-screen spelling, then Hunspell stems
-  (de/en/es/fr/pt/ru, `dictionaries/hunspell.rs`; files in `resources/hunspell/` from
+  (Lookupper's de/en/es/fr/pt/ru plus every other recognition language with a wooorm/dictionaries
+  package: bg cs da el hr hu it la nb nl pl ro sk sl sr sr-latn sv tr uk; Bosnian uses hr; fi, id and ar have none;
+  `dictionaries/hunspell.rs`; files in `resources/hunspell/` from
   `fetch-assets.py`, one language loaded at a time), then Yomitan JA/EN rules + WordNet EN
   exceptions and conservative PT rules. Original Lookupper language packs/algorithms are not copied.
   Run reader tests on GitHub Actions (`dictionary-engine` / `scripts/dictionary-harness`), never
@@ -124,7 +126,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Right-to-left: a line with more RTL characters (U+0590–08FF, FB1D–FDFF, FE70–FEFF) than other letters is reversed into reading order. Each letter keeps its marks. Unlike Lookupper, which reverses all of it, runs of digits and LTR words keep their order, as in PaddleOCR's `pred_reverse`, and brackets are mirrored.
     - PaddleOCR (`paddle.rs` `decode_line`) reads RTL text as drawn. Lens gives words in reading order, so `lens.rs` lays them out as drawn for the ink snapping, then reverses once.
     - Characters of an RTL line run right to left on screen, so boxes take the min/max of their characters (`span_x`), and the pieces of a row in an RTL paragraph read right to left.
-  - Lemmas: Lookupper has Hunspell only for de/en/es/fr/pt/ru, and uses one stem only when the word as written finds nothing (`StemAsync` `0x140243a40`, lookup `0x1402a5bb0`). Lookitan tries more forms; uk, bg, el and ar have no lemmas in either.
+  - Lemmas: Lookupper has Hunspell only for de/en/es/fr/pt/ru, and uses one stem only when the word as written finds nothing (`StemAsync` `0x140243a40`, lookup `0x1402a5bb0`). Lookitan tries more forms, and has Hunspell for uk, bg, el and the other languages listed under Morphology; ar has no lemmas in either.
 - **Vertical text (`OcrLine.flow`: `Across`, `Down`, `Up`):** as in Lookupper (REA on 2026-10-21), plus bottom-to-top text, which Lookupper does not read (it ships no orientation model):
   - A detected box with height ≥ 1.5 × width is read on its side: XpressOCR's test is at `0x140949830`; PaddleOCR rotates it the same way.
   - Lookupper sorts a paragraph as columns when most of its lines are taller than 1.2 × their width (`SortParagraphLines` `0x14015ed00`, with the lambda `0x14015f6c0`).
@@ -175,7 +177,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
       - NOTICE.txt keeps jieba's MIT notice and CC-CEDICT's licence header.
       - The old `lindera-jieba-6.2.0` folder is deleted.
     - They are pinned by size and SHA-256 in `PACKS`, downloaded on first use into `<local data>/segmenters/`, and unpacked through `archive::unpack`. Only the recognition language's dictionary is loaded.
-    - `warm_segmenter` runs at start-up and on a language change. Its progress shows in Configurações › OCR › Estado do motor (`EngineStatus.segmenter`). A lookup while it downloads or loads waits for it (`wait_for_segmenter`, at the start of `run_scan`, before the capture): the pop-up opens by the pointer with the progress (`segment::pending` → `segmenter-wait` event, `showWaiting` in the popup), and when it is ready the pop-up hides and the lookup captures as usual. Closing the pop-up gives that lookup up; the download goes on. After a failed download, and for other languages, the old longest-match path is used.
+    - `warm_segmenter` runs at start-up and on a language change. Its progress shows in Configurações › OCR › Estado do motor (`EngineStatus.segmenter`). A lookup while it downloads or loads waits for it (`wait_for_segmenter`, at the start of `run_scan`, before the capture): the pop-up opens by the pointer with the progress (`segment::pending` → `segmenter-wait` event, `showWaiting` in the popup), and when it is ready the pop-up hides and the lookup captures as usual. Closing the pop-up gives that lookup up; the download goes on. After a failed download, and for other languages, the old longest-match path is used; the next lookup tries the download again (`segment::want`).
+    - Configurações › Essenciais › "Separação de palavras (…)" (`segmenterRow` in settings-tab.js, under the recognition language, only for ja/zh/ko), like Lookupper's analyzer model Download/Delete buttons (`Settings_AnalyzerModel_*`, `AnalyzerModelDownloadDialog`; texts are our own): its state, "Baixar" when its files are missing, else "Baixar de novo" and "Apagar", each asked first (`plugin-dialog` `ask`). Commands `install_segmenter` and `remove_segmenter` (`segment::remove`: refused while it downloads; unloads it, waiting up to 5 s for lookups to let it go, since Windows will not delete a loaded kiwi.dll or a mapped system.dic; then deletes its folder). `EngineStatus.segmenter_installed` says whether its folder is there. A removed analyzer comes back with the next lookup in that language or the next start.
     - The rules in japanese.rs and korean.rs are Lookitan's own, written to Lookupper's behavior.
     - Candidates: the lemmas, the word as written, then (for unspaced scripts) its prefixes, longest first. The Yomitan rules in morphology.rs still expand each of them.
     - With lindera's SudachiDict, used before 2026-10-22:
@@ -324,6 +327,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-22 (Claude, `tests`): at the user's request, Hunspell dictionary forms for every recognition language with a wooorm/dictionaries package (bg cs da el hr hu it la nb nl pl ro sk sl sr sr-latn sv tr uk, about 19 MB more in the installer; Bosnian uses hr; fi, id and ar have none), and Settings › Essenciais › "Separação de palavras" to download, download again or delete the ja/zh/ko analyzer, like Lookupper's analyzer model buttons.
 - 2026-10-22 (Claude, `tests`): at the user's request, a Japanese, Chinese or Korean lookup made while the word analyzer is still downloading or loading shows a waiting pop-up with its progress and goes on when it is ready, instead of using the longest-match path (`wait_for_segmenter`).
 - 2026-10-22 (Claude, `tests`): at the user's request, AI requests are laid out for the providers' prompt caches: fixed instructions first as the system message, the paragraph then the word last in the user message (`_splitPrompts`). Before, the word came first, so DeepSeek cached nothing.
 - 2026-10-22 (Claude, `tests`): paragraphs are found as Lookupper finds them (`layout.rs`): its layout analyzer with its pairs, line features, regions and their kinds, the score, and the ink colour, ink height and frames measured on the capture. Lookitan keeps joining the pieces of one row. Whole lines of capitalised sentences are now apart, as Lookupper keeps lists.

@@ -8,8 +8,9 @@ Everything comes from official sources at pinned versions:
     library of Microsoft's onnxruntime-webgpu 1.27.0 wheel from PyPI (CPU plus the WebGPU provider,
     with Dawn linked in), checked against the SHA-256 that PyPI reports.
 The character list of each recognition model is extracted from its inference.yml.
-  * Hunspell dictionaries for dictionary forms (de, en, es, fr, pt, ru): the npm packages of
-    wooorm/dictionaries, the same releases Lookupper ships, checked against pinned SHA-256s.
+  * Hunspell dictionaries for dictionary forms: the npm packages of wooorm/dictionaries, checked
+    against pinned SHA-256s. de, en, es, fr, pt and ru are the releases Lookupper ships; the other
+    recognition languages with a package are Lookitan's own addition.
     Each language's license file is kept beside its .aff/.dic.
 
 Usage: python scripts/fetch-assets.py --platform windows|linux
@@ -58,6 +59,26 @@ HUNSPELL = {
     "fr": ("dictionary-fr", "3.0.0", "b20ab69249881bc36b1dcdfbfd2df226660a7cecc95f2cf122714008b491c78e"),
     "pt": ("dictionary-pt", "4.0.0", "644a05af5c6d2c16eea1093c7ac4c14b45637170cf5b3dd1c07ae0f13256b54d"),
     "ru": ("dictionary-ru", "3.0.0", "53fe1b0ff870c35b61dbc957116a15590458d145dbf89126ebf85a13adce0416"),
+    # The other recognition languages with a wooorm/dictionaries package (Lookitan's own addition).
+    "bg": ("dictionary-bg", "2.0.0", "b62c02b9db8cd8b378ced3ec17d3d90fd989369c1918d28ee37e189c23de8865"),
+    "cs": ("dictionary-cs", "4.0.0", "119518d93ea373c4976818dc5366e15c28590f85a635f3d1b5a1bc962461e97a"),
+    "da": ("dictionary-da", "6.0.0", "4fc4c6a355a9fdd6297a9366f7c236b5443aba6a3f5a4d4fc4c90ae73c63db24"),
+    "el": ("dictionary-el", "4.0.0", "e219711ef6dbcbe85eb17001b95b49323c27c773de438125bf29968807527297"),
+    "hr": ("dictionary-hr", "2.0.0", "5053f80171ce2e2fd3813b3c183d80bb966afd3d3e6572d4c7812b3ab20720d2"),
+    "hu": ("dictionary-hu", "3.0.0", "6a98ce9777d63787fa224728a72e8b4e8f05355d0747eac404e0ebd229ec1a3b"),
+    "it": ("dictionary-it", "2.0.0", "d004e1a9b9f41c262590164ba957bd75d376db8b9457e449b5dae60b4d020387"),
+    "la": ("dictionary-la", "2.0.0", "18d622abc5086b21bb2b5baebe1545d9e74a829f8bd6d1eef33efbd32fa4c4d7"),
+    "nb": ("dictionary-nb", "3.0.0", "48f8f690e286edb6f7e55170aedc5a944d64d4b374cbc10bc454c3ea9e73d6f0"),
+    "nl": ("dictionary-nl", "2.0.0", "4e041c4622e51aa4dc1fd3a2cc2816c43808b26edc0c51511d4f716cf022d936"),
+    "pl": ("dictionary-pl", "2.0.0", "03a119f53a76960dce47a7b8c801cc33c62aa9de0d9c9137c5fa77cc4f18325d"),
+    "ro": ("dictionary-ro", "3.0.0", "8ba62190dd452deecb25357873d4c69d17731a6bd17adfe8577023c2029047e0"),
+    "sk": ("dictionary-sk", "2.0.0", "675e9dbbe9aec28c3f625790050389ef9ac27a35671efa5861536cf1074c347b"),
+    "sl": ("dictionary-sl", "3.0.0", "669c377e36c21967d9c44a81bd4db6861a0c0320588c3c57e890f77a93abbc2f"),
+    "sr": ("dictionary-sr", "4.0.0", "25c506a46b984227bdc1a64bfb2e8afd918fa9f84bfe1b28cc9619cc772ed53b"),
+    "sr-latn": ("dictionary-sr-latn", "4.0.0", "faf13302eb82e929e2e6519a33c2be880e53ae0ac11edd1467e73073b20d46e3"),
+    "sv": ("dictionary-sv", "4.0.0", "bbecca87cf98c9902d0cd1b0f9b373ac6d1410a78ade851ea453a7b922e7164f"),
+    "tr": ("dictionary-tr", "2.0.0", "b6d5a806dccccad937f7373809deef117ca8594a1f95eab4fe5be6c37b5d6ef1"),
+    "uk": ("dictionary-uk", "4.0.0", "f499681a55b1b0e6c046a902964c1044b28d519bc243bd69ff21d548cfa95e79"),
 }
 
 ORT_VERSION = "1.24.4"

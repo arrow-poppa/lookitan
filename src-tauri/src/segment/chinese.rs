@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 /// The merged dictionary's folder; bump the number when the merge changes.
-const DIR: &str = "jieba-cedict-1";
+pub(super) const DIR: &str = "jieba-cedict-1";
 /// lindera's jieba, which this replaces.
 const OLD_DIR: &str = "lindera-jieba-6.2.0";
 

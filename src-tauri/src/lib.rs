@@ -192,6 +192,8 @@ pub struct EngineStatus {
     pub error: Option<String>,
     /// The word analyzer for the recognition language (segment.rs), for Japanese, Chinese and Korean.
     pub segmenter: Option<String>,
+    /// Whether that analyzer's files are downloaded.
+    pub segmenter_installed: Option<bool>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -1249,6 +1251,10 @@ fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: S
 /// elsewhere) gives the lookup up and returns false; the download goes on.
 fn wait_for_segmenter(app: &AppHandle) -> bool {
     let language = app.state::<AppState>().settings.read().ocr_language.clone();
+    // Removed in Settings, or failed before: download it now.
+    if segment::want(&language) {
+        warm_segmenter(app, language.clone());
+    }
     let Some(mut wait) = segment::pending(&language) else { return true };
     let Some(win) = app.get_webview_window("popup") else { return true };
     let _ = app.emit_to("popup", "segmenter-wait", &wait);
@@ -1287,6 +1293,23 @@ fn warm_segmenter(app: &AppHandle, language: String) {
     std::thread::spawn(move || segment::warm(&language, &|| { let _ = app.emit("engine-status", ()); }));
 }
 
+/// Settings › Separação de palavras: downloads (or loads) the recognition language's analyzer.
+#[tauri::command]
+fn install_segmenter(app: AppHandle, state: tauri::State<'_, AppState>) {
+    let language = state.settings.read().ocr_language.clone();
+    segment::want(&language);
+    warm_segmenter(&app, language);
+}
+
+/// Settings › Separação de palavras: deletes the recognition language's analyzer.
+#[tauri::command]
+async fn remove_segmenter(app: AppHandle) -> std::result::Result<(), String> {
+    let language = app.state::<AppState>().settings.read().ocr_language.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        segment::remove(&language, &|| { let _ = app.emit("engine-status", ()); })
+    }).await.map_err(|e| e.to_string())?.map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
     // This synchronous command runs on the UI thread. Model initialization holds these
@@ -1303,6 +1326,7 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
         rec_on_gpu: paddle.as_ref().map(|p| p.rec_on_gpu()).unwrap_or(false),
         error: state.engine_error.read().clone(),
         segmenter: segment::status(&state.settings.read().ocr_language),
+        segmenter_installed: segment::installed(&state.settings.read().ocr_language),
     }
 }
 
@@ -1835,6 +1859,8 @@ pub fn run() {
             save_settings,
             import_settings,
             engine_status,
+            install_segmenter,
+            remove_segmenter,
             ocr_languages,
             list_dictionaries,
             add_dictionary,

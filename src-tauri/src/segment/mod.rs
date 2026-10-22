@@ -128,6 +128,17 @@ impl Lang {
         }
     }
 
+    /// The folder `ensure` keeps its files in.
+    fn folder(self, root: &Path) -> Option<PathBuf> {
+        match (self, self.pack()) {
+            (Lang::Japanese, _) => Some(root.join(sudachidict::DIR)),
+            (Lang::Chinese, _) => Some(root.join(chinese::DIR)),
+            (Lang::Korean, _) if kiwi::available() => Some(root.join(kiwi::DIR)),
+            (_, Some(pack)) => Some(root.join(format!("{}-{VERSION}", pack.name))),
+            (_, None) => None,
+        }
+    }
+
     /// Kana and CJK ideographs for Japanese and Chinese, Hangul for Korean.
     pub fn handles(self, c: char) -> bool {
         match self {
@@ -330,6 +341,56 @@ pub fn status(tag: &str) -> Option<String> {
         Some((l, s)) if *l == lang => Some(s.clone()),
         _ => Some(format!("separação de palavras ({label}): aguardando")),
     }
+}
+
+/// Marks the recognition language's analyzer as wanted when it is neither loaded nor on its way
+/// (never asked for, removed, or failed before); true when the caller must start `warm`.
+pub fn want(tag: &str) -> bool {
+    let Some(lang) = Lang::of(tag) else { return false };
+    if LOADED.read().as_ref().is_some_and(|(l, _)| *l == lang) {
+        return false;
+    }
+    let mut wanted = WANTED.write();
+    if *wanted == Some((lang, false)) {
+        return false;
+    }
+    *wanted = Some((lang, false));
+    true
+}
+
+/// Whether the analyzer's files for `tag` are on disk; `None` for a language without one.
+pub fn installed(tag: &str) -> Option<bool> {
+    let lang = Lang::of(tag)?;
+    Some(ROOT.get().and_then(|root| lang.folder(root)).is_some_and(|dir| dir.is_dir()))
+}
+
+/// Unloads the analyzer for `tag` and deletes its files (Settings › Separação de palavras). The
+/// next lookup in that language, or the next start, downloads it again.
+pub fn remove(tag: &str, changed: &dyn Fn()) -> Result<()> {
+    let lang = Lang::of(tag).ok_or_else(|| anyhow!("{tag} has no word analyzer"))?;
+    let root = ROOT.get().ok_or_else(|| anyhow!("no folder for the word analyzers"))?;
+    let Some(_gate) = WARMING.try_lock() else { bail!("A separação de palavras ainda está baixando. Espere terminar.") };
+    let loaded = {
+        let mut slot = LOADED.write();
+        if slot.as_ref().is_some_and(|(l, _)| *l == lang) { slot.take() } else { None }
+    };
+    *WANTED.write() = None;
+    // A lookup may still hold it for a moment; Windows keeps a loaded library or a mapped file
+    // from being deleted.
+    if let Some((_, mut analyzer)) = loaded {
+        for _ in 0..50 {
+            match Arc::try_unwrap(analyzer) {
+                Ok(only) => { drop(only); break; }
+                Err(shared) => { analyzer = shared; std::thread::sleep(Duration::from_millis(100)); }
+            }
+        }
+    }
+    let label = lang.label();
+    if let Some(dir) = lang.folder(root).filter(|d| d.exists()) {
+        std::fs::remove_dir_all(&dir).with_context(|| format!("apagar {}", dir.display()))?;
+    }
+    set_status(lang, format!("separação de palavras ({label}): não instalada"), changed);
+    Ok(())
 }
 
 fn set_status(lang: Lang, text: String, changed: &dyn Fn()) {

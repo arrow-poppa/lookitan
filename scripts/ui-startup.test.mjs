@@ -96,11 +96,14 @@ async function settingsFixture(overrides = {}) {
     const languages = deferred();
     const status = deferred();
     let saves = 0;
+    const calls = [];
     const settings = {ocrLanguage: 'en-US', appMode: 'popup', profiles: [], mouseHotkey: {button: 'none'}, useGpu: true,
         ocrScope: 'screen', captureWidth: 900, captureHeight: 260, ...overrides};
     const ui = await load('src/main/settings-tab.js', {document: view.document}, {
         '@tauri-apps/api/app': {getVersion: async () => 'test'},
-        [file('src/lib/api.js')]: {api: {ocrLanguages: () => languages.promise, engineStatus: () => status.promise}, escapeHtml: String},
+        '@tauri-apps/plugin-dialog': {ask: async () => true},
+        [file('src/lib/api.js')]: {api: {ocrLanguages: () => languages.promise, engineStatus: () => status.promise,
+            installSegmenter: async () => { calls.push('install'); }, removeSegmenter: async () => { calls.push('remove'); }}, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/main/anki-panel.js')]: {renderAnkiSection: async () => {}},
         [file('src/main/audio-panel.js')]: {renderAudioSection: () => {}},
@@ -108,7 +111,7 @@ async function settingsFixture(overrides = {}) {
         [file('src/main/store.js')]: {store: {settings, anki: {}}, save: () => { saves += 1; }},
     });
     const initialization = ui.initSettingsTab(root);
-    return {view, root, settings, languages, status, initialization, saves: () => saves, finish: async () => {
+    return {view, root, settings, languages, status, initialization, calls, saves: () => saves, finish: async () => {
         languages.resolve([{tag: 'en-US', name: 'English'}]);
         status.resolve({session: 'windows'});
         await initialization;
@@ -326,6 +329,25 @@ test('settings render and GPU toggle work while OCR status is pending', async ()
     await initialization;
     assert(view.document.getElementById('engine-status').textContent.includes('test-det'));
     assert.equal(view.document.getElementById('ocr-language'), languageControl, 'status must not replace the edited controls');
+});
+
+test('the word analyzer row downloads it, downloads it again or deletes it', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ja-JP'});
+    const {view, languages, status, initialization, calls} = fixture;
+    const row = () => view.document.getElementById('segmenter-row');
+    assert.equal(row().children.length, 0, 'nothing before the status arrives');
+    languages.resolve([{tag: 'ja-JP', name: 'Japanese'}]);
+    status.resolve({session: 'windows', segmenter: 'separação de palavras (Sudachi): pronta', segmenterInstalled: true});
+    await initialization;
+    assert(row().textContent.includes('Separação de palavras (Sudachi)'));
+    assert(row().textContent.includes('Estado: pronta'));
+    const button = (label) => descendants(row()).find((node) => node.tagName === 'button' && (node.attributes.html || node.innerHTML || '').includes(label));
+    button('Baixar de novo').dispatch('click');
+    await flush();
+    assert.deepEqual(calls, ['remove', 'install'], 'downloading again deletes, then downloads');
+    button('Apagar').dispatch('click');
+    await flush();
+    assert.deepEqual(calls.slice(2), ['remove']);
 });
 
 test('the video card choice stays hidden until its toggle is on', async () => {

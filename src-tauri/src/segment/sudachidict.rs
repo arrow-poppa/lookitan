@@ -18,7 +18,7 @@ use sudachi::config::Config;
 use sudachi::dic::dictionary::JapaneseDictionary;
 
 /// The dictionary's folder; bump it with the dictionary.
-const DIR: &str = "sudachidict-core-20260723";
+pub(super) const DIR: &str = "sudachidict-core-20260723";
 /// lindera's SudachiDict, which this replaces.
 const OLD_DIR: &str = "lindera-sudachidict-6.2.0";
 

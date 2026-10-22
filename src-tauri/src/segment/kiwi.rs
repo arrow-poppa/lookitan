@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 
 use super::Morpheme;
 
-const DIR: &str = "kiwi-0.23.2";
+pub(super) const DIR: &str = "kiwi-0.23.2";
 const RELEASE: &str = "https://github.com/bab2min/Kiwi/releases/download/v0.23.2";
 
 /// A file of Kiwi's release: its name, size and SHA-256.
