@@ -167,6 +167,12 @@ details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px
 
 .empty { padding: 30px 8px; text-align: center; color: var(--muted); }
 .empty strong { display: block; color: var(--text); margin-bottom: 4px; font-size: 15px; }
+/* The word analyzer's download, which the first Japanese, Chinese or Korean lookup waits for. */
+.waiting-detail { display: block; font-variant-numeric: tabular-nums; }
+.waiting-bar { max-width: 260px; height: 4px; margin: 14px auto 12px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.waiting-bar i { display: block; width: 0; height: 100%; background: var(--accent); transition: width 0.2s; }
+.waiting-bar.busy i { width: 30%; animation: waiting 1.2s ease-in-out infinite; }
+@keyframes waiting { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 .meta { padding: 4px 16px 8px; font-size: 11px; color: var(--faint); min-height: 18px; }
 
 /* The saved cards of this word cover the pop-up, like the enlarged picture. */

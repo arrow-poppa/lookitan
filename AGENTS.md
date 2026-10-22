@@ -175,7 +175,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
       - NOTICE.txt keeps jieba's MIT notice and CC-CEDICT's licence header.
       - The old `lindera-jieba-6.2.0` folder is deleted.
     - They are pinned by size and SHA-256 in `PACKS`, downloaded on first use into `<local data>/segmenters/`, and unpacked through `archive::unpack`. Only the recognition language's dictionary is loaded.
-    - `warm_segmenter` runs at start-up and on a language change. Its progress shows in Configurações › OCR › Estado do motor (`EngineStatus.segmenter`). Until it is ready, and for other languages, the old longest-match path is used.
+    - `warm_segmenter` runs at start-up and on a language change. Its progress shows in Configurações › OCR › Estado do motor (`EngineStatus.segmenter`). A lookup while it downloads or loads waits for it (`wait_for_segmenter`, at the start of `run_scan`, before the capture): the pop-up opens by the pointer with the progress (`segment::pending` → `segmenter-wait` event, `showWaiting` in the popup), and when it is ready the pop-up hides and the lookup captures as usual. Closing the pop-up gives that lookup up; the download goes on. After a failed download, and for other languages, the old longest-match path is used.
     - The rules in japanese.rs and korean.rs are Lookitan's own, written to Lookupper's behavior.
     - Candidates: the lemmas, the word as written, then (for unspaced scripts) its prefixes, longest first. The Yomitan rules in morphology.rs still expand each of them.
     - With lindera's SudachiDict, used before 2026-10-22:
@@ -324,6 +324,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-22 (Claude, `tests`): at the user's request, a Japanese, Chinese or Korean lookup made while the word analyzer is still downloading or loading shows a waiting pop-up with its progress and goes on when it is ready, instead of using the longest-match path (`wait_for_segmenter`).
 - 2026-10-22 (Claude, `tests`): at the user's request, AI requests are laid out for the providers' prompt caches: fixed instructions first as the system message, the paragraph then the word last in the user message (`_splitPrompts`). Before, the word came first, so DeepSeek cached nothing.
 - 2026-10-22 (Claude, `tests`): paragraphs are found as Lookupper finds them (`layout.rs`): its layout analyzer with its pairs, line features, regions and their kinds, the score, and the ink colour, ink height and frames measured on the capture. Lookitan keeps joining the pieces of one row. Whole lines of capitalised sentences are now apart, as Lookupper keeps lists.
 - 2026-10-22 (Claude, `tests`): Korean words are found as Lookupper finds them, with Kiwi 0.23.2 and its base model, loaded at run time with Lookupper's options (`segment/kiwi.rs`). mecab-ko-dic stays only for platforms Kiwi has no build for.

@@ -61,6 +61,17 @@ impl Capture {
 
 /// Match by output name before crossing from KWin to XWayland's desktop layout.
 pub fn display_geometry(app: &AppHandle, cx: f64, cy: f64, capture: &Capture) -> Result<DisplayGeometry> {
+    geometry_at(app, cx, cy, Some(Rect { x: capture.origin_x, y: capture.origin_y,
+        width: capture.image.width() as f64 / capture.scale, height: capture.image.height() as f64 / capture.scale }))
+}
+
+/// The monitor under the pointer before any capture, when it can be told.
+pub fn pointer_display(app: &AppHandle, cx: f64, cy: f64) -> Option<DisplayGeometry> {
+    geometry_at(app, cx, cy, None).ok()
+}
+
+/// `fallback` is the monitor's desktop rectangle when the pointer is on none Tauri knows.
+fn geometry_at(app: &AppHandle, cx: f64, cy: f64, fallback: Option<Rect>) -> Result<DisplayGeometry> {
     #[cfg(target_os = "linux")]
     if session_kind() == SessionKind::KdeWayland {
         let report = kwin::latest().ok_or_else(|| anyhow!("KWin não informou o monitor da captura"))?;
@@ -79,8 +90,7 @@ pub fn display_geometry(app: &AppHandle, cx: f64, cy: f64, capture: &Capture) ->
     let (rect, scale) = match monitor {
         Some(m) => (Rect { x: m.position().x as f64, y: m.position().y as f64,
             width: m.size().width as f64, height: m.size().height as f64 }, m.scale_factor()),
-        None => (Rect { x: capture.origin_x, y: capture.origin_y,
-            width: capture.image.width() as f64 / capture.scale, height: capture.image.height() as f64 / capture.scale }, 1.0),
+        None => (fallback.ok_or_else(|| anyhow!("no monitor at the pointer"))?, 1.0),
     };
     Ok(DisplayGeometry { desktop: rect, native: rect, scale })
 }

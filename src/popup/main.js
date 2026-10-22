@@ -1412,7 +1412,39 @@ document.addEventListener('keydown', (ev) => {
     if (ev.ctrlKey && ev.key === '0') { zoom = 1; applyZoom(); }
 });
 applyZoom();
+/**
+ * The first Japanese, Chinese or Korean lookup waits while the word analyzer downloads or loads
+ * (lib.rs `wait_for_segmenter`); its lookup replaces this when it is ready.
+ * @param {{phase: 'downloading'|'loading', label: string, percent?: number, megabytes?: number}} wait
+ */
+function showWaiting(wait) {
+    renderSequence++;
+    let box = $('sections').querySelector('.waiting');
+    if (!box) {
+        closeViewer();
+        closeSavedCards();
+        closeAudioMenu();
+        stopAudio();
+        $('query').value = '';
+        $('notice').hidden = true;
+        $('meta').textContent = '';
+        box = document.createElement('div');
+        box.className = 'empty waiting';
+        box.innerHTML = '<strong></strong><span class="waiting-detail"></span><div class="waiting-bar"><i></i></div>'
+            + '<span class="hint">Só na primeira vez. A consulta continua sozinha quando terminar.</span>';
+        $('sections').replaceChildren(box);
+    }
+    const downloading = wait.phase === 'downloading';
+    box.querySelector('strong').textContent = downloading ? 'Baixando a separação de palavras' : 'Carregando a separação de palavras';
+    box.querySelector('.waiting-detail').textContent = downloading ? `${wait.label}: ${wait.percent}% de ${wait.megabytes} MB` : wait.label;
+    box.querySelector('.hint').hidden = !downloading;
+    const bar = box.querySelector('.waiting-bar');
+    bar.classList.toggle('busy', !downloading);
+    bar.querySelector('i').style.width = downloading ? `${wait.percent}%` : '';
+}
+
 void listen('lookup', (event) => { void render(event.payload); });
+void listen('segmenter-wait', (event) => { showWaiting(event.payload); });
 // Closed like Yomitan's pop-up (Esc, X, a click elsewhere, a lookup that ends without a pop-up):
 // drop the AI requests nobody will see.
 void listen('popup-hidden', () => {

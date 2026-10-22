@@ -284,6 +284,32 @@ static LOADED: RwLock<Option<(Lang, Arc<Analyzer>)>> = RwLock::new(None);
 static STATUS: RwLock<Option<(Lang, String)>> = RwLock::new(None);
 /// One download or load at a time.
 static WARMING: Mutex<()> = Mutex::new(());
+/// The language the last `warm` was asked for, and whether its analyzer failed.
+static WANTED: RwLock<Option<(Lang, bool)>> = RwLock::new(None);
+/// How much of the wanted analyzer's download is done, in percent, while it downloads.
+static DOWNLOADED: RwLock<Option<(Lang, u64)>> = RwLock::new(None);
+
+/// Where a lookup waiting for its analyzer is (lib.rs `wait_for_segmenter`).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(tag = "phase", rename_all = "camelCase")]
+pub enum Wait {
+    Downloading { label: &'static str, percent: u64, megabytes: u64 },
+    Loading { label: &'static str },
+}
+
+/// What the recognition language's analyzer is still doing, when it is on its way: `None` once it
+/// is loaded, after it failed, or for a language without one.
+pub fn pending(tag: &str) -> Option<Wait> {
+    let lang = Lang::of(tag)?;
+    if LOADED.read().as_ref().is_some_and(|(l, _)| *l == lang) || *WANTED.read() != Some((lang, false)) {
+        return None;
+    }
+    let label = lang.label();
+    Some(match *DOWNLOADED.read() {
+        Some((l, percent)) if l == lang => Wait::Downloading { label, percent, megabytes: lang.bytes() / 1_000_000 },
+        _ => Wait::Loading { label },
+    })
+}
 
 /// Where the dictionaries are kept (`<local data>/segmenters`); set once at start-up.
 pub fn set_root(dir: PathBuf) {
@@ -315,31 +341,43 @@ fn set_status(lang: Lang, text: String, changed: &dyn Fn()) {
 /// language's. Blocks; `changed` runs whenever the status changes.
 pub fn warm(tag: &str, changed: &dyn Fn()) {
     let Some(lang) = Lang::of(tag) else {
+        *WANTED.write() = None;
         *LOADED.write() = None;
         return;
     };
+    *WANTED.write() = Some((lang, false));
     let _gate = WARMING.lock();
     if LOADED.read().as_ref().is_some_and(|(l, _)| *l == lang) {
         return;
     }
     *LOADED.write() = None;
-    let Some(root) = ROOT.get() else { return };
+    let Some(root) = ROOT.get() else {
+        *WANTED.write() = Some((lang, true));
+        return;
+    };
     let (label, bytes) = (lang.label(), lang.bytes());
-    match lang
+    let loaded = lang
         .ensure(root, &|done| {
             let percent = (done * 100 / bytes.max(1)).min(100);
+            *DOWNLOADED.write() = Some((lang, percent));
             set_status(lang, format!("separação de palavras ({label}): baixando {percent}% de {} MB", bytes / 1_000_000), changed);
         })
         .and_then(|dir| {
+            *DOWNLOADED.write() = None;
             set_status(lang, format!("separação de palavras ({label}): carregando…"), changed);
             Analyzer::open(lang, &dir)
-        }) {
+        });
+    *DOWNLOADED.write() = None;
+    match loaded {
         Ok(analyzer) => {
             *LOADED.write() = Some((lang, Arc::new(analyzer)));
             set_status(lang, format!("separação de palavras ({label}): pronta"), changed);
         }
         Err(e) => {
             log::warn!("{label} unavailable: {e:#}");
+            let mut wanted = WANTED.write();
+            if *wanted == Some((lang, false)) { *wanted = Some((lang, true)); }
+            drop(wanted);
             set_status(lang, format!("separação de palavras ({label}) indisponível: {e:#}"), changed);
         }
     }
@@ -507,6 +545,17 @@ pub(crate) mod tests {
         // A second call finds the merged dictionary and downloads nothing.
         let dir = Lang::Chinese.ensure(&root, &|_| panic!("downloaded again")).unwrap();
         assert!(dir.join("dict.txt").is_file() && dir.join("NOTICE.txt").is_file());
+    }
+
+    #[test]
+    fn a_waiting_lookup_tells_the_pop_up_its_phase() {
+        let wait = Wait::Downloading { label: "Sudachi", percent: 45, megabytes: 72 };
+        assert_eq!(serde_json::to_value(&wait).unwrap(),
+            serde_json::json!({"phase": "downloading", "label": "Sudachi", "percent": 45, "megabytes": 72}));
+        assert_eq!(serde_json::to_value(Wait::Loading { label: "Kiwi" }).unwrap(),
+            serde_json::json!({"phase": "loading", "label": "Kiwi"}));
+        // Languages without an analyzer never wait.
+        assert_eq!(pending("pt-BR"), None);
     }
 
     #[test]

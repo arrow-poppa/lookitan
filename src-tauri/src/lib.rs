@@ -469,6 +469,9 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     for hidden in [overlay_hide, popup_hide].into_iter().flatten() { let _ = hidden.join(); }
     // Give the compositor one frame to remove our popup from the next captured bitmap.
     if popup_visible { std::thread::sleep(std::time::Duration::from_millis(20)); }
+    if !wait_for_segmenter(app) {
+        return Ok(());
+    }
 
     let settings = state.settings.read().clone();
     let fg = platform::foreground_app();
@@ -1044,13 +1047,17 @@ fn popup_position(word: (f64, f64, f64, f64), size: (f64, f64), monitor: Option<
 fn show_popup(app: &AppHandle, payload: &LookupPayload, anchor: Option<(f64, f64, f64, f64)>) {
     let Some(win) = app.get_webview_window("popup") else { return };
     let _ = app.emit_to("popup", "lookup", payload);
+    let display = app.state::<AppState>().recognition.lock().as_ref()
+        .filter(|r| payload.recognition == Some(r.id)).map(|r| r.monitor);
+    open_popup(app, &win, anchor, display);
+}
+
+/// Shows the pop-up next to `anchor` (desktop coordinates), on `display`.
+fn open_popup(app: &AppHandle, win: &tauri::WebviewWindow, anchor: Option<(f64, f64, f64, f64)>, display: Option<DisplayGeometry>) {
     // Where the open animation grows from, in CSS pixels of the popup: the edge facing the word,
     // like the tail of Lookupper's TeachingTip. Centre of the top edge without a word.
     let mut origin = (0.5_f64, 0.0_f64, true);
     if let Some((x0, y0, x1, y1)) = anchor {
-        let state = app.state::<AppState>();
-        let display = state.recognition.lock().as_ref()
-            .filter(|r| payload.recognition == Some(r.id)).map(|r| r.monitor);
         let ((x0, y0), (x1, y1)) = display.map(|d| (d.to_native(x0, y0), d.to_native(x1, y1)))
             .unwrap_or(((x0, y0), (x1, y1)));
         let size = win.outer_size().unwrap_or(PhysicalSize::new(560, 520));
@@ -1233,6 +1240,44 @@ fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: S
     }
     let _ = app.emit("settings-changed", ());
     Ok(())
+}
+
+/// The first lookup in Japanese, Chinese or Korean may come while the word analyzer is still
+/// downloading or loading. The pop-up then shows its progress by the pointer and the lookup waits,
+/// so it splits the words as usual instead of the longest match. The capture comes after, of the
+/// screen as it is then, with the pop-up hidden again. Closing the pop-up (Esc, X, a click
+/// elsewhere) gives the lookup up and returns false; the download goes on.
+fn wait_for_segmenter(app: &AppHandle) -> bool {
+    let language = app.state::<AppState>().settings.read().ocr_language.clone();
+    let Some(mut wait) = segment::pending(&language) else { return true };
+    let Some(win) = app.get_webview_window("popup") else { return true };
+    let _ = app.emit_to("popup", "segmenter-wait", &wait);
+    match platform::cursor_position(app) {
+        Ok((cx, cy)) => open_popup(app, &win, Some((cx, cy, cx, cy)), platform::pointer_display(app, cx, cy)),
+        Err(_) => open_popup(app, &win, None, None),
+    }
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if !win.is_visible().unwrap_or(false) {
+            return false;
+        }
+        match segment::pending(&language) {
+            Some(next) if next != wait => {
+                let _ = app.emit_to("popup", "segmenter-wait", &next);
+                wait = next;
+            }
+            Some(_) => {}
+            None => break,
+        }
+    }
+    if let Some(hidden) = hide_blank(app, "popup") { let _ = hidden.join(); }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    // The pointer tracking `run_scan` asked KWin for has run out meanwhile.
+    #[cfg(target_os = "linux")]
+    if platform::session_kind() == SessionKind::KdeWayland {
+        platform::kwin::track_for(std::time::Duration::from_secs(3));
+    }
+    true
 }
 
 /// Downloads (once) and loads the word analyzer for a recognition language, in the background;
