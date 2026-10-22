@@ -4,14 +4,15 @@
 //! outlines each word. Without an analyzer, words.rs falls back to the longest dictionary match from
 //! the pointer.
 //!
-//! The analyzer is lindera 6.2 (MIT) with the prebuilt dictionaries of its GitHub release,
-//! downloaded on first use like Lookupper's models and checked against pinned SHA-256s:
-//! SudachiDict (Apache-2.0) for Japanese, jieba (MIT, with CC-CEDICT, CC BY-SA 4.0) for Chinese
-//! and mecab-ko-dic (Apache-2.0) for Korean, whose Sejong tags are the ones Kiwi uses. Each
-//! dictionary keeps its NOTICE.txt. Only the recognition language's dictionary is loaded; its files
-//! are memory-mapped. How morphemes form words (japanese.rs, korean.rs) is Lookitan's own code,
-//! written to match what Lookupper shows.
+//! Japanese and Korean go through lindera 6.2 (MIT) with the prebuilt dictionaries of its GitHub
+//! release, downloaded on first use like Lookupper's models and checked against pinned SHA-256s:
+//! SudachiDict (Apache-2.0) for Japanese and mecab-ko-dic (Apache-2.0) for Korean, whose Sejong
+//! tags are the ones Kiwi uses. Chinese goes through jieba-rs with Lookupper's dictionary
+//! (chinese.rs). Each dictionary keeps its NOTICE.txt. Only the recognition language's dictionary
+//! is loaded; lindera's files are memory-mapped. How morphemes form words (japanese.rs, korean.rs)
+//! is Lookitan's own code, written to match what Lookupper shows.
 
+mod chinese;
 mod japanese;
 mod korean;
 
@@ -89,8 +90,27 @@ impl Lang {
         }
     }
 
-    fn pack(self) -> &'static Pack {
-        PACKS.iter().find(|p| p.lang == self).expect("every language has a pack")
+    /// lindera's dictionary; Chinese has its own (chinese.rs).
+    fn pack(self) -> Option<&'static Pack> {
+        PACKS.iter().find(|p| p.lang == self)
+    }
+
+    /// What Settings calls the language's dictionary.
+    fn label(self) -> &'static str {
+        self.pack().map_or("jieba + CC-CEDICT", |p| p.label)
+    }
+
+    /// About what its download weighs.
+    fn bytes(self) -> u64 {
+        self.pack().map_or(chinese::BYTES, |p| p.bytes)
+    }
+
+    /// Its folder, downloaded and unpacked first if it is not there.
+    fn ensure(self, root: &Path, progress: &dyn Fn(u64)) -> Result<PathBuf> {
+        match self.pack() {
+            Some(pack) => ensure(root, pack, progress),
+            None => chinese::ensure(root, progress),
+        }
     }
 
     /// Kana and CJK ideographs for Japanese and Chinese, Hangul for Korean.
@@ -112,30 +132,49 @@ fn group(lang: Lang, text: &[char], morphemes: &[Morpheme]) -> Vec<Word> {
     }
 }
 
-/// jieba's words are dictionary words already (jieba details: part of speech first, `w` for
-/// punctuation, `x` for other symbols).
+/// jieba's words are dictionary words already, as in Lookupper, whose lemma is the word itself.
 fn chinese_word(m: &Morpheme) -> Word {
-    let punct = m.detail(0) == "w" || !m.surface.chars().any(char::is_alphanumeric);
+    let punct = !m.surface.chars().any(char::is_alphanumeric);
     Word { start: m.start, end: m.end, kind: if punct { Kind::Punct } else { Kind::Word }, lemmas: Vec::new() }
 }
 
 // ---------------------------------------------------------------------------------------------
-// The lindera analyzer
+// The analyzers
+
+enum Engine {
+    Lindera(lindera::segmenter::Segmenter),
+    Jieba(jieba_rs::Jieba),
+}
 
 pub struct Analyzer {
     lang: Lang,
-    segmenter: lindera::segmenter::Segmenter,
+    engine: Engine,
 }
 
 impl Analyzer {
     pub fn open(lang: Lang, dir: &Path) -> Result<Self> {
-        let dictionary = lindera::dictionary::load_fs_dictionary(dir).map_err(|e| anyhow!("{e}"))?;
-        let segmenter = lindera::segmenter::Segmenter::new(lindera::mode::Mode::Normal, dictionary, None);
-        Ok(Self { lang, segmenter })
+        let engine = if lang == Lang::Chinese {
+            Engine::Jieba(chinese::open(dir)?)
+        } else {
+            let dictionary = lindera::dictionary::load_fs_dictionary(dir).map_err(|e| anyhow!("{e}"))?;
+            Engine::Lindera(lindera::segmenter::Segmenter::new(lindera::mode::Mode::Normal, dictionary, None))
+        };
+        Ok(Self { lang, engine })
     }
 
     fn morphemes(&self, text: &str) -> Vec<Morpheme> {
-        let mut tokens = match self.segmenter.segment(Cow::Borrowed(text)) {
+        let segmenter = match &self.engine {
+            Engine::Lindera(segmenter) => segmenter,
+            // jieba's `cut` with its HMM, as Lookupper's; its offsets are in characters already.
+            Engine::Jieba(jieba) => {
+                return jieba
+                    .cut(text, true)
+                    .into_iter()
+                    .map(|t| Morpheme { start: t.start, end: t.end, surface: t.word.to_string(), details: Vec::new() })
+                    .collect();
+            }
+        };
+        let mut tokens = match segmenter.segment(Cow::Borrowed(text)) {
             Ok(tokens) => tokens,
             Err(e) => {
                 log::warn!("word analysis failed: {e}");
@@ -190,11 +229,9 @@ struct Pack {
     bytes: u64,
 }
 
-static PACKS: [Pack; 3] = [
+static PACKS: [Pack; 2] = [
     Pack { lang: Lang::Japanese, name: "lindera-sudachidict", label: "SudachiDict", bytes: 131_520_470,
         sha256: "e382909b0336f2d62a41bb1b8c74d5d0462dd547445c7baffc5d03d47aedebf7" },
-    Pack { lang: Lang::Chinese, name: "lindera-jieba", label: "jieba", bytes: 13_788_270,
-        sha256: "0a8cad099ba3d28570dbd7502963503cf4fb55a6742d4ffd72b1db77d4f08163" },
     Pack { lang: Lang::Korean, name: "lindera-ko-dic", label: "mecab-ko-dic", bytes: 19_876_022,
         sha256: "3458c54ce21618693221ad9af2a49f547b40f0e50a7e19ca20cfa781673f3ed0" },
 ];
@@ -222,7 +259,7 @@ pub fn current(tag: &str) -> Option<Arc<Analyzer>> {
 /// The analyzer's state for Settings › OCR, for languages that have one.
 pub fn status(tag: &str) -> Option<String> {
     let lang = Lang::of(tag)?;
-    let label = lang.pack().label;
+    let label = lang.label();
     match STATUS.read().as_ref() {
         Some((l, s)) if *l == lang => Some(s.clone()),
         _ => Some(format!("separação de palavras ({label}): aguardando")),
@@ -247,22 +284,23 @@ pub fn warm(tag: &str, changed: &dyn Fn()) {
     }
     *LOADED.write() = None;
     let Some(root) = ROOT.get() else { return };
-    let pack = lang.pack();
-    match ensure(root, pack, &|done| {
-        let percent = (done * 100 / pack.bytes.max(1)).min(100);
-        set_status(lang, format!("separação de palavras ({}): baixando {percent}% de {} MB", pack.label, pack.bytes / 1_000_000), changed);
-    })
-    .and_then(|dir| {
-        set_status(lang, format!("separação de palavras ({}): carregando…", pack.label), changed);
-        Analyzer::open(lang, &dir)
-    }) {
+    let (label, bytes) = (lang.label(), lang.bytes());
+    match lang
+        .ensure(root, &|done| {
+            let percent = (done * 100 / bytes.max(1)).min(100);
+            set_status(lang, format!("separação de palavras ({label}): baixando {percent}% de {} MB", bytes / 1_000_000), changed);
+        })
+        .and_then(|dir| {
+            set_status(lang, format!("separação de palavras ({label}): carregando…"), changed);
+            Analyzer::open(lang, &dir)
+        }) {
         Ok(analyzer) => {
             *LOADED.write() = Some((lang, Arc::new(analyzer)));
-            set_status(lang, format!("separação de palavras ({}): pronta", pack.label), changed);
+            set_status(lang, format!("separação de palavras ({label}): pronta"), changed);
         }
         Err(e) => {
-            log::warn!("{} unavailable: {e:#}", pack.name);
-            set_status(lang, format!("separação de palavras ({}) indisponível: {e:#}", pack.label), changed);
+            log::warn!("{label} unavailable: {e:#}");
+            set_status(lang, format!("separação de palavras ({label}) indisponível: {e:#}"), changed);
         }
     }
 }
@@ -282,7 +320,7 @@ fn ensure(root: &Path, pack: &Pack, progress: &dyn Fn(u64)) -> Result<PathBuf> {
         }
     }
     let zip = root.join(format!(".download-{}.zip", pack.name));
-    download(&format!("{RELEASE}/{}-{VERSION}.zip", pack.name), &zip, pack, progress)?;
+    download(&format!("{RELEASE}/{}-{VERSION}.zip", pack.name), &zip, pack.bytes, Some(pack.sha256), progress)?;
     let unpacking = root.join(format!(".unpacking-{}-{}", pack.name, std::process::id()));
     std::fs::create_dir_all(&unpacking)?;
     let unpacked = crate::dictionaries::archive::unpack(&zip, crate::dictionaries::archive::Kind::Zip, &unpacking, &|_| {});
@@ -300,8 +338,9 @@ fn ensure(root: &Path, pack: &Pack, progress: &dyn Fn(u64)) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Downloads `url` to `to`, checking its size and SHA-256 against the pack's.
-fn download(url: &str, to: &Path, pack: &Pack, progress: &dyn Fn(u64)) -> Result<()> {
+/// Downloads `url` to `to`. With a pinned SHA-256 the file must be exactly `bytes` long and match
+/// it; without one, `bytes` is only the most it may weigh.
+fn download(url: &str, to: &Path, bytes: u64, sha256: Option<&str>, progress: &dyn Fn(u64)) -> Result<()> {
     let client = reqwest::blocking::Client::builder().timeout(DOWNLOAD_TIMEOUT).build()?;
     let mut response = client.get(url).send()?.error_for_status()?;
     let mut file = File::create(to).with_context(|| format!("create {}", to.display()))?;
@@ -314,12 +353,12 @@ fn download(url: &str, to: &Path, pack: &Pack, progress: &dyn Fn(u64)) -> Result
             break;
         }
         done += n as u64;
-        if done > pack.bytes {
+        if done > bytes {
             bail!("{url} is larger than expected");
         }
         hash.update(&buf[..n]);
         file.write_all(&buf[..n])?;
-        if done - reported >= pack.bytes / 50 {
+        if done - reported >= bytes / 50 {
             reported = done;
             progress(done);
         }
@@ -327,9 +366,11 @@ fn download(url: &str, to: &Path, pack: &Pack, progress: &dyn Fn(u64)) -> Result
     file.flush()?;
     drop(file);
     let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if done != pack.bytes || digest != pack.sha256 {
-        let _ = std::fs::remove_file(to);
-        bail!("{url} did not match its pinned SHA-256");
+    if let Some(sha256) = sha256 {
+        if done != bytes || digest != sha256 {
+            let _ = std::fs::remove_file(to);
+            bail!("{url} did not match its pinned SHA-256");
+        }
     }
     Ok(())
 }
@@ -387,13 +428,7 @@ pub(crate) mod tests {
 
     #[test]
     fn chinese_words_are_jieba_words_and_punctuation_is_not_a_word() {
-        let (text, ms) = sentence(&[
-            ("我们", "r,CHINESE,wo3 men5,我們,我们,we,2,我,们,high"),
-            ("在", "p,CHINESE,zai4,在,在,at,1,在,在,high"),
-            ("北京大学", "nt,CHINESE,Bei3 jing1 Da4 xue2,北京大學,北京大学,Peking University,4+,北,学,high"),
-            ("，", "w,*,*,*,*,*,*,*,*,*"),
-            ("ABC", "x,*,*,*,*,*,*,*,*,*"),
-        ]);
+        let (text, ms) = sentence(&[("我们", ""), ("在", ""), ("北京大学", ""), ("，", ""), ("ABC", "")]);
         assert_eq!(show(&text, &group(Lang::Chinese, &text, &ms)), ["我们", "在", "北京大学", "，·p", "ABC"]);
     }
 
@@ -404,7 +439,7 @@ pub(crate) mod tests {
     fn real_dictionaries() {
         let root = PathBuf::from(std::env::var("LOOKITAN_SEGMENTERS").expect("LOOKITAN_SEGMENTERS is the download folder"));
         let check = |lang: Lang, text: &str, expected: &[&str]| {
-            let dir = ensure(&root, lang.pack(), &|_| {}).unwrap();
+            let dir = lang.ensure(&root, &|_| {}).unwrap();
             let analyzer = Analyzer::open(lang, &dir).unwrap();
             let chars: Vec<char> = text.chars().collect();
             assert_eq!(show(&chars, &analyzer.words(text)), expected, "{text}");
@@ -416,9 +451,14 @@ pub(crate) mod tests {
         check(Lang::Korean, "오늘은 날씨가 좋아서 친구들과 함께 산책을 했습니다.",
             &["오늘은→오늘", "날씨가→날씨", "좋아서→좋다", "친구들과→친구들/친구", "함께", "산책을→산책", "했습니다→하다", ".·p"]);
         check(Lang::Chinese, "我们在北京大学学习中文。", &["我们", "在", "北京大学", "学习", "中文", "。·p"]);
-        // A second call finds the unpacked folder and downloads nothing.
-        let dir = ensure(&root, Lang::Chinese.pack(), &|_| panic!("downloaded again")).unwrap();
-        assert!(dir.join("metadata.json").is_file());
+        // Words only CC-CEDICT has stay whole, as in Lookupper (jieba's dict.txt.big alone gives
+        // 緬因/貓吧, 最後/一根/稻草 and 3D/打印机).
+        check(Lang::Chinese, "我們去看緬因貓吧", &["我們", "去", "看", "緬因貓", "吧"]);
+        check(Lang::Chinese, "這是最後一根稻草", &["這是", "最後一根稻草"]);
+        check(Lang::Chinese, "他用3D打印机做了一个模型", &["他用", "3D打印机", "做", "了", "一个", "模型"]);
+        // A second call finds the merged dictionary and downloads nothing.
+        let dir = Lang::Chinese.ensure(&root, &|_| panic!("downloaded again")).unwrap();
+        assert!(dir.join("dict.txt").is_file() && dir.join("NOTICE.txt").is_file());
     }
 
     #[test]
@@ -433,5 +473,6 @@ pub(crate) mod tests {
         }
         assert!(status("en-US").is_none());
         assert!(status("ja").unwrap().contains("SudachiDict"));
+        assert!(status("zh-CN").unwrap().contains("CC-CEDICT"));
     }
 }

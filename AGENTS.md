@@ -154,7 +154,13 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
     - Also in Japanese, a prefix takes the next morpheme, and a number its 助数詞 counter. Particles, auxiliaries alone and symbols are their own words. The lemmas are, in order: the する compound, the prefix + head, the head's dictionary form, then the surface.
     - The Korean chunker is `0x1401a1540`, with its attach rule at `0x1401a17e0` and lemmas at `0x1401a1b00`. Particles and XSN go on a nominal, endings on a verbal, XSV/XSA/VCP on a nominal, a bound noun on a number, and a VX after an EC, never across a space. The lemma is the stem + 다, the noun before 이다/아니다, or the noun (also without 들).
   - Lookitan:
-    - lindera 6.2.0 (`=6.2.0` in Cargo.toml) reads its release's prebuilt dictionaries: `lindera-sudachidict` (126 MB zip, 590 MB unpacked, memory-mapped), `lindera-jieba` (14 MB) and `lindera-ko-dic` (20 MB; the Sejong tags Kiwi uses).
+    - lindera 6.2.0 (`=6.2.0` in Cargo.toml) reads its release's prebuilt dictionaries: `lindera-sudachidict` (126 MB zip, 590 MB unpacked, memory-mapped) and `lindera-ko-dic` (20 MB; the Sejong tags Kiwi uses).
+    - Chinese (`segment/chinese.rs`, since 2026-10-22) is Lookupper's:
+      - The algorithm is jieba-rs 0.11 (`=0.11.0`, no default dictionary): `cut` with the HMM.
+      - The dictionary is merged once into `<local data>/segmenters/jieba-cedict-1/dict.txt`. It is jieba's `dict.txt.big`, pinned by commit and SHA-256, plus every CC-CEDICT headword it lacks, traditional and simplified, at frequency 1.
+      - CC-CEDICT comes from MDBG's daily zip. It is checked by its header, not a hash.
+      - NOTICE.txt keeps jieba's MIT notice and CC-CEDICT's licence header.
+      - The old `lindera-jieba-6.2.0` folder is deleted.
     - They are pinned by size and SHA-256 in `PACKS`, downloaded on first use into `<local data>/segmenters/`, and unpacked through `archive::unpack`. Only the recognition language's dictionary is loaded.
     - `warm_segmenter` runs at start-up and on a language change. Its progress shows in Configurações › OCR › Estado do motor (`EngineStatus.segmenter`). Until it is ready, and for other languages, the old longest-match path is used.
     - The rules in japanese.rs and korean.rs are Lookitan's own, written to Lookupper's behavior.
@@ -165,7 +171,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
       - It gives counters such as 人 as 接尾辞-名詞的-一般, so 12 and 人 stay apart, as they would in Lookupper.
     - Lookupper's analyzers, in detail (REA on 2026-10-21):
       - Chinese is its own jieba code: `jieba.cut` with HMM (`0x1401adfc0`, DAG `0x140271b60`, max log-frequency route). Its `dict.txt` is jieba's `dict.txt.big` unchanged, plus the 58,837 CC-CEDICT words missing from it at frequency 1. Its `hmm.txt` is jieba's `finalseg` tables.
-      - lindera-jieba has only `dict.txt.big`'s 584,429 words, with trained costs and no HMM, so it can split words Lookupper keeps, such as traditional-only CEDICT words.
+      - lindera-jieba, used before 2026-10-22, had only `dict.txt.big`'s 584,429 words, with trained costs and no HMM. It split words Lookupper keeps, such as 緬因貓 (as 緬因/貓吧).
       - Japanese is its own Sudachi port, mode C, with the default plugins: `CollapseProlongedSoundMarks`, `JoinNumerics`, `JoinKatakanaOovs` (min length 3), MeCab OOV and `rewrite.def`.
       - Korean is `kiwi.dll` through its C API: `kiwi_init(model, 1 thread, 0xf)` and `kiwi_analyze_w(top_n 1, match 0x81003f)`.
       - Rebuilt boxes (`0x14015f940`): a word on one line is the `minAreaRect` of its OCR words' corners. A word inside a larger OCR word gets that word's box.
@@ -295,6 +301,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-22 (Claude, `tests`): at the user's request (`main` first fast-forwarded to `b02e615`), Chinese words are found as Lookupper finds them. The analyzer is jieba-rs with the HMM, and the dictionary is jieba's `dict.txt.big` plus the CC-CEDICT words it lacks at frequency 1 (`segment/chinese.rs`). It replaces lindera-jieba.
 - 2026-10-21 (Claude, `tests`): REA analysis, with no code changed. It decoded:
   - Lookupper's crop: `0x14094fed0`, `warpPerspective`, INTER_LINEAR, BORDER_REPLICATE, a quarter turn when h ≥ 1.5 w;
   - its word boxes and ink split;
