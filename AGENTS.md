@@ -217,6 +217,11 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Per line (`0x140949b60`): a line whose words are all CJK gives every character its own box, then the analyzer rejoins them. Otherwise each word is a box. Character boxes are centred on the CTC step, as wide as the mean character pitch, the full crop height; a word's box is the union of its characters'.
   - Ink (`0x14094de10`): the background is the mode of a 64-bin grey histogram (every 2nd column, 4th row). The contrast is where the outer 5% of pixels lie; it needs at least 24. A column's ink is the count of pixels further than 0.3 × contrast from the background, over the whole crop height.
   - Ink word split (`0x140950d00`, not for all-CJK or RTL lines, words of 4 to 64 characters): the blank run nearest the middle of each character pair is its gap. A word is cut where the gap is at least max(2.5 × the word's median gap, 0.75 × the line's median word gap, 0.15 × pitch, 0.25 × crop height), leaving pieces of 2 characters or more.
+    - Ported on 2026-10-22: `ink::word_cuts` and `paddle.rs` `split_at_ink_gaps`, which puts a space at each cut, after `split_wide_gaps`.
+    - Words there are runs of one class between spaces, CJK (`is_cjk_class`, Lookupper's `0x140950be0`) or not.
+    - Only the non-CJK runs are cut; Lookupper's analyzer rejoins CJK characters across a space anyway.
+    - RTL lines are left alone.
+    - Lookitan's `ink.cols` count ink only in the line's ink rows, where Lookupper counts the whole crop height.
   - Snap (`0x14094da60`): between two neighbouring boxes, the best blank run within 0.4 × crop height of their meeting point (width − 1.2 × distance) becomes the boundary. The line's ends move to its first and last ink within that reach. Boxes that still overlap meet halfway (`0x14094a980`).
   - CTC gives each character only a step centre. `ink::measure` finds the crop's ink: pixels far from the median background, in the run of rows holding the most ink.
   - `ink::spans` moves each boundary between two characters to the widest blank gap between their centres, and the line's ends to its first and last ink. Spaces fill the gap between words.
@@ -301,6 +306,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-22 (Claude, `tests`): a word the recognizer read in one piece is split at a wide blank gap in its ink, as Lookupper's `0x140950d00` does (`ink::word_cuts`, `split_at_ink_gaps` in paddle.rs).
 - 2026-10-22 (Claude, `tests`): at the user's request (`main` first fast-forwarded to `b02e615`), Chinese words are found as Lookupper finds them. The analyzer is jieba-rs with the HMM, and the dictionary is jieba's `dict.txt.big` plus the CC-CEDICT words it lacks at frequency 1 (`segment/chinese.rs`). It replaces lindera-jieba.
 - 2026-10-21 (Claude, `tests`): REA analysis, with no code changed. It decoded:
   - Lookupper's crop: `0x14094fed0`, `warpPerspective`, INTER_LINEAR, BORDER_REPLICATE, a quarter turn when h ≥ 1.5 w;

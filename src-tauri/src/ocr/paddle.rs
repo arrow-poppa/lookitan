@@ -326,6 +326,55 @@ fn split_wide_gaps(decoded: Vec<(char, usize)>) -> Vec<(char, usize)> {
     out
 }
 
+/// Whether Lookupper's recognizer counts `c` as CJK (REA `0x140950be0`): CJK radicals, symbols
+/// and punctuation, kana, bopomofo, enclosed CJK, CJK compatibility and ideographs. Hangul is a
+/// class of its own.
+fn is_cjk_class(c: char) -> bool {
+    matches!(c as u32, 0x2E80..=0x2EFF | 0x3000..=0x312F | 0x3190..=0x31BF | 0x31F0..=0x33FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
+}
+
+/// Puts a space where a word the recognizer read in one piece has a wide blank gap in its ink, as
+/// Lookupper does (REA `0x140950d00`; see `ink::word_cuts`). Lookupper leaves right-to-left lines
+/// alone, and so are CJK runs here: its analyzer rejoins their characters with no space anyway.
+/// `decoded` holds each character with its recognizer step, `step_w` is a step's width in crop
+/// pixels and `across` the crop's height.
+fn split_at_ink_gaps(decoded: Vec<(char, usize)>, ink: &ink::Ink, step_w: f32, across: f32) -> Vec<(char, usize)> {
+    if is_rtl_text(decoded.iter().map(|(c, _)| *c)) {
+        return decoded;
+    }
+    let centers: Vec<f32> = decoded.iter().map(|(_, t)| (*t as f32 + 0.5) * step_w).collect();
+    // Words as Lookupper's recognizer makes them: runs of one class between spaces.
+    let mut words: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut checked: Vec<bool> = Vec::new();
+    for (i, (c, _)) in decoded.iter().enumerate() {
+        if c.is_whitespace() {
+            continue;
+        }
+        let cjk = is_cjk_class(*c);
+        match words.last_mut() {
+            Some(w) if w.end == i && is_cjk_class(decoded[w.start].0) == cjk => w.end = i + 1,
+            _ => {
+                words.push(i..i + 1);
+                checked.push(!cjk);
+            }
+        }
+    }
+    let cuts = ink::word_cuts(ink, &centers, &words, across);
+    // The line's gaps between words use every word; only the others are cut.
+    let cuts: Vec<usize> = cuts.into_iter().filter(|&i| words.iter().zip(&checked).any(|(w, &ok)| ok && w.contains(&i))).collect();
+    if cuts.is_empty() {
+        return decoded;
+    }
+    let mut out = Vec::with_capacity(decoded.len() + cuts.len());
+    for (i, d) in decoded.iter().enumerate() {
+        if cuts.contains(&i) {
+            out.push((' ', (decoded[i - 1].1 + d.1) / 2));
+        }
+        out.push(*d);
+    }
+    out
+}
+
 /// Width of a crop once resized to the recognizer's input height.
 fn rec_width(cw: u32, ch: u32) -> u32 {
     ((cw as f32 * REC_HEIGHT as f32 / ch as f32).round() as u32).clamp(16, 3200)
@@ -1178,6 +1227,12 @@ impl PaddleOcr {
 
         // Each CTC step covers an equal slice of the padded input, so of the crop's length.
         let step_w = len as f32 / content_steps;
+        // The crop's height across the line, in capture pixels.
+        let across = (if crop.turn == Turn::Upright { crop.ch } else { crop.cw }) as f32;
+        let decoded = match &crop.ink {
+            Some(ink) => split_at_ink_gaps(decoded, ink, step_w, across),
+            None => decoded,
+        };
         let centers: Vec<f32> = decoded
             .iter()
             .map(|(_, t)| start as f32 + (*t as f32 + 0.5) * step_w)

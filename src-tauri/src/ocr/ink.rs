@@ -13,6 +13,18 @@ const INK_SHARE: f32 = 0.4;
 const ROW_SHARE: usize = 12;
 /// How far past a line's first or last character centre its ink may reach, in CTC steps.
 const END_REACH: f32 = 3.0;
+/// Lookupper's ink word split (REA `0x140950d00`): a gap splits a word when it is this many times
+/// the word's median gap, ...
+const SPLIT_MEDIAN: f32 = 2.5;
+/// ... this share of the line's median gap between words, ...
+const SPLIT_WORD_GAP: f32 = 0.75;
+/// ... this share of the word's character pitch ...
+const SPLIT_PITCH: f32 = 0.15;
+/// ... and this share of the crop's height.
+const SPLIT_HEIGHT: f32 = 0.25;
+/// Words it looks at, in characters.
+const SPLIT_MIN_CHARS: usize = 4;
+const SPLIT_MAX_CHARS: usize = 64;
 
 /// The ink of a crop, in crop pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -172,6 +184,96 @@ pub fn spans(centers: &[f32], blank: &[bool], ink: Option<&Ink>, origin: f32, lo
     out
 }
 
+/// The run of blank columns nearest `center` among those within `reach` of it, as
+/// `(first, end)` crop columns: Lookupper's `0x1409513e0` and `0x14094e100`.
+fn gap_at(cols: &[bool], center: f32, reach: f32) -> Option<(usize, usize)> {
+    if cols.is_empty() {
+        return None;
+    }
+    let last = cols.len() - 1;
+    let from = ((center - reach).floor().max(0.0) as usize).min(last);
+    let to = ((center + reach).ceil().max(0.0) as usize).min(last);
+    let k = (from..=to).filter(|&k| !cols[k]).min_by(|&a, &b| {
+        let d = |k: usize| (k as f32 + 0.5 - center).abs();
+        d(a).total_cmp(&d(b))
+    })?;
+    let mut first = k;
+    while first > 0 && !cols[first - 1] {
+        first -= 1;
+    }
+    let mut end = k + 1;
+    while end < cols.len() && !cols[end] {
+        end += 1;
+    }
+    Some((first, end))
+}
+
+/// The gap between two characters centred at `a` and `b` (crop columns): the width of the blank
+/// run nearest the middle, within the distance between them.
+fn gap_between(cols: &[bool], a: f32, b: f32) -> Option<(usize, usize)> {
+    gap_at(cols, (a + b) / 2.0, (b - a).abs())
+}
+
+/// Where a word the recognizer read without a space is two words, as Lookupper finds them (REA
+/// `0x140950d00`): at a blank gap at least as wide as the largest of 2.5 × the word's median gap,
+/// 0.75 × the line's median gap between words, 0.15 × its character pitch and 0.25 × the crop's
+/// `height`, leaving pieces of two characters or more. `centers` are the characters' centres in
+/// crop columns and `words` the character ranges to look at, in order. Returns the characters a
+/// new word starts at.
+pub fn word_cuts(ink: &Ink, centers: &[f32], words: &[std::ops::Range<usize>], height: f32) -> Vec<usize> {
+    let cols = &ink.cols;
+    // The line's gaps between words: from a word's last character to the next one's first.
+    let mut between: Vec<f32> = words
+        .windows(2)
+        .filter(|w| !w[0].is_empty() && !w[1].is_empty())
+        .filter_map(|w| gap_between(cols, centers[w[0].end - 1], centers[w[1].start]))
+        .map(|(s, e)| (e - s) as f32)
+        .collect();
+    between.sort_by(f32::total_cmp);
+    let word_gap = between.get(between.len() / 2).copied().unwrap_or(0.0);
+
+    let mut cuts = Vec::new();
+    for w in words {
+        let n = w.len();
+        if !(SPLIT_MIN_CHARS..=SPLIT_MAX_CHARS).contains(&n) {
+            continue;
+        }
+        let c = &centers[w.clone()];
+        // Two pairs that meet the same blank run: only the nearer one keeps it.
+        let mut gaps = vec![0f32; n - 1];
+        let mut owner: Option<(usize, usize, f32)> = None;
+        for j in 0..n - 1 {
+            let Some((s, e)) = gap_between(cols, c[j], c[j + 1]) else { continue };
+            let off = ((s + e) as f32 / 2.0 - (c[j] + c[j + 1]) / 2.0).abs();
+            if let Some((start, k, d)) = owner {
+                if start == s {
+                    if d <= off {
+                        continue;
+                    }
+                    gaps[k] = 0.0;
+                }
+            }
+            gaps[j] = (e - s) as f32;
+            owner = Some((s, j, off));
+        }
+        let mut sorted = gaps.clone();
+        sorted.sort_by(f32::total_cmp);
+        let pitch = (c[n - 1] - c[0]) / (n - 1) as f32;
+        let limit = (sorted[sorted.len() / 2] * SPLIT_MEDIAN)
+            .max(word_gap * SPLIT_WORD_GAP)
+            .max(pitch * SPLIT_PITCH)
+            .max(height * SPLIT_HEIGHT);
+        let mut last: isize = -1;
+        for (j, &g) in gaps.iter().enumerate() {
+            if g >= limit && j as isize - last > 1 && n - 1 - j > 1 {
+                cuts.push(w.start + j + 1);
+                last = j as isize;
+            }
+        }
+    }
+    cuts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +326,26 @@ mod tests {
         let spans = spans(&[126.0, 150.0], &[false, false], Some(&ink), 100.0, 100.0, 170.0, 6.0);
         assert_eq!((spans[0].1, spans[1].0), (138.0, 138.0), "the boundary stays halfway, not in 那's gap");
         assert_eq!(spans[0].0, 110.0);
+    }
+
+    #[test]
+    fn a_word_read_without_a_space_is_cut_at_a_wide_blank_gap() {
+        // "abcdefgh": letters 6 px wide with 2 px gaps, and 14 px between "abcd" and "efgh".
+        let mut ink_cols = Vec::new();
+        let mut centers = Vec::new();
+        let mut x = 2;
+        for i in 0..8 {
+            ink_cols.push(x..x + 6);
+            centers.push(x as f32 + 3.0);
+            x += if i == 3 { 20 } else { 8 };
+        }
+        let lum = crop(x + 2, &ink_cols);
+        let ink = measure(&lum, x + 2, 20).unwrap();
+        assert_eq!(word_cuts(&ink, &centers, &[0..8], 20.0), [4]);
+        // The same gap is not wide enough in a crop 60 px tall (0.25 × 60 = 15).
+        assert!(word_cuts(&ink, &centers, &[0..8], 60.0).is_empty());
+        // Words under four characters are left alone.
+        assert!(word_cuts(&ink, &centers[2..5], &[0..3], 20.0).is_empty());
     }
 
     #[test]
