@@ -131,8 +131,8 @@ function engineStatusText() {
 }
 
 /**
- * Japanese, Chinese and Korean: the word analyzer the recognition language downloads, with
- * buttons to download it, download it again or delete it, as Lookupper's analyzer models have.
+ * Japanese, Chinese and Korean: the word analyzer the recognition language downloads, with a
+ * button to delete it or, once deleted, to download it, as Lookupper's analyzer models have.
  */
 function segmenterRow() {
     const row = el('div', {id: 'segmenter-row'});
@@ -157,20 +157,13 @@ function fillSegmenterRow(row) {
     };
     const buttons = [];
     if (status.segmenterInstalled) {
-        const again = el('button', {html: `${icon('refresh', 'sm')}Baixar de novo`, disabled: busy});
-        again.addEventListener('click', () => void run(again, async () => {
-            if (!await ask(`A separação de palavras (${label}) será apagada e baixada de novo.`,
-                {title: 'Baixar de novo', kind: 'warning', okLabel: 'Baixar de novo', cancelLabel: 'Cancelar'})) { return; }
-            await api.removeSegmenter();
-            await api.installSegmenter();
-        }));
         const remove = el('button', {html: `${icon('trash', 'sm')}Apagar`, disabled: busy});
         remove.addEventListener('click', () => void run(remove, async () => {
             if (!await ask(`Apagar a separação de palavras (${label})? Ela é baixada de novo na próxima consulta neste idioma.`,
                 {title: 'Apagar a separação de palavras', kind: 'warning', okLabel: 'Apagar', cancelLabel: 'Cancelar'})) { return; }
             await api.removeSegmenter();
         }));
-        buttons.push(again, remove);
+        buttons.push(remove);
     } else {
         const download = el('button', {html: `${icon('download', 'sm')}Baixar`, disabled: busy && !failed});
         download.addEventListener('click', () => void run(download, () => api.installSegmenter()));
