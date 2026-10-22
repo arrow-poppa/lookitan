@@ -329,7 +329,7 @@ fn split_wide_gaps(decoded: Vec<(char, usize)>) -> Vec<(char, usize)> {
 /// Whether Lookupper's recognizer counts `c` as CJK (REA `0x140950be0`): CJK radicals, symbols
 /// and punctuation, kana, bopomofo, enclosed CJK, CJK compatibility and ideographs. Hangul is a
 /// class of its own.
-fn is_cjk_class(c: char) -> bool {
+pub(crate) fn is_cjk_class(c: char) -> bool {
     matches!(c as u32, 0x2E80..=0x2EFF | 0x3000..=0x312F | 0x3190..=0x31BF | 0x31F0..=0x33FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
 }
 
@@ -1303,7 +1303,7 @@ impl PaddleOcr {
             Turn::Left => Flow::Down,
             Turn::Right => Flow::Up,
         };
-        let line = OcrLine { text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, chars, ink_y, flow, tilt };
+        let line = OcrLine { text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, chars, ink_y, flow, tilt, look: Default::default() };
         Some(Reading { line, score: sure / read.max(1) as f32 })
     }
 }

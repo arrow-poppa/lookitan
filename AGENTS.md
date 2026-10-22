@@ -60,6 +60,7 @@ src-tauri/src/
   ocr/lens.rs    optional Google Lens cloud OCR (protobuf to lensfrontend-pa.googleapis.com/v1/crupload)
   ocr/cache.rs   per-frame cache of boxes and recognized lines
   segment/       words of Japanese, Chinese and Korean text (Sudachi, jieba-rs, Kiwi; downloaded on first use); words.rs picks with it
+  layout.rs      paragraphs as Lookupper's layout analyzer finds them, with the ink and frames measured on the capture
   platform/      cursor, capture and foreground app; kwin.rs is the KDE Wayland relay and ScreenShot2
   protocol.rs    `lkt:` URI scheme (/e entry HTML, /d dictionary resource, /c capture frame, /m saved media)
   cards.rs       saved words (words.json plus media/)
@@ -104,7 +105,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - GPU card: off by default (`chooseGpu`), DirectML takes adapter 0 and Linux takes Dawn's default (high performance). With "Escolher a placa de vídeo" on, `gpuPreference` (`highPerformance`/`lowPower`) goes to DirectML's performance preference or to the WebGPU EP's `powerPreference`. The WebGPU `deviceId` is ONNX Runtime's context id, not an adapter index. The Linux packages depend on the Vulkan loader (`vulkan-loader`, `libvulkan1`).
   - The models are the same PP-OCRv6/PP-OCRv5 weights as Lookupper, from the official PaddlePaddle exports. Lookupper's copies are a different ONNX conversion (det at opset 11 instead of 14).
   - The detector follows Lookupper (REA: its defaults at `0x140949390` are WhitePadding 20, 1920 GPU, 1280 CPU, box score 0.8, line confidence 0.65; the detector lambda is `0x140951940`). The image is at most 1920 px on its longest side on the GPU and 1280 px on the CPU (`DET_MAX_SIDE_GPU`/`_CPU`), inside a 20 px white border (`DET_PADDING`). Binarization is 0.3 (Lookupper's 76/255), unclip 1.35, as Lookupper's. Lookupper also moves each grown box down by 0.15 × area / perimeter; Lookitan does not (1–2 px, no gain, removed at the user's request). Whole-screen OCR runs in overlapping bands. Not copied, at the user's request, because they lose faint words: Lookupper drops boxes under a mean score of 0.8 (Lookitan keeps 0.45 GPU / 0.4 CPU) and recognized lines under 0.65 confidence (`0x140947860`; Lookitan drops none).
-  - Turned lines (branch `lookupper-ocr`, as Lookupper's contour lambda `0x140951940`): each detector kernel gets its smallest rectangle (`quad.rs`, from the hull of its rows' end corners). Turned more than 2° (`UPRIGHT_ANGLE`; Lookupper straightens every box, but below that the plain crop reads the same and keeps the ink rows), the box carries its corners (`TextBox::quad`, with `x0..y1` the bounds), unclipped by 1.35 × its own area / perimeter. Its crop is straightened (`quad::warp`, bilinear, edges repeated) before it is read, vertical by its own sides (`TextBox::size`), and the block's pointer test turns with it. The line comes out in its own frame (`OcrLine::tilt`: the capture turned by `-angle` about its origin): characters and ink there. words.rs reads it in that frame (`upright`, `upright_point`), and maps word boxes back with `turned_on_screen`: upright about their true centre, plus `angle`; the overlay turns each word element by it (`rotate(...rad)`, the ink child turning with it), `Pick::is_under` turns the pointer back, and the pop-up is placed by `Pick::bounds`. Lines turned differently (> 2°) are never one paragraph.
+  - Turned lines (branch `lookupper-ocr`, as Lookupper's contour lambda `0x140951940`): each detector kernel gets its smallest rectangle (`quad.rs`, from the hull of its rows' end corners). Turned more than 2° (`UPRIGHT_ANGLE`; Lookupper straightens every box, but below that the plain crop reads the same and keeps the ink rows), the box carries its corners (`TextBox::quad`, with `x0..y1` the bounds), unclipped by 1.35 × its own area / perimeter. Its crop is straightened (`quad::warp`, bilinear, edges repeated) before it is read, vertical by its own sides (`TextBox::size`), and the block's pointer test turns with it. The line comes out in its own frame (`OcrLine::tilt`: the capture turned by `-angle` about its origin): characters and ink there. words.rs reads it in that frame (`upright`, `upright_point`), and maps word boxes back with `turned_on_screen`: upright about their true centre, plus `angle`; the overlay turns each word element by it (`rotate(...rad)`, the ink child turning with it), `Pick::is_under` turns the pointer back, and the pop-up is placed by `Pick::bounds`. Paragraphs compare a turned line by its box on the capture, as Lookupper's analyzer does.
   - Wide gaps split words (branch `lookupper-ocr`, Lookupper's `0x14094c7a0`): in each recognized line, a gap between two characters wider than 2.5 × the line's median gap (in recognizer steps, clamped to 5..20, 8 with under two characters) gets a space (`split_wide_gaps`), so two labels or cells in one box are two words.
   - Recognition has two phases: the lines near the pointer first, one run per line, then the rest in the background for the overlay.
   - The background whole-screen pass is batched: `plan_batches` groups lines of similar width (at most 16 lines and 12,000 padded columns per run), pads them with zeros like PaddleOCR, and decodes each line only over its own CTC steps. A failed batch retries line by line.
@@ -189,28 +190,31 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
       - Korean is `kiwi.dll` through its C API: `kiwi_init(model, 1 thread, 0xf)` and `kiwi_analyze_w(top_n 1, match 0x81003f)`.
       - Rebuilt boxes (`0x14015f940`): a word on one line is the `minAreaRect` of its OCR words' corners. A word inside a larger OCR word gets that word's box.
     - CI runs `segment::tests::real_dictionaries` (`--ignored`) with the real dictionaries cached.
-  - `words::paragraph` grows from the pointer line. It adds lines right above or below in the same column (gap ≤ 1 line height, height ratio ≤ 1.6) and pieces of the same row.
+  - Paragraphs are Lookupper's (`layout.rs`, since 2026-10-22): `layout::paragraphs` numbers each line's paragraph, and `words::paragraph` puts the lines of the pointer's in reading order. See "Paragraphs (layout.rs)" below.
   - `sentence::split` applies Lookupper's rules (see the module header). Text longer than 400 characters without sentence marks falls back to the pointer row ±1.
   - `Pick.sentence_lines` frames the "sentence" screenshot (`focus_lines`).
   - `Pick.context` is the whole paragraph, as Lookupper shows and sends it to its AI. Past 1500 characters it keeps the whole sentences nearest the word's. `context_at` locates the word in it.
   - Who reads what (`aiText` in the popup): the AI word card and Explicar read `context`, and so does their `{{sentence}}` placeholder. The context translator reads only `sentence`. Anki's `{sentence}` and cloze markers follow `anki.contextMode` (Anki › "Contexto no card"): `sentence` (the default) or `paragraph`. With `paragraph`, a lookup without a paragraph falls back to the sentence. Saved words keep `context` too, so exports from the Words tab follow the option.
-  - Ours are our own. Lookupper's paragraphs come from XpressOCR's layout analyzer (`0x140952880`, decoded on 2026-10-21, not ported):
-    - Each line is joined to the nearest overlapping line below it, if that line is at most 2.2 line heights away.
-    - Each pair gets a score (`0x140958b50`), and the two lines are one paragraph when the score is under 1.
-    - The score adds:
-      - for the gap: +5 over 1.6 line heights, +3 over 1.1, +1.5 over 0.8;
-      - for the size ratio: +7 over 1.7, +4 over 1.45, +1.5 over 1.3;
-      - for the text colour difference: +3 over 100, +1.5 over 55;
-      - +3 for different enclosing boxes, found by Sobel edges in the image;
-      - +5 when the lower line starts with a list marker;
-      - +5 when neither line has a letter;
-      - +2 when the upper line ends with a colon.
-    - It subtracts:
-      - 4 when the upper line ends with a hyphen;
-      - 2.5 when it ends with a comma;
-      - 2.5 for an open bracket;
-      - 4 when the lower line starts in lower case.
-    - Lines also form regions, typed prose, list-like, centred, special or other. In prose, a line that ended although the next word would have fitted adds 0.5, and a natural wrap subtracts 3.
+- **Paragraphs (`layout.rs`):** Lookupper's layout analyzer (`0x140952880`, decoded with REA on 2026-10-21 and 2026-10-22), ported whole.
+  - Pairs (`0x140959e80`): lines sorted by centre; each line with the nearest line below it that runs the same way, overlaps it across by ≥ 0.2 × the narrower width (or 3 px), and is at most 2.2 × the smaller height down.
+  - Line features (`0x140953340`): words between spaces, CJK count (kana, hanzi, hangul), the first letter or digit (lower, capital, digit), a list marker (`1409536e0`: bullet, `- `, ①–⑳, `1.`/`a)` + space), and the end: sentence mark, hyphen, comma, colon, a Japanese particle or Chinese function word (`0x140953800`). Also "key: value", open brackets, all capitals, any letter, any cased letter.
+  - Look (`layout::look`, `0x1409538e0`), on the capture shrunk so the median line is 20 px (0.08 to 1, INTER_AREA as Lookupper):
+    - Ink (`0x140954000`): Otsu on the line's box, the smaller side is the ink. The ink height is the shortest run of rows holding 85% of it, and its colour is the mean under it.
+    - Frames (`0x140954ac0`): around all lines (2.5 line heights out, shrunk to ≤ 800 px), grey, 3 × 3 median, Scharr across and down (CV_16S), absolute, added, over 40. Edge parts mostly inside the lines' boxes or shorter than 1.2 line heights are dropped. The rest, inverted and median-filtered, gives 8-connected parts. A line's frame is the part filling most of its box (parts ≥ max(16, 4 h²)), if that part holds the box; it is "filled" at ≥ 60% and "small" under half the area. These are OpenCV calls in Lookupper (REA named each P/Invoke: `imgproc_Scharr`, `imgproc_medianBlur`, `imgproc_connectedComponentsWithStats`…); Lookitan does them in Rust.
+    - `OcrLine::look` holds it (`#[serde(skip)]`). `ocr_pass` measures every pass, Lens too. The background pass measures all lines again after each batch, so the frames' numbers hold.
+  - Regions (`0x140956b60`): a pair is linked when the gap ≤ 1.3 h (1.8 in one small frame), the overlap ≥ 0.45 × the narrower width, the size ratio ≤ 1.35 (1.6), and they are not in two different small frames. Links make runs top to bottom, cut where a step is > 1.3 × the median step and > median + 0.3 h.
+  - Region kinds (`0x1409575c0`), in this order:
+    - list-like when ≥ 85% of the cased lines start with a capital or a digit (not mostly all capitals, and not `early` < 0.3 with > 3 words);
+    - framed when one small frame holds ≥ 70% of its lines, no line is in another small frame, and the text spans much of it;
+    - prose when ≥ half the cased lines start in lower case;
+    - centred when the centres vary < 0.6 × the ends;
+    - list-like when its lines are short and spaced, or most have a short line level with them in a column to the right (`0x140958740`);
+    - then by `early`, the share of lines ending short whose next first word would have fitted (`0x140958a80`): ≤ 0.25 prose, ≥ 0.35 list-like, else other.
+  - Score (`0x140958b50`), joined under 1:
+    - adds 5 for a list marker below; 7/4/1.5 for a size ratio over 1.7/1.45/1.3 (heights or ink heights); 3/1.5 for ink colours over 100/55 apart; 3 for two different filled frames, one small; 3.5 for a step over 1.35 × the region's; 5/3/1.5 for a gap over 1.6/1.1/0.8 h; 1.5 for different regions; 5 when neither has a letter; 1.5 for a sentence end then a capital or digit (outside prose); 2 for an ending colon; 3 for two "key: value" lines;
+    - by region kind and how the upper line ends (reaches the edge / wraps / would have fitted): prose 0 / −3 / +0.5; list-like +1.5 / +1 / +3, plus 2.5 when its lines start with capitals; centred −1.5; framed −2.5; other +0.5 / +0.5 / +2.5;
+    - takes 4 for an ending hyphen, 2.5 for a comma, 2.5 for an open bracket, 4 for a lower-case start below, 4 for a list item's next line at its text's indent, 3 for a CJK line ending in a particle.
+  - Lookitan's own on top: pieces of one row (overlap ≥ half the height, gap ≤ 1.5 h, height ratio ≤ 1.6) are one paragraph too, since Lookupper keeps a row the detector split apart.
 - **Automatic capture (`captureAuto`, the default, "Automático" in Configurações › OCR › Região de captura):** as in Lookupper's pointer mode.
   - The whole monitor is captured and detected, but only the block of text under the pointer is recognized (`block::under` on the detected boxes, `Reading::Block` in `ocr_pass`). The block is the pointed line plus the lines close around it: vertical gap ≤ 0.6 line height, row pieces ≤ 1.5, height ratio ≤ 1.6, at most 40 boxes. These thresholds are our own.
   - Pointer on a word of the block: the pop-up opens, with no background pass.
@@ -319,6 +323,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-22 (Claude, `tests`): paragraphs are found as Lookupper finds them (`layout.rs`): its layout analyzer with its pairs, line features, regions and their kinds, the score, and the ink colour, ink height and frames measured on the capture. Lookitan keeps joining the pieces of one row. Whole lines of capitalised sentences are now apart, as Lookupper keeps lists.
 - 2026-10-22 (Claude, `tests`): Korean words are found as Lookupper finds them, with Kiwi 0.23.2 and its base model, loaded at run time with Lookupper's options (`segment/kiwi.rs`). mecab-ko-dic stays only for platforms Kiwi has no build for.
 - 2026-10-22 (Claude, `tests`): Japanese words are found as Lookupper finds them (`segment/sudachidict.rs`). The analyzer is sudachi.rs 0.6.11 in mode C, with the default plugins minus IgnoreYomigana, over the same SudachiDict core 20260723 `system.dic`. Lemmas use the dictionary form. It replaces lindera-sudachidict.
 - 2026-10-22 (Claude, `tests`): a word the recognizer read in one piece is split at a wide blank gap in its ink, as Lookupper's `0x140950d00` does (`ink::word_cuts`, `split_at_ink_gaps` in paddle.rs).

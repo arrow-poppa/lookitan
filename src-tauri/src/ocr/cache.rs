@@ -120,6 +120,7 @@ mod tests {
             ink_y: None,
             flow: Default::default(),
             tilt: None,
+            look: Default::default(),
         }
     }
 

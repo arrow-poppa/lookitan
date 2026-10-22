@@ -138,12 +138,13 @@ fn span_x(line: &OcrLine, start: usize, end: usize) -> (f32, f32) {
 /// of unspaced-script characters (CJK, Thai) form one rectangle, and a click inside it still picks
 /// the longest dictionary match from the click point.
 pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> {
+    let para = crate::layout::paragraphs(lines);
     let lines: Vec<OcrLine> = lines.iter().map(upright).collect();
     let lines = &lines[..];
-    let analyzed = seg.map(|s| analyzed_spans(lines, s)).unwrap_or_default();
+    let analyzed = seg.map(|s| analyzed_spans(lines, &para, s)).unwrap_or_default();
     let mut out: Vec<WordBox> = Vec::new();
     for (li, line) in lines.iter().enumerate() {
-        if noise_line(lines, li) {
+        if noise_line(lines, &para, li) {
             continue;
         }
         let chars = &line.chars;
@@ -344,11 +345,11 @@ fn is_noise(lines: &[OcrLine], order: &[usize]) -> bool {
 }
 
 /// Whether line `idx` is in a noise paragraph. A line with two letters or a digit never is.
-fn noise_line(lines: &[OcrLine], idx: usize) -> bool {
+fn noise_line(lines: &[OcrLine], para: &[usize], idx: usize) -> bool {
     let line = &lines[idx].chars;
     line.iter().filter(|c| c.ch.is_alphabetic()).nth(1).is_none()
         && !line.iter().any(|c| c.ch.is_numeric())
-        && is_noise(lines, &paragraph(lines, idx))
+        && is_noise(lines, &paragraph(lines, para, idx))
 }
 
 /// Whether the analyzer reads this line.
@@ -358,13 +359,13 @@ fn analyzed_line(line: &OcrLine, seg: &dyn Segment) -> bool {
 
 /// The words of every line the analyzer reads, as character ranges. Like Lookupper, each paragraph
 /// is analyzed as one text, so a word broken across two lines is one word with a piece on each.
-fn analyzed_spans(lines: &[OcrLine], seg: &dyn Segment) -> Vec<Option<Vec<(usize, usize)>>> {
+fn analyzed_spans(lines: &[OcrLine], para: &[usize], seg: &dyn Segment) -> Vec<Option<Vec<(usize, usize)>>> {
     let mut out: Vec<Option<Vec<(usize, usize)>>> = vec![None; lines.len()];
     for i in 0..lines.len() {
         if out[i].is_some() || !analyzed_line(&lines[i], seg) {
             continue;
         }
-        let (text, pieces) = join(lines, &paragraph(lines, i));
+        let (text, pieces) = join(lines, &paragraph(lines, para, i));
         let words = seg.words(&text.iter().collect::<String>());
         for p in &pieces {
             if out[p.line].is_some() || !analyzed_line(&lines[p.line], seg) {
@@ -390,9 +391,9 @@ const MAX_RUN: usize = 16;
 
 /// The analyzed word holding character `ci` of line `idx`: its paragraph is analyzed whole, so the
 /// word may start before the pointer, or on the line above.
-fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) -> Option<Pick> {
+fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: &dyn Segment) -> Option<Pick> {
     let line = &lines[idx];
-    let (text, pieces) = join(lines, &paragraph(lines, idx));
+    let (text, pieces) = join(lines, &paragraph(lines, para, idx));
     let p = pieces.iter().find(|p| p.line == idx)?;
     if ci < p.first || ci >= p.first + p.len {
         return None;
@@ -409,7 +410,7 @@ fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) ->
             candidates.push(c);
         }
     }
-    let Context { sentence, sentence_lines, context, context_at } = context_of(lines, idx, start..end);
+    let Context { sentence, sentence_lines, context, context_at } = context_of(lines, para, idx, start..end);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
     Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false, angle: 0.0 })
@@ -417,6 +418,7 @@ fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) ->
 
 /// The word under the pointer, found through `seg` when it reads that word's script.
 pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> Option<Pick> {
+    let para = crate::layout::paragraphs(lines);
     let lines: Vec<OcrLine> = lines.iter().map(upright).collect();
     let near = |l: &OcrLine| {
         let (x, y) = upright_point(l, px, py);
@@ -430,7 +432,7 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
         .map(|(i, _)| i)?;
     let (flow, tilt) = (lines[line_idx].flow, lines[line_idx].tilt);
     let (px, py) = upright_point(&lines[line_idx], px, py);
-    let mut pick = pick_upright(&lines, line_idx, px, py, seg)?;
+    let mut pick = pick_upright(&lines, &para, line_idx, px, py, seg)?;
     (pick.x0, pick.y0, pick.x1, pick.y1) = on_screen(flow, (pick.x0, pick.y0, pick.x1, pick.y1));
     if let Some(t) = tilt {
         (pick.x0, pick.y0, pick.x1, pick.y1) = turned_on_screen(&t, (pick.x0, pick.y0, pick.x1, pick.y1));
@@ -441,9 +443,9 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
 }
 
 /// The word under the pointer `px, py` on line `line_idx`, all in the frame of `upright`.
-fn pick_upright(lines: &[OcrLine], line_idx: usize, px: f32, py: f32, seg: Option<&dyn Segment>) -> Option<Pick> {
+fn pick_upright(lines: &[OcrLine], para: &[usize], line_idx: usize, px: f32, py: f32, seg: Option<&dyn Segment>) -> Option<Pick> {
     let line = &lines[line_idx];
-    if dist(line, px, py) > (line.y1 - line.y0).max(12.0) * 1.5 || noise_line(lines, line_idx) {
+    if dist(line, px, py) > (line.y1 - line.y0).max(12.0) * 1.5 || noise_line(lines, para, line_idx) {
         return None;
     }
 
@@ -479,7 +481,7 @@ fn pick_upright(lines: &[OcrLine], line_idx: usize, px: f32, py: f32, seg: Optio
     }
 
     if let Some(seg) = seg.filter(|s| s.handles(chars[ci].ch)) {
-        if let Some(pick) = pick_analyzed(lines, line_idx, ci, seg) {
+        if let Some(pick) = pick_analyzed(lines, para, line_idx, ci, seg) {
             return Some(pick);
         }
     }
@@ -521,7 +523,7 @@ fn pick_upright(lines: &[OcrLine], line_idx: usize, px: f32, py: f32, seg: Optio
     // For unspaced scripts the run past the pointer is only a guess; the pointer character
     // is enough to find the sentence.
     let span = if unspaced { ci..ci + 1 } else { start..end };
-    let Context { sentence, sentence_lines, context, context_at } = context_of(lines, line_idx, span);
+    let Context { sentence, sentence_lines, context, context_at } = context_of(lines, para, line_idx, span);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
     Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false, angle: 0.0 })
@@ -535,19 +537,12 @@ fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
 }
 
 // Like Lookupper, the context of a word is its paragraph, and its sentence is cut from it at the
-// sentence marks (see sentence.rs). Paragraphs are grown from the pointer line. The AI gets the
+// sentence marks (see sentence.rs). Paragraphs are Lookupper's (layout.rs). The AI gets the
 // paragraph; the context translation and Anki get the sentence.
 
-/// Vertical gap between two lines of one paragraph, in line heights.
+/// How far above and below the pointer's row the sentence of text without sentence marks reaches,
+/// in line heights.
 const MAX_LINE_GAP: f32 = 1.0;
-/// Height ratio above which two lines are different text (a title over its body).
-const MAX_HEIGHT_RATIO: f32 = 1.6;
-/// Lines whose turns differ by more than this (radians, 2 degrees) are not one paragraph.
-const MAX_TILT_DIFFERENCE: f32 = 0.035;
-/// Horizontal gap between two pieces of one row (a line the OCR split), in line heights.
-const MAX_ROW_GAP: f32 = 1.5;
-/// Bounds the paragraph search on a full screen of text.
-const MAX_PARAGRAPH_LINES: usize = 60;
 /// Longest sentence kept whole. Longer text without sentence marks (menus, a wall of
 /// unpunctuated text) falls back to the pointer line and the lines directly around it.
 const MAX_SENTENCE_CHARS: usize = 400;
@@ -562,49 +557,13 @@ fn same_row(a: &OcrLine, b: &OcrLine) -> bool {
     a.y1.min(b.y1) - a.y0.max(b.y0) >= 0.5 * height(a).min(height(b))
 }
 
-/// Whether `b` continues the paragraph of `a`: the line right above or below it in the same
-/// column, or another piece of the same row, in a similar text size.
-fn joins(a: &OcrLine, b: &OcrLine) -> bool {
-    // Lines running different ways are in different frames (see `upright`), and different text.
-    if a.flow != b.flow {
-        return false;
-    }
-    // So are lines turned differently (a line upright on the capture has no `Tilt`).
-    let angle = |l: &OcrLine| l.tilt.map_or(0.0, |t| t.angle);
-    if (angle(a) - angle(b)).abs() > MAX_TILT_DIFFERENCE {
-        return false;
-    }
-    let (ha, hb) = (height(a), height(b));
-    if ha.max(hb) > MAX_HEIGHT_RATIO * ha.min(hb) {
-        return false;
-    }
-    let h = (ha + hb) / 2.0;
-    if same_row(a, b) {
-        return a.x0.max(b.x0) - a.x1.min(b.x1) <= MAX_ROW_GAP * h;
-    }
-    let gap = (b.y0 - a.y1).max(a.y0 - b.y1);
-    let overlap = a.x1.min(b.x1) - a.x0.max(b.x0);
-    gap <= MAX_LINE_GAP * h && overlap > 0.0
-}
-
-/// The lines of the paragraph holding `idx`, in reading order: rows top to bottom, the pieces of
-/// a row left to right, or right to left in a right-to-left paragraph (as Lookupper's
-/// `IsRtlParagraph` decides).
-fn paragraph(lines: &[OcrLine], idx: usize) -> Vec<usize> {
-    let mut members = vec![idx];
-    let mut seen = vec![false; lines.len()];
-    seen[idx] = true;
-    let mut k = 0;
-    while k < members.len() && members.len() < MAX_PARAGRAPH_LINES {
-        let a = &lines[members[k]];
-        for (j, b) in lines.iter().enumerate() {
-            if !seen[j] && !b.text.trim().is_empty() && joins(a, b) {
-                seen[j] = true;
-                members.push(j);
-            }
-        }
-        k += 1;
-    }
+/// The lines of the paragraph holding `idx`, Lookupper's (`para`, from `layout::paragraphs`), in
+/// reading order: rows top to bottom, the pieces of a row left to right, or right to left in a
+/// right-to-left paragraph (as Lookupper's `IsRtlParagraph` decides).
+fn paragraph(lines: &[OcrLine], para: &[usize], idx: usize) -> Vec<usize> {
+    let mut members: Vec<usize> = (0..lines.len())
+        .filter(|&j| j == idx || (para[j] == para[idx] && !lines[j].text.trim().is_empty()))
+        .collect();
     members.sort_by(|&a, &b| lines[a].y0.total_cmp(&lines[b].y0));
     let rtl = is_rtl_text(members.iter().flat_map(|&m| lines[m].text.chars()));
     let mut rows: Vec<Vec<usize>> = Vec::new();
@@ -681,8 +640,8 @@ struct Context {
 }
 
 /// The sentence and the paragraph holding characters `span` of line `idx`.
-fn context_of(lines: &[OcrLine], idx: usize, span: std::ops::Range<usize>) -> Context {
-    let order = paragraph(lines, idx);
+fn context_of(lines: &[OcrLine], para: &[usize], idx: usize, span: std::ops::Range<usize>) -> Context {
+    let order = paragraph(lines, para, idx);
     let (text, pieces) = join(lines, &order);
     let Some(p) = pieces.iter().find(|p| p.line == idx) else {
         let line = lines[idx].text.trim().to_string();
@@ -766,7 +725,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x0 + i as f32 * 10.0, x1: x0 + i as f32 * 10.0 + 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across, tilt: None }
+        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across, tilt: None, look: Default::default() }
     }
 
     #[test]
@@ -863,8 +822,9 @@ mod tests {
 
     #[test]
     fn a_long_paragraph_keeps_the_whole_sentences_nearest_the_word() {
-        let lines: Vec<_> = (0..60).map(|i| line(&format!("Line {i:02} ends here with a few more words."), 100.0, 100.0 + i as f32 * 25.0)).collect();
-        let p = pick(&lines, 105.0, 100.0 + 30.0 * 25.0 + 10.0, None).unwrap();
+        // Prose: each line goes on with the sentence of the line above.
+        let lines: Vec<_> = (0..60).map(|i| line(&format!("with a few more words. Line {i:02} ends here"), 100.0, 100.0 + i as f32 * 25.0)).collect();
+        let p = pick(&lines, 335.0, 100.0 + 30.0 * 25.0 + 10.0, None).unwrap();
         assert_eq!(p.sentence, "Line 30 ends here with a few more words.");
         assert!(p.context.chars().count() <= super::MAX_CONTEXT_CHARS);
         assert!(p.context.starts_with("Line ") && p.context.ends_with("more words."));
@@ -933,7 +893,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x1 - (i + 1) as f32 * 10.0, x1: x1 - i as f32 * 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across, tilt: None }
+        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across, tilt: None, look: Default::default() }
     }
 
     #[test]
@@ -960,7 +920,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: y0 + i as f32 * 20.0, x1: y0 + (i + 1) as f32 * 20.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0, x1: x0 + 20.0, y1: y0 + n as f32 * 20.0, chars, ink_y: None, flow: Flow::Down, tilt: None }
+        OcrLine { text: text.into(), x0, y0, x1: x0 + 20.0, y1: y0 + n as f32 * 20.0, chars, ink_y: None, flow: Flow::Down, tilt: None, look: Default::default() }
     }
 
     #[test]
@@ -1010,6 +970,7 @@ mod tests {
             ink_y: None,
             flow: Flow::Across,
             tilt: Some(tilt),
+            look: Default::default(),
         }
     }
 
@@ -1056,7 +1017,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: bottom - (i + 1) as f32 * 20.0, x1: bottom - i as f32 * 20.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0: bottom - n as f32 * 20.0, x1: x0 + 20.0, y1: bottom, chars, ink_y: None, flow: Flow::Up, tilt: None }
+        OcrLine { text: text.into(), x0, y0: bottom - n as f32 * 20.0, x1: x0 + 20.0, y1: bottom, chars, ink_y: None, flow: Flow::Up, tilt: None, look: Default::default() }
     }
 
     #[test]

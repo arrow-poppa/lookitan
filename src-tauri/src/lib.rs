@@ -10,6 +10,7 @@ mod block;
 mod cards;
 mod dict;
 mod dictionaries;
+mod layout;
 mod mdict;
 mod ocr;
 mod platform;
@@ -635,11 +636,21 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                     p.recognize_boxes_batched(&image, &chunk)
                 };
                 let state = app.state::<AppState>();
-                {
+                let mut all = {
                     let mut guard = state.recognition.lock();
                     match guard.as_mut() {
-                        Some(r) if r.id == id => r.lines.extend(more),
+                        Some(r) if r.id == id => {
+                            r.lines.extend(more);
+                            r.lines.clone()
+                        }
                         _ => return,
+                    }
+                };
+                // The paragraphs read every line's look, measured again over all of them.
+                layout::look(&image, &mut all);
+                if let Some(r) = state.recognition.lock().as_mut().filter(|r| r.id == id && r.lines.len() == all.len()) {
+                    for (l, a) in r.lines.iter_mut().zip(&all) {
+                        l.look = a.look;
                     }
                 }
                 if !deferred { emit_overlay(&app, id, None, false); }
@@ -685,7 +696,10 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     let mut notice = None;
     if kind == OcrEngineKind::Lens {
         match cached_lens(state, image, key, settings) {
-            Ok(lines) => return Ok(OcrPass { lines, engine: "Google Lens".into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None }),
+            Ok(mut lines) => {
+                layout::look(image, &mut lines);
+                return Ok(OcrPass { lines, engine: "Google Lens".into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None });
+            }
             Err(e) => notice = Some(format!("O Google Lens falhou e o OCR local (PP-OCRv6) leu no lugar: {e:#}")),
         }
     }
@@ -716,6 +730,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         lines = cached_recognize(state, &p, image, key, &boxes, true);
         block = None;
     }
+    layout::look(image, &mut lines);
     let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
     let engine = format!("PP-OCRv6 {} · {gpu}", p.det_model());
     Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key, block })

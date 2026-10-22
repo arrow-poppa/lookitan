@@ -325,7 +325,7 @@ fn to_lines(resp: &pb::ServerResponse, w: f32, h: f32) -> Vec<OcrLine> {
             }
             let Some((x0, y0, x1, y1)) = rect(&line.geometry, w, h) else { continue };
             if !text.trim().is_empty() {
-                out.push(OcrLine { text, x0, y0, x1, y1, chars, ink_y: None, flow, tilt: None });
+                out.push(OcrLine { text, x0, y0, x1, y1, chars, ink_y: None, flow, tilt: None, look: Default::default() });
             }
         }
     }
@@ -359,7 +359,7 @@ mod tests {
                 text.push(' ');
             }
         }
-        OcrLine { text, x0: words[0].1, y0: 98.0, x1: words.last().unwrap().2, y1: 122.0, chars, ink_y: None, flow: Flow::Across, tilt: None }
+        OcrLine { text, x0: words[0].1, y0: 98.0, x1: words.last().unwrap().2, y1: 122.0, chars, ink_y: None, flow: Flow::Across, tilt: None, look: Default::default() }
     }
 
     #[test]

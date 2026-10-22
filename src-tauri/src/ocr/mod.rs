@@ -36,6 +36,10 @@ pub struct OcrLine {
     /// For a turned line (quad.rs), its frame: there its characters and ink are given, while
     /// `x0..y1` stay the box around it on the capture.
     pub tilt: Option<Tilt>,
+    /// Its ink's colour and height and the frame around it on the capture, for the paragraphs
+    /// (`layout::look`).
+    #[serde(skip)]
+    pub look: crate::layout::Look,
 }
 
 /// A turned line's frame: the capture turned by `-angle` (radians) about its origin, where the
