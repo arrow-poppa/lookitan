@@ -206,6 +206,23 @@ mod tests {
     }
 
     #[test]
+    fn a_gap_wider_than_the_line_s_own_spacing_splits_words() {
+        let text = |d: Vec<(char, usize)>| split_wide_gaps(d).into_iter().map(|(c, _)| c).collect::<String>();
+        // "ArquivoEditar" with letters 3 steps apart and 20 steps between the two labels.
+        let mut d: Vec<(char, usize)> = "Arquivo".chars().enumerate().map(|(i, c)| (c, 3 * i)).collect();
+        d.extend("Editar".chars().enumerate().map(|(i, c)| (c, 38 + 3 * i)));
+        assert_eq!(text(d.clone()), "Arquivo Editar");
+        let space = split_wide_gaps(d).into_iter().find(|&(c, _)| c == ' ').unwrap();
+        assert_eq!(space.1, (18 + 38) / 2, "the space sits in the middle of the gap");
+        // Gaps up to 2.5 times the median, and never more than 5 steps, stay one word.
+        assert_eq!(text("abcdef".chars().enumerate().map(|(i, c)| (c, 4 * i + if i > 3 { 6 } else { 0 })).collect()), "abcdef");
+        assert_eq!(text(vec![('a', 0), ('b', 1), ('c', 2), ('d', 7)]), "abcd", "a gap of 5 is not over the floor");
+        assert_eq!(text(vec![('a', 0), ('b', 1), ('c', 2), ('d', 8)]), "abc d");
+        // A space the recognizer read is kept, and none is added next to it.
+        assert_eq!(text(vec![('a', 0), (' ', 20), ('b', 40)]), "a b");
+    }
+
+    #[test]
     fn only_a_turned_kernel_gets_a_turned_rectangle() {
         let upright: Vec<(usize, usize)> = (10..40).flat_map(|x| (5..9).map(move |y| (x, y))).collect();
         assert!(turned_kernel(&upright, 5, 8).is_none(), "an upright line keeps its plain box");
@@ -277,6 +294,37 @@ const REC_HEIGHT: u32 = 48;
 const REC_BATCH_MAX: usize = 16;
 /// Upper bound on lines times padded width in one batch, which bounds GPU memory per run.
 const REC_BATCH_COLUMNS: u32 = 12_000;
+
+/// A gap between two characters wider than this many times the line's median gap (in recognizer
+/// steps), within `WORD_GAP_MIN..=WORD_GAP_MAX` steps, splits words, as in Lookupper's recognizer.
+const WORD_GAP_FACTOR: f64 = 2.5;
+const WORD_GAP_MIN: usize = 5;
+const WORD_GAP_MAX: usize = 20;
+/// The split for a line of fewer than two characters (no gap to measure).
+const WORD_GAP_DEFAULT: usize = 8;
+
+/// Puts a space where the recognizer saw a wide gap with none, as Lookupper's recognizer splits
+/// its words (REA: `0x14094c7a0`): two labels or table cells in one detected box are two words,
+/// not one ("ArquivoEditar"). `decoded` holds each character with its recognizer step.
+fn split_wide_gaps(decoded: Vec<(char, usize)>) -> Vec<(char, usize)> {
+    let mut gaps: Vec<usize> = decoded.windows(2).map(|w| w[1].1 - w[0].1).collect();
+    gaps.sort_unstable();
+    let limit = if gaps.is_empty() {
+        WORD_GAP_DEFAULT
+    } else {
+        ((gaps[gaps.len() / 2] as f64 * WORD_GAP_FACTOR) as usize).clamp(WORD_GAP_MIN, WORD_GAP_MAX)
+    };
+    let mut out: Vec<(char, usize)> = Vec::with_capacity(decoded.len());
+    for (c, t) in decoded {
+        if let Some(&(prev, at)) = out.last() {
+            if !prev.is_whitespace() && !c.is_whitespace() && t - at > limit {
+                out.push((' ', (at + t) / 2));
+            }
+        }
+        out.push((c, t));
+    }
+    out
+}
 
 /// Width of a crop once resized to the recognizer's input height.
 fn rec_width(cw: u32, ch: u32) -> u32 {
@@ -1123,6 +1171,7 @@ impl PaddleOcr {
             }
             prev = best;
         }
+        let decoded = split_wide_gaps(decoded);
         if decoded.iter().all(|(c, _)| c.is_whitespace()) {
             return None;
         }
