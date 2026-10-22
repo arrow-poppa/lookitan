@@ -226,19 +226,16 @@ mod tests {
     }
 
     #[test]
-    fn a_short_vertical_box_is_also_read_upright_and_bottom_to_top_only_when_needed() {
-        let short = TextBox { x0: 0.0, y0: 0.0, x1: 10.0, y1: 25.0 };
-        assert_eq!(first_turns(&short), [Turn::Upright, Turn::Left], "an \"I\" alone may stand in such a box");
+    fn a_short_vertical_box_is_a_column_and_is_read_bottom_to_top_only_when_needed() {
+        // 期許。 in a 50 x 94 box: read upright, the squeezed column gave only 期, as sure as 期許.
+        let short = TextBox { x0: 0.0, y0: 0.0, x1: 50.0, y1: 94.0 };
+        assert_eq!(first_turns(&short), [Turn::Left], "a short column is read on its side, as in Lookupper");
         let tall = TextBox { x0: 0.0, y0: 0.0, x1: 20.0, y1: 100.0 };
         assert!(!needs_right(&tall, Some(0.95)), "read well top to bottom: no second reading");
         assert!(needs_right(&tall, Some(0.4)) && needs_right(&tall, None));
         assert!(!needs_right(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 20.0 }, None), "never a horizontal box");
-        // A turned reading must beat an upright one by a margin.
-        assert!(!better((Turn::Left, 0.93), Some((Turn::Upright, 0.9))));
-        assert!(better((Turn::Left, 0.99), Some((Turn::Upright, 0.9))));
-        assert!(better((Turn::Upright, 0.88), Some((Turn::Left, 0.9))));
-        assert!(better((Turn::Right, 0.9), Some((Turn::Left, 0.5))));
-        assert!(!better((Turn::Right, 0.5), Some((Turn::Left, 0.5))), "a tie keeps top to bottom");
+        assert!(better(0.9, Some(0.5)));
+        assert!(!better(0.5, Some(0.5)), "a tie keeps top to bottom");
     }
 }
 
@@ -310,23 +307,17 @@ enum Turn {
 
 /// A vertical box under this many times as tall as wide holds one or two characters; it may be a
 /// narrow letter standing alone ("I", "1", "!"), so it is also read upright.
-const SHORT_VERTICAL: f32 = 3.0;
 
 /// Below this mean confidence, a vertical box read top to bottom is also read bottom to top.
 const TURN_CONFIDENT: f32 = 0.85;
 
-/// How much more confident a turned reading of a short box must be than its upright one.
-const UPRIGHT_MARGIN: f32 = 0.05;
-
 /// The turns a box is read in first: upright for a horizontal box; top to bottom for a vertical
-/// one, and also upright when it is short. `Turn::Right` comes later, only when needed
+/// one, however short, as in Lookupper. `Turn::Right` comes later, only when needed
 /// (`needs_right`).
 fn first_turns(b: &TextBox) -> &'static [Turn] {
     let (w, h) = ((b.x1 - b.x0).max(1.0), (b.y1 - b.y0).max(1.0));
     if !is_vertical_box(w, h) {
         &[Turn::Upright]
-    } else if h < SHORT_VERTICAL * w {
-        &[Turn::Upright, Turn::Left]
     } else {
         &[Turn::Left]
     }
@@ -337,23 +328,20 @@ fn needs_right(b: &TextBox, best: Option<f32>) -> bool {
     is_vertical_box(b.x1 - b.x0, b.y1 - b.y0) && best.is_none_or(|score| score < TURN_CONFIDENT)
 }
 
-/// Whether reading `new` beats the best so far.
-fn better(new: (Turn, f32), best: Option<(Turn, f32)>) -> bool {
-    let Some((turn, score)) = best else { return true };
-    let margin = |t: Turn| if t == Turn::Upright { UPRIGHT_MARGIN } else { 0.0 };
-    new.1 + margin(new.0) > score + margin(turn)
+/// Whether a reading scoring `new` beats the best so far.
+fn better(new: f32, best: Option<f32>) -> bool {
+    best.is_none_or(|score| new > score)
 }
 
 /// A box's line as read in one turn, with the mean confidence of its characters.
 struct Reading {
     line: OcrLine,
-    turn: Turn,
     score: f32,
 }
 
 /// Keeps `new` in `best` if it is the better reading of its box.
 fn keep(best: &mut Option<Reading>, new: Reading) {
-    if better((new.turn, new.score), best.as_ref().map(|r| (r.turn, r.score))) {
+    if better(new.score, best.as_ref().map(|r| r.score)) {
         *best = Some(new);
     }
 }
@@ -1072,6 +1060,6 @@ impl PaddleOcr {
             Turn::Right => Flow::Up,
         };
         let line = OcrLine { text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, chars, ink_y, flow };
-        Some(Reading { line, turn: crop.turn, score: sure / read.max(1) as f32 })
+        Some(Reading { line, score: sure / read.max(1) as f32 })
     }
 }

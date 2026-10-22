@@ -128,7 +128,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Lookitan:
     - `paddle.rs` `rec_crop` turns a vertical crop a quarter left (`Turn::Left`, `rotate270`), so the top of the column is at the left. `decode_line` maps the CTC steps down the column, so `OcrChar.x0..x1` are y spans on a vertical line, and `ink_y` holds its ink columns.
     - Lookitan's own additions, with no extra model:
-      - A vertical box under 3 × as tall as wide (one or two characters, maybe an "I" alone) is also read upright. A turned reading must beat the upright one by 0.05 mean confidence.
+      - A vertical box is always read as a column, however short, as in Lookupper. Reading short ones upright too (for an "I" alone) was tried and removed: upright, the squeezed 期許。 read 期 as surely as the column read 期許, and won the tie.
       - When the top-to-bottom reading scores under 0.85, the box is also read turned right (`Turn::Right`, `Flow::Up`, bottom to top, as on Portuguese book spines and chart axes).
       - Horizontal boxes and well-read columns cost nothing extra.
     - Lens spreads a vertical paragraph's letters down each word.
@@ -267,6 +267,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request short vertical boxes are read only as columns again, as in Lookupper: read upright too, the 50 × 94 box of 期許。 gave 期 (score 1.00, as the column's 期許) and the upright reading won the tie, so 許 was lost. The bottom-to-top retry for badly read columns stays.
 - 2026-10-21 (Claude, `tests`): at the user's request Korean components show the hanja of each Sino-Korean syllable, and the reading and components instructions are editable prompts ("Prompt da leitura", "Prompt dos componentes") whose variables follow the OCR language.
 - 2026-10-21 (Claude, `tests`): at the user's request the AI word card has synonyms (every language), the reading in pinyin or kana (Chinese and Japanese only) and "Componentes" (any language, switch `ai.cardComponents`), like the Components of Lookupper's Looktionary, in the pop-up, saved cards and Anki (see "AI word card fields"). The user's saved card prompt (the old default) is migrated once.
 - 2026-10-21 (Claude, `tests`): at the user's request the automatic capture's block is exactly Lookupper's (REA: pointer test `0x140950940`, clustering `0x14094b8c0`, constants 0.2, 1.6, 0.7, 0.5 at `0x141cd42f0`–`0x141cd4308`). Before, block.rs measured every box by its height, so a Chinese column 427 px long put the pointer "on" it 213 px away and joined columns 640 px apart: a pointer on the grey beside a picture of vertical text outlined a block across half the screen instead of reading the whole screen.
