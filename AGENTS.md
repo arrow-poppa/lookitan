@@ -59,7 +59,7 @@ src-tauri/src/
   ocr/paddle.rs  PP-OCRv6 det+rec through ONNX Runtime (DirectML on Windows, WebGPU on Linux, CPU fallback)
   ocr/lens.rs    optional Google Lens cloud OCR (protobuf to lensfrontend-pa.googleapis.com/v1/crupload)
   ocr/cache.rs   per-frame cache of boxes and recognized lines
-  segment/       words of Japanese, Chinese and Korean text (lindera; its dictionaries are downloaded on first use); words.rs picks with it
+  segment/       words of Japanese, Chinese and Korean text (Sudachi, jieba-rs, lindera; dictionaries downloaded on first use); words.rs picks with it
   platform/      cursor, capture and foreground app; kwin.rs is the KDE Wayland relay and ScreenShot2
   protocol.rs    `lkt:` URI scheme (/e entry HTML, /d dictionary resource, /c capture frame, /m saved media)
   cards.rs       saved words (words.json plus media/)
@@ -154,7 +154,13 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
     - Also in Japanese, a prefix takes the next morpheme, and a number its 助数詞 counter. Particles, auxiliaries alone and symbols are their own words. The lemmas are, in order: the する compound, the prefix + head, the head's dictionary form, then the surface.
     - The Korean chunker is `0x1401a1540`, with its attach rule at `0x1401a17e0` and lemmas at `0x1401a1b00`. Particles and XSN go on a nominal, endings on a verbal, XSV/XSA/VCP on a nominal, a bound noun on a number, and a VX after an EC, never across a space. The lemma is the stem + 다, the noun before 이다/아니다, or the noun (also without 들).
   - Lookitan:
-    - lindera 6.2.0 (`=6.2.0` in Cargo.toml) reads its release's prebuilt dictionaries: `lindera-sudachidict` (126 MB zip, 590 MB unpacked, memory-mapped) and `lindera-ko-dic` (20 MB; the Sejong tags Kiwi uses).
+    - Korean: lindera 6.2.0 (`=6.2.0` in Cargo.toml) reads its release's prebuilt `lindera-ko-dic` (20 MB; the Sejong tags Kiwi uses).
+    - Japanese (`segment/sudachidict.rs`, since 2026-10-22) is Lookupper's:
+      - The analyzer is sudachi.rs, pinned by git tag `v0.6.11`. 0.7 reads only the newer dictionary format.
+      - It runs in split mode C, with Sudachi's default plugins minus IgnoreYomigana, as Lookupper has them.
+      - The dictionary is SudachiDict core 20260723. Its `system.dic` (217,466,039 bytes) is the same one Lookupper downloads. It comes from the GitHub release's wheel (72 MB, pinned), unpacked into `segmenters/sudachidict-core-20260723/` with `char.def` (pinned, from sudachi.rs) and our `sudachi.json`.
+      - Morphemes carry surface, the 6 part-of-speech fields, reading, normalized form and dictionary form. The lemma is the head's dictionary form, as Lookupper's (いました → いる).
+      - The old `lindera-sudachidict-6.2.0` folder is deleted.
     - Chinese (`segment/chinese.rs`, since 2026-10-22) is Lookupper's:
       - The algorithm is jieba-rs 0.11 (`=0.11.0`, no default dictionary): `cut` with the HMM.
       - The dictionary is merged once into `<local data>/segmenters/jieba-cedict-1/dict.txt`. It is jieba's `dict.txt.big`, pinned by commit and SHA-256, plus every CC-CEDICT headword it lacks, traditional and simplified, at frequency 1.
@@ -165,10 +171,11 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
     - `warm_segmenter` runs at start-up and on a language change. Its progress shows in Configurações › OCR › Estado do motor (`EngineStatus.segmenter`). Until it is ready, and for other languages, the old longest-match path is used.
     - The rules in japanese.rs and korean.rs are Lookitan's own, written to Lookupper's behavior.
     - Candidates: the lemmas, the word as written, then (for unspaced scripts) its prefixes, longest first. The Yomitan rules in morphology.rs still expand each of them.
-    - Differences from Sudachi:
-      - lindera's SudachiDict has a normalized form but no dictionary form, so only conjugating heads take a lemma. For the others it would spell この as 此の.
-      - It splits digits, which are joined again.
-      - It gives counters such as 人 as 接尾辞-名詞的-一般, so 12 and 人 stay apart, as they would in Lookupper.
+    - With lindera's SudachiDict, used before 2026-10-22:
+      - there was no dictionary form, so lemmas came from the normalized form (居る for いる);
+      - digits were split apart;
+      - there were no Sudachi plugins.
+    - SudachiDict gives counters such as 人 as 接尾辞-名詞的-一般, so 12 and 人 stay apart, as in Lookupper.
     - Lookupper's analyzers, in detail (REA on 2026-10-21):
       - Chinese is its own jieba code: `jieba.cut` with HMM (`0x1401adfc0`, DAG `0x140271b60`, max log-frequency route). Its `dict.txt` is jieba's `dict.txt.big` unchanged, plus the 58,837 CC-CEDICT words missing from it at frequency 1. Its `hmm.txt` is jieba's `finalseg` tables.
       - lindera-jieba, used before 2026-10-22, had only `dict.txt.big`'s 584,429 words, with trained costs and no HMM. It split words Lookupper keeps, such as 緬因貓 (as 緬因/貓吧).
@@ -306,6 +313,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-22 (Claude, `tests`): Japanese words are found as Lookupper finds them (`segment/sudachidict.rs`). The analyzer is sudachi.rs 0.6.11 in mode C, with the default plugins minus IgnoreYomigana, over the same SudachiDict core 20260723 `system.dic`. Lemmas use the dictionary form. It replaces lindera-sudachidict.
 - 2026-10-22 (Claude, `tests`): a word the recognizer read in one piece is split at a wide blank gap in its ink, as Lookupper's `0x140950d00` does (`ink::word_cuts`, `split_at_ink_gaps` in paddle.rs).
 - 2026-10-22 (Claude, `tests`): at the user's request (`main` first fast-forwarded to `b02e615`), Chinese words are found as Lookupper finds them. The analyzer is jieba-rs with the HMM, and the dictionary is jieba's `dict.txt.big` plus the CC-CEDICT words it lacks at frequency 1 (`segment/chinese.rs`). It replaces lindera-jieba.
 - 2026-10-21 (Claude, `tests`): REA analysis, with no code changed. It decoded:

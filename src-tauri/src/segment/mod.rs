@@ -4,17 +4,18 @@
 //! outlines each word. Without an analyzer, words.rs falls back to the longest dictionary match from
 //! the pointer.
 //!
-//! Japanese and Korean go through lindera 6.2 (MIT) with the prebuilt dictionaries of its GitHub
-//! release, downloaded on first use like Lookupper's models and checked against pinned SHA-256s:
-//! SudachiDict (Apache-2.0) for Japanese and mecab-ko-dic (Apache-2.0) for Korean, whose Sejong
-//! tags are the ones Kiwi uses. Chinese goes through jieba-rs with Lookupper's dictionary
-//! (chinese.rs). Each dictionary keeps its NOTICE.txt. Only the recognition language's dictionary
-//! is loaded; lindera's files are memory-mapped. How morphemes form words (japanese.rs, korean.rs)
-//! is Lookitan's own code, written to match what Lookupper shows.
+//! Japanese goes through Sudachi with Lookupper's SudachiDict (sudachidict.rs), Chinese through
+//! jieba-rs with Lookupper's dictionary (chinese.rs). Korean goes through lindera 6.2 (MIT) with
+//! the prebuilt mecab-ko-dic (Apache-2.0) of its GitHub release, whose Sejong tags are the ones
+//! Kiwi uses. All are downloaded on first use, like Lookupper's models, and checked against pinned
+//! SHA-256s where the source allows it. Each dictionary keeps its NOTICE.txt. Only the recognition
+//! language's dictionary is loaded; Sudachi's and lindera's are memory-mapped. How morphemes form
+//! words (japanese.rs, korean.rs) is Lookitan's own code, written to match what Lookupper shows.
 
 mod chinese;
 mod japanese;
 mod korean;
+mod sudachidict;
 
 use std::borrow::Cow;
 use std::fs::File;
@@ -90,26 +91,36 @@ impl Lang {
         }
     }
 
-    /// lindera's dictionary; Chinese has its own (chinese.rs).
+    /// lindera's dictionary, for the languages that use one.
     fn pack(self) -> Option<&'static Pack> {
         PACKS.iter().find(|p| p.lang == self)
     }
 
     /// What Settings calls the language's dictionary.
     fn label(self) -> &'static str {
-        self.pack().map_or("jieba + CC-CEDICT", |p| p.label)
+        match self {
+            Lang::Japanese => "Sudachi",
+            Lang::Chinese => "jieba + CC-CEDICT",
+            Lang::Korean => self.pack().map_or("", |p| p.label),
+        }
     }
 
     /// About what its download weighs.
     fn bytes(self) -> u64 {
-        self.pack().map_or(chinese::BYTES, |p| p.bytes)
+        match self {
+            Lang::Japanese => sudachidict::WHEEL_BYTES,
+            Lang::Chinese => chinese::BYTES,
+            Lang::Korean => self.pack().map_or(0, |p| p.bytes),
+        }
     }
 
     /// Its folder, downloaded and unpacked first if it is not there.
     fn ensure(self, root: &Path, progress: &dyn Fn(u64)) -> Result<PathBuf> {
-        match self.pack() {
-            Some(pack) => ensure(root, pack, progress),
-            None => chinese::ensure(root, progress),
+        match (self, self.pack()) {
+            (Lang::Japanese, _) => sudachidict::ensure(root, progress),
+            (Lang::Chinese, _) => chinese::ensure(root, progress),
+            (_, Some(pack)) => ensure(root, pack, progress),
+            (_, None) => bail!("no dictionary for {self:?}"),
         }
     }
 
@@ -144,6 +155,7 @@ fn chinese_word(m: &Morpheme) -> Word {
 enum Engine {
     Lindera(lindera::segmenter::Segmenter),
     Jieba(jieba_rs::Jieba),
+    Sudachi(sudachidict::Tokenizer),
 }
 
 pub struct Analyzer {
@@ -153,11 +165,13 @@ pub struct Analyzer {
 
 impl Analyzer {
     pub fn open(lang: Lang, dir: &Path) -> Result<Self> {
-        let engine = if lang == Lang::Chinese {
-            Engine::Jieba(chinese::open(dir)?)
-        } else {
-            let dictionary = lindera::dictionary::load_fs_dictionary(dir).map_err(|e| anyhow!("{e}"))?;
-            Engine::Lindera(lindera::segmenter::Segmenter::new(lindera::mode::Mode::Normal, dictionary, None))
+        let engine = match lang {
+            Lang::Chinese => Engine::Jieba(chinese::open(dir)?),
+            Lang::Japanese => Engine::Sudachi(sudachidict::open(dir)?),
+            Lang::Korean => {
+                let dictionary = lindera::dictionary::load_fs_dictionary(dir).map_err(|e| anyhow!("{e}"))?;
+                Engine::Lindera(lindera::segmenter::Segmenter::new(lindera::mode::Mode::Normal, dictionary, None))
+            }
         };
         Ok(Self { lang, engine })
     }
@@ -171,6 +185,27 @@ impl Analyzer {
                     .cut(text, true)
                     .into_iter()
                     .map(|t| Morpheme { start: t.start, end: t.end, surface: t.word.to_string(), details: Vec::new() })
+                    .collect();
+            }
+            // Split mode C, as Lookupper's; details as japanese.rs reads them.
+            Engine::Sudachi(tokenizer) => {
+                use sudachi::analysis::{Mode, Tokenize};
+                let list = match tokenizer.tokenize(text, Mode::C, false) {
+                    Ok(list) => list,
+                    Err(e) => {
+                        log::warn!("word analysis failed: {e}");
+                        return Vec::new();
+                    }
+                };
+                return list
+                    .iter()
+                    .map(|m| {
+                        let surface = m.surface().to_string();
+                        let mut details = vec![surface.clone()];
+                        details.extend(m.part_of_speech().iter().cloned());
+                        details.extend([m.reading_form(), m.normalized_form(), m.dictionary_form()].map(str::to_string));
+                        Morpheme { start: m.begin_c(), end: m.end_c(), surface, details }
+                    })
                     .collect();
             }
         };
@@ -229,9 +264,7 @@ struct Pack {
     bytes: u64,
 }
 
-static PACKS: [Pack; 2] = [
-    Pack { lang: Lang::Japanese, name: "lindera-sudachidict", label: "SudachiDict", bytes: 131_520_470,
-        sha256: "e382909b0336f2d62a41bb1b8c74d5d0462dd547445c7baffc5d03d47aedebf7" },
+static PACKS: [Pack; 1] = [
     Pack { lang: Lang::Korean, name: "lindera-ko-dic", label: "mecab-ko-dic", bytes: 19_876_022,
         sha256: "3458c54ce21618693221ad9af2a49f547b40f0e50a7e19ca20cfa781673f3ed0" },
 ];
@@ -435,7 +468,7 @@ pub(crate) mod tests {
     /// Downloads the three dictionaries into `LOOKITAN_SEGMENTERS` (CI caches it) and reads a
     /// sentence of each language with them.
     #[test]
-    #[ignore = "downloads about 165 MB; CI runs it"]
+    #[ignore = "downloads about 105 MB; CI runs it"]
     fn real_dictionaries() {
         let root = PathBuf::from(std::env::var("LOOKITAN_SEGMENTERS").expect("LOOKITAN_SEGMENTERS is the download folder"));
         let check = |lang: Lang, text: &str, expected: &[&str]| {
@@ -445,9 +478,13 @@ pub(crate) mod tests {
             assert_eq!(show(&chars, &analyzer.words(text)), expected, "{text}");
         };
         check(Lang::Japanese, "食べさせられなかった本を読んでいる田中さんたち。",
-            &["食べさせられなかった→食べる", "本", "を·f", "読んでいる→読む", "田中さんたち→田中さん", "。·p"]);
+            &["食べさせられなかった→食べる", "本", "を·f", "読んでいる→読む", "田中さんたち→田中", "。·p"]);
         check(Lang::Japanese, "日本語を勉強しています",
             &["日本語", "を·f", "勉強しています→勉強する/勉強"]);
+        // JoinKatakanaOov joins an unknown katakana word, and the lemma is the dictionary form
+        // (いる, not the normalized 居る).
+        check(Lang::Japanese, "ネットフリックスで見た", &["ネットフリックス", "で·f", "見た→見る"]);
+        check(Lang::Japanese, "家にいましたと思った", &["家", "に·f", "いました→いる", "と·f", "思った→思う"]);
         check(Lang::Korean, "오늘은 날씨가 좋아서 친구들과 함께 산책을 했습니다.",
             &["오늘은→오늘", "날씨가→날씨", "좋아서→좋다", "친구들과→친구들/친구", "함께", "산책을→산책", "했습니다→하다", ".·p"]);
         check(Lang::Chinese, "我们在北京大学学习中文。", &["我们", "在", "北京大学", "学习", "中文", "。·p"]);
@@ -472,7 +509,7 @@ pub(crate) mod tests {
             assert!(p.sha256.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
         }
         assert!(status("en-US").is_none());
-        assert!(status("ja").unwrap().contains("SudachiDict"));
+        assert!(status("ja").unwrap().contains("Sudachi"));
         assert!(status("zh-CN").unwrap().contains("CC-CEDICT"));
     }
 }
