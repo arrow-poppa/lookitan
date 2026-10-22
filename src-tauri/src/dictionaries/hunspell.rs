@@ -140,7 +140,7 @@ mod tests {
             return;
         }
         let cases = [
-            ("bg", "книгата", "книга"), ("cs", "ženy", "žena"), ("it", "libri", "libro"), ("nl", "huizen", "huis"),
+            ("bg", "книгата", "книга"), ("cs", "ženy", "žena"), ("it", "gatti", "gatto"), ("nl", "huizen", "huis"),
             ("pl", "kotami", "kot"), ("sv", "husen", "hus"), ("tr", "evler", "ev"), ("uk", "книги", "книга"),
         ];
         let mut wrong = Vec::new();
