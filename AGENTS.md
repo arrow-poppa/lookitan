@@ -267,6 +267,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): at the user's request the IPA in the pop-up is a little bigger (14 to 16 px), and `lookupper-ocr` was merged into `tests`.
 - 2026-10-21 (Claude, `tests`): at the user's request the block under the pointer is Lookitan's own again for horizontal text (802c0da had taken Lookupper's clustering, which reads only part of a block; the user wants the whole block). Only the vertical bugs stay fixed: a column is measured by its width with its axes swapped (pointer slack and joining), so the pointer on the grey beside a picture of vertical text reads the whole screen, and neighbouring columns form the block.
 - 2026-10-21 (Claude, `tests`): at the user's request, as Lookupper (REA `0x140947790`: lines with words, summing `char.IsLetterOrDigit`, must exceed 1), a block under the pointer that reads as at most one letter or digit is not trusted: `ocr_pass` reads every box and drops the block, so the lookup goes on as off any block (`block::reads_as_text`).
 - 2026-10-21 (Claude, `tests`): at the user's request short vertical boxes are read only as columns again, as in Lookupper: read upright too, the 50 × 94 box of 期許。 gave 期 (score 1.00, as the column's 期許) and the upright reading won the tie, so 許 was lost. The bottom-to-top retry for badly read columns stays.
