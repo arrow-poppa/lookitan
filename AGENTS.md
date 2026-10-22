@@ -163,13 +163,35 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
       - lindera's SudachiDict has a normalized form but no dictionary form, so only conjugating heads take a lemma. For the others it would spell この as 此の.
       - It splits digits, which are joined again.
       - It gives counters such as 人 as 接尾辞-名詞的-一般, so 12 and 人 stay apart, as they would in Lookupper.
+    - Lookupper's analyzers, in detail (REA on 2026-10-21):
+      - Chinese is its own jieba code: `jieba.cut` with HMM (`0x1401adfc0`, DAG `0x140271b60`, max log-frequency route). Its `dict.txt` is jieba's `dict.txt.big` unchanged, plus the 58,837 CC-CEDICT words missing from it at frequency 1. Its `hmm.txt` is jieba's `finalseg` tables.
+      - lindera-jieba has only `dict.txt.big`'s 584,429 words, with trained costs and no HMM, so it can split words Lookupper keeps, such as traditional-only CEDICT words.
+      - Japanese is its own Sudachi port, mode C, with the default plugins: `CollapseProlongedSoundMarks`, `JoinNumerics`, `JoinKatakanaOovs` (min length 3), MeCab OOV and `rewrite.def`.
+      - Korean is `kiwi.dll` through its C API: `kiwi_init(model, 1 thread, 0xf)` and `kiwi_analyze_w(top_n 1, match 0x81003f)`.
+      - Rebuilt boxes (`0x14015f940`): a word on one line is the `minAreaRect` of its OCR words' corners. A word inside a larger OCR word gets that word's box.
     - CI runs `segment::tests::real_dictionaries` (`--ignored`) with the real dictionaries cached.
   - `words::paragraph` grows from the pointer line. It adds lines right above or below in the same column (gap ≤ 1 line height, height ratio ≤ 1.6) and pieces of the same row.
   - `sentence::split` applies Lookupper's rules (see the module header). Text longer than 400 characters without sentence marks falls back to the pointer row ±1.
   - `Pick.sentence_lines` frames the "sentence" screenshot (`focus_lines`).
   - `Pick.context` is the whole paragraph, as Lookupper shows and sends it to its AI. Past 1500 characters it keeps the whole sentences nearest the word's. `context_at` locates the word in it.
   - Who reads what (`aiText` in the popup): the AI word card and Explicar read `context`, and so does their `{{sentence}}` placeholder. The context translator reads only `sentence`. Anki's `{sentence}` and cloze markers follow `anki.contextMode` (Anki › "Contexto no card"): `sentence` (the default) or `paragraph`. With `paragraph`, a lookup without a paragraph falls back to the sentence. Saved words keep `context` too, so exports from the Words tab follow the option.
-  - Lookupper's own paragraph thresholds (XpressOCR's layout analyzer) are not decoded; ours are our own.
+  - Ours are our own. Lookupper's paragraphs come from XpressOCR's layout analyzer (`0x140952880`, decoded on 2026-10-21, not ported):
+    - Each line is joined to the nearest overlapping line below it, if that line is at most 2.2 line heights away.
+    - Each pair gets a score (`0x140958b50`), and the two lines are one paragraph when the score is under 1.
+    - The score adds:
+      - for the gap: +5 over 1.6 line heights, +3 over 1.1, +1.5 over 0.8;
+      - for the size ratio: +7 over 1.7, +4 over 1.45, +1.5 over 1.3;
+      - for the text colour difference: +3 over 100, +1.5 over 55;
+      - +3 for different enclosing boxes, found by Sobel edges in the image;
+      - +5 when the lower line starts with a list marker;
+      - +5 when neither line has a letter;
+      - +2 when the upper line ends with a colon.
+    - It subtracts:
+      - 4 when the upper line ends with a hyphen;
+      - 2.5 when it ends with a comma;
+      - 2.5 for an open bracket;
+      - 4 when the lower line starts in lower case.
+    - Lines also form regions, typed prose, list-like, centred, special or other. In prose, a line that ended although the next word would have fitted adds 0.5, and a natural wrap subtracts 3.
 - **Automatic capture (`captureAuto`, the default, "Automático" in Configurações › OCR › Região de captura):** as in Lookupper's pointer mode.
   - The whole monitor is captured and detected, but only the block of text under the pointer is recognized (`block::under` on the detected boxes, `Reading::Block` in `ocr_pass`). The block is the pointed line plus the lines close around it: vertical gap ≤ 0.6 line height, row pieces ≤ 1.5, height ratio ≤ 1.6, at most 40 boxes. These thresholds are our own.
   - Pointer on a word of the block: the pop-up opens, with no background pass.
@@ -185,7 +207,11 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 - **Settings files (Configurações › Aplicativo › Exportar e importar):** `src/lib/settings-file.js` writes every setting, including the `ai` and `anki` options, without any key named `apiKey` or `lensApiKey`.
   - On import, `keepSecrets` puts this computer's keys back wherever the file has none, so a plain copy of `settings.json` also imports.
   - `import_settings` (lib.rs) migrates the settings and drops MDict dictionaries whose file is not on this computer, returning their names. It keeps the dictionaries installed here that the file lacks, then applies the settings like `save_settings`. The main window then reloads.
-- **Word edges (`ocr/ink.rs`), as in Lookupper's "word edges are snapped to the ink of the line":**
+- **Word edges (`ocr/ink.rs`), as in Lookupper's "word edges are snapped to the ink of the line":** the rules below are Lookitan's own. Lookupper's own, decoded on 2026-10-21 (REA, not ported):
+  - Per line (`0x140949b60`): a line whose words are all CJK gives every character its own box, then the analyzer rejoins them. Otherwise each word is a box. Character boxes are centred on the CTC step, as wide as the mean character pitch, the full crop height; a word's box is the union of its characters'.
+  - Ink (`0x14094de10`): the background is the mode of a 64-bin grey histogram (every 2nd column, 4th row). The contrast is where the outer 5% of pixels lie; it needs at least 24. A column's ink is the count of pixels further than 0.3 × contrast from the background, over the whole crop height.
+  - Ink word split (`0x140950d00`, not for all-CJK or RTL lines, words of 4 to 64 characters): the blank run nearest the middle of each character pair is its gap. A word is cut where the gap is at least max(2.5 × the word's median gap, 0.75 × the line's median word gap, 0.15 × pitch, 0.25 × crop height), leaving pieces of 2 characters or more.
+  - Snap (`0x14094da60`): between two neighbouring boxes, the best blank run within 0.4 × crop height of their meeting point (width − 1.2 × distance) becomes the boundary. The line's ends move to its first and last ink within that reach. Boxes that still overlap meet halfway (`0x14094a980`).
   - CTC gives each character only a step centre. `ink::measure` finds the crop's ink: pixels far from the median background, in the run of rows holding the most ink.
   - `ink::spans` moves each boundary between two characters to the widest blank gap between their centres, and the line's ends to its first and last ink. Spaces fill the gap between words.
   - `OcrLine.ink_y` holds the ink rows; word boxes and the pick use them (`text_rows` in words.rs).
@@ -269,6 +295,14 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-21 (Claude, `tests`): REA analysis, with no code changed. It decoded:
+  - Lookupper's crop: `0x14094fed0`, `warpPerspective`, INTER_LINEAR, BORDER_REPLICATE, a quarter turn when h ≥ 1.5 w;
+  - its word boxes and ink split;
+  - its CJK box rebuild;
+  - its analyzers, and how its Chinese dictionary is built;
+  - its paragraph analyzer.
+
+  Lookupper feeds both models RGB, where PaddleOCR and Lookitan use BGR. A synthetic A/B on 11 colours found BGR as good or better, so it stays: 3.13% vs 3.15% CER on CJK, 0.10% vs 0.21% on Latin. Lookupper's detector also resizes bicubic, where Lookitan's is bilinear.
 - 2026-10-21 (Claude, `tests`): at the user's request the IPA in the pop-up is a little bigger (14 to 16 px), and `lookupper-ocr` was merged into `tests`.
 - 2026-10-21 (Claude, `tests`): at the user's request the block under the pointer is Lookitan's own again for horizontal text (802c0da had taken Lookupper's clustering, which reads only part of a block; the user wants the whole block). Only the vertical bugs stay fixed: a column is measured by its width with its axes swapped (pointer slack and joining), so the pointer on the grey beside a picture of vertical text reads the whole screen, and neighbouring columns form the block.
 - 2026-10-21 (Claude, `lookupper-ocr`): at the user's request a new branch from `tests` (78e6209) holds the larger Lookupper OCR ports, done there only: turned lines detected and straightened (1a), wide gaps splitting words (3), and turned word boxes in words.rs, the overlay and the pop-up (1b). Lookupper's paragraph analyzer (`0x140952880`: four feature stages, a pair score `0x140958b50` with some 20 terms, union below 1.0) is decoded only in part; not ported.
