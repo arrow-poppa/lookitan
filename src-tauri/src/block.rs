@@ -7,7 +7,7 @@
 // reads part of it. A column (see `is_vertical_box`) is measured like a row turned on its side:
 // by its width, with the columns beside it as the lines above and below.
 
-use crate::ocr::{is_vertical_box, paddle::TextBox};
+use crate::ocr::{is_vertical_box, paddle::TextBox, quad};
 
 /// Slack around a box for the pointer to count as on it, in text sizes: across the line (above
 /// and below a row) and past its ends.
@@ -24,7 +24,8 @@ const MAX_ROW_GAP: f32 = 1.5;
 const MAX_BLOCK_BOXES: usize = 40;
 
 fn is_column(b: &TextBox) -> bool {
-    is_vertical_box(b.x1 - b.x0, b.y1 - b.y0)
+    let (w, h) = b.size();
+    is_vertical_box(w, h)
 }
 
 /// A box as `(along0, across0, along1, across1)`: as it is in the frame of a row, and with its
@@ -56,30 +57,38 @@ fn joins(a: &TextBox, b: &TextBox) -> bool {
     gap <= MAX_LINE_GAP * h && overlap > 0.0
 }
 
-/// The box the pointer is on: it lies inside it, give or take the slack. Of overlapping boxes,
-/// the one whose middle across the line is closest to the pointer.
+/// How far across its line the pointer is from the middle of box `b`, when it is on the box: inside
+/// it, give or take the slack. A turned box is measured in its own frame.
+fn pointer_on(b: &TextBox, x: f32, y: f32) -> Option<f32> {
+    // The pointer's place along and across the line from its middle, the half length and half
+    // height there, and the text size.
+    let (along, across, half_along, half_across, h) = if let Some(q) = &b.quad {
+        let r = quad::rect_of(q);
+        let (u, v) = r.local([x, y]);
+        if is_vertical_box(2.0 * r.half_w, 2.0 * r.half_h) {
+            (v, u, r.half_h, r.half_w, 2.0 * r.half_w)
+        } else {
+            (u, v, r.half_w, r.half_h, 2.0 * r.half_h)
+        }
+    } else {
+        let column = is_column(b);
+        let r = frame(b, column);
+        let (px, py) = if column { (y, x) } else { (x, y) };
+        let (ha, hc) = ((r.2 - r.0) / 2.0, (r.3 - r.1) / 2.0);
+        (px - (r.0 + r.2) / 2.0, py - (r.1 + r.3) / 2.0, ha, hc, size(r))
+    };
+    let h = h.max(4.0);
+    (along.abs() <= half_along + POINTER_SLACK_ALONG * h && across.abs() <= half_across + POINTER_SLACK_ACROSS * h).then_some(across.abs())
+}
+
+/// The box the pointer is on. Of overlapping boxes, the one whose middle across the line is
+/// closest to the pointer.
 fn under_pointer(boxes: &[TextBox], x: f32, y: f32) -> Option<usize> {
-    // The pointer's place along and across a box's line.
-    let point = |b: &TextBox| if is_column(b) { (y, x) } else { (x, y) };
     boxes
         .iter()
         .enumerate()
-        .filter(|(_, b)| {
-            let r = frame(b, is_column(b));
-            let (along, across) = point(b);
-            let h = size(r);
-            along >= r.0 - POINTER_SLACK_ALONG * h
-                && along <= r.2 + POINTER_SLACK_ALONG * h
-                && across >= r.1 - POINTER_SLACK_ACROSS * h
-                && across <= r.3 + POINTER_SLACK_ACROSS * h
-        })
-        .min_by(|(_, a), (_, b)| {
-            let d = |t: &TextBox| {
-                let r = frame(t, is_column(t));
-                (point(t).1 - (r.1 + r.3) / 2.0).abs()
-            };
-            d(a).total_cmp(&d(b))
-        })
+        .filter_map(|(i, b)| pointer_on(b, x, y).map(|d| (i, d)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i)
 }
 
@@ -117,7 +126,7 @@ pub fn reads_as_text<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
 /// The rectangle around some boxes.
 pub fn bounds(boxes: &[TextBox]) -> Option<TextBox> {
     let first = *boxes.first()?;
-    Some(boxes.iter().fold(first, |r, b| TextBox { x0: r.x0.min(b.x0), y0: r.y0.min(b.y0), x1: r.x1.max(b.x1), y1: r.y1.max(b.y1) }))
+    Some(boxes.iter().fold(first, |r, b| TextBox { x0: r.x0.min(b.x0), y0: r.y0.min(b.y0), x1: r.x1.max(b.x1), y1: r.y1.max(b.y1), quad: None }))
 }
 
 #[cfg(test)]
@@ -125,7 +134,7 @@ mod tests {
     use super::*;
 
     fn b(x0: f32, y0: f32, x1: f32, y1: f32) -> TextBox {
-        TextBox { x0, y0, x1, y1 }
+        TextBox { x0, y0, x1, y1, quad: None }
     }
 
     #[test]
@@ -168,6 +177,18 @@ mod tests {
         assert_eq!(under(&boxes, 1320.0, 443.0), [0, 1], "within a fifth of the column's width");
         assert!(under(&boxes, 1317.0, 443.0).is_empty());
         assert_eq!(under(&boxes, 1340.0, 725.0), [0, 1], "and half its width past its end");
+    }
+
+    #[test]
+    fn a_turned_box_is_under_the_pointer_only_along_its_own_slant() {
+        // A line 200 long and 20 tall rising at 30 degrees from (100, 200).
+        let r = quad::Rect { center: [100.0 + 86.6, 200.0 - 50.0], u: [0.866, -0.5], half_w: 100.0, half_h: 10.0 };
+        let q = r.corners();
+        let (x0, y0, x1, y1) = quad::bounds(&q);
+        let boxes = [TextBox { x0, y0, x1, y1, quad: Some(q) }];
+        assert_eq!(under(&boxes, 186.6, 150.0), [0], "on its middle");
+        assert_eq!(under(&boxes, 186.6 - 0.5 * 13.0, 150.0 - 0.866 * 13.0), [0], "a fifth of its height past its top edge");
+        assert!(under(&boxes, x0 + 5.0, y0 + 5.0).is_empty(), "inside its bounds but off the slanted line");
     }
 
     #[test]

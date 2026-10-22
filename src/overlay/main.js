@@ -130,6 +130,9 @@ function render() {
             el.classList.add('seen');
         }
         position(el, hit, scale);
+        // A word on a turned line: its boxes turn about the hit area's centre, the drawn box with
+        // it (see WordBox::angle in words.rs).
+        if (w.angle) { el.style.transform = `rotate(${w.angle}rad)`; }
         const ink = document.createElement('div');
         ink.className = 'ink';
         position(ink, {...w, x: w.x - hit.x, y: w.y - hit.y}, scale);

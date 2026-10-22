@@ -106,6 +106,7 @@ mod tests {
             y0: 1.0,
             x1: 8.0,
             y1: 4.0,
+            quad: None,
         }
     }
     fn line() -> OcrLine {
@@ -118,6 +119,7 @@ mod tests {
             chars: vec![],
             ink_y: None,
             flow: Default::default(),
+            tilt: None,
         }
     }
 

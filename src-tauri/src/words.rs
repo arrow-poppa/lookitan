@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::ocr::{is_rtl_text, is_unspaced_script, Flow, OcrChar, OcrLine};
+use crate::ocr::{is_rtl_text, is_unspaced_script, Flow, OcrChar, OcrLine, Tilt};
 use crate::segment::Segment;
 
 #[derive(Clone, Debug, Serialize)]
@@ -31,6 +31,10 @@ pub struct Pick {
     /// The word is in a vertical line, so its box is tall.
     #[serde(skip)]
     pub vertical: bool,
+    /// For a word on a turned line (`Tilt`), how far its box is turned, in radians: `x0..y1` is
+    /// then the box upright about its centre. 0 otherwise.
+    #[serde(skip)]
+    pub angle: f32,
 }
 
 /// How far past a word's drawn box the pointer still counts as on it: a share of the box's
@@ -45,10 +49,35 @@ impl Pick {
     /// shortcut is off any word: the automatic capture then outlines the block of text, and a
     /// region capture opens the whole-screen overlay instead of a pop-up.
     pub fn is_under(&self, px: f32, py: f32) -> bool {
+        let (px, py) = unturn(self.angle, self.center(), px, py);
         let across = if self.vertical { self.x1 - self.x0 } else { self.y1 - self.y0 };
         let slack = (across * UNDER_SLACK).max(UNDER_SLACK_MIN);
         px >= self.x0 - slack && px <= self.x1 + slack && py >= self.y0 - slack && py <= self.y1 + slack
     }
+
+    fn center(&self) -> (f32, f32) {
+        ((self.x0 + self.x1) / 2.0, (self.y0 + self.y1) / 2.0)
+    }
+
+    /// The axis-aligned box around the word as it lies on the capture, turned or not: where the
+    /// pop-up is placed.
+    pub fn bounds(&self) -> (f32, f32, f32, f32) {
+        let ((cx, cy), (s, c)) = (self.center(), self.angle.sin_cos());
+        let (hw, hh) = ((self.x1 - self.x0) / 2.0, (self.y1 - self.y0) / 2.0);
+        let (ex, ey) = (c.abs() * hw + s.abs() * hh, s.abs() * hw + c.abs() * hh);
+        (cx - ex, cy - ey, cx + ex, cy + ey)
+    }
+}
+
+/// The point `px, py` turned back by `angle` about `center`: where it lies on a box turned by
+/// `angle` about its centre once the box stands upright.
+fn unturn(angle: f32, (cx, cy): (f32, f32), px: f32, py: f32) -> (f32, f32) {
+    if angle == 0.0 {
+        return (px, py);
+    }
+    let (s, c) = angle.sin_cos();
+    let (dx, dy) = (px - cx, py - cy);
+    (cx + dx * c + dy * s, cy - dx * s + dy * c)
 }
 
 /// A clickable word rectangle for the overlay, in image coordinates.
@@ -63,6 +92,10 @@ pub struct WordBox {
     /// The area that takes the pointer, `(x0, y0, x1, y1)`: the line's whole detected height,
     /// and sideways halfway to the neighbouring words, so the words of a line are easy to hit.
     pub hit: (f32, f32, f32, f32),
+    /// For a word on a turned line, how far both boxes are turned about the centre of `hit`, in
+    /// radians. `hit` is then upright about its centre, and the drawn box lies against it as it
+    /// does in the line's frame, so turning the two together puts each on the screen. 0 otherwise.
+    pub angle: f32,
 }
 
 /// How far the hit area reaches past the first and last word of a line, in line heights.
@@ -124,7 +157,7 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
             if !text.trim().is_empty() {
                 let (y0, y1) = text_rows(line);
                 let (x0, x1) = span_x(line, start, end);
-                out.push(WordBox { text, x0, y0, x1, y1, hit: (0.0, 0.0, 0.0, 0.0) });
+                out.push(WordBox { text, x0, y0, x1, y1, hit: (0.0, 0.0, 0.0, 0.0), angle: 0.0 });
             }
         }
         // Left to right on screen, whichever way the line reads.
@@ -149,8 +182,24 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
                 b.hit = on_screen(line.flow, b.hit);
             }
         }
+        if let Some(t) = line.tilt {
+            for b in &mut out[first..] {
+                let (h0, h1) = (b.hit, turned_on_screen(&t, b.hit));
+                (b.x0, b.y0, b.x1, b.y1) = (h1.0 + b.x0 - h0.0, h1.1 + b.y0 - h0.1, h1.0 + b.x1 - h0.0, h1.1 + b.y1 - h0.1);
+                b.hit = h1;
+                b.angle = t.angle;
+            }
+        }
     }
     out
+}
+
+/// A box of a turned line's frame on the capture: its centre moved there, the box itself upright
+/// about it (to be drawn turned by the frame's angle).
+fn turned_on_screen(t: &Tilt, (x0, y0, x1, y1): (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+    let (cx, cy) = t.to_capture((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (hw, hh) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
+    (cx - hw, cy - hh, cx + hw, cy + hh)
 }
 
 // A vertical line is picked as a horizontal one: `upright` turns it a quarter to lie the way it
@@ -161,17 +210,20 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
 // spans across, so paragraphs, sentences and word boxes need nothing else. Boxes found there are
 // turned back with `on_screen`.
 
-/// `line`, turned to lie horizontal if it is vertical.
+/// `line`, turned to lie horizontal if it is vertical. A turned line (`Tilt`) starts from its own
+/// frame, where its characters and ink already are.
 fn upright(line: &OcrLine) -> OcrLine {
     let mut out = line.clone();
+    let (x0, y0, x1, y1) = line.tilt.map_or((line.x0, line.y0, line.x1, line.y1), |t| t.rect);
+    (out.x0, out.y0, out.x1, out.y1) = (x0, y0, x1, y1);
     match line.flow {
         Flow::Across => {}
         Flow::Down => {
-            (out.x0, out.y0, out.x1, out.y1) = (line.y0, -line.x1, line.y1, -line.x0);
+            (out.x0, out.y0, out.x1, out.y1) = (y0, -x1, y1, -x0);
             out.ink_y = line.ink_y.map(|(a, b)| (-b, -a));
         }
         Flow::Up => {
-            (out.x0, out.y0, out.x1, out.y1) = (-line.y1, line.x0, -line.y0, line.x1);
+            (out.x0, out.y0, out.x1, out.y1) = (-y1, x0, -y0, x1);
             for c in &mut out.chars {
                 (c.x0, c.x1) = (-c.x1, -c.x0);
             }
@@ -180,9 +232,10 @@ fn upright(line: &OcrLine) -> OcrLine {
     out
 }
 
-/// A capture point in the frame of `upright` for a line running `flow`.
-fn upright_point(flow: Flow, x: f32, y: f32) -> (f32, f32) {
-    match flow {
+/// A capture point in the frame of `upright` for `line`.
+fn upright_point(line: &OcrLine, x: f32, y: f32) -> (f32, f32) {
+    let (x, y) = line.tilt.map_or((x, y), |t| t.to_frame(x, y));
+    match line.flow {
         Flow::Across => (x, y),
         Flow::Down => (y, -x),
         Flow::Up => (-y, x),
@@ -359,14 +412,14 @@ fn pick_analyzed(lines: &[OcrLine], idx: usize, ci: usize, seg: &dyn Segment) ->
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, idx, start..end);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false })
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false, angle: 0.0 })
 }
 
 /// The word under the pointer, found through `seg` when it reads that word's script.
 pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> Option<Pick> {
     let lines: Vec<OcrLine> = lines.iter().map(upright).collect();
     let near = |l: &OcrLine| {
-        let (x, y) = upright_point(l.flow, px, py);
+        let (x, y) = upright_point(l, px, py);
         dist(l, x, y)
     };
     let line_idx = lines
@@ -375,10 +428,14 @@ pub fn pick(lines: &[OcrLine], px: f32, py: f32, seg: Option<&dyn Segment>) -> O
         .filter(|(_, l)| !l.chars.is_empty())
         .min_by(|(_, a), (_, b)| near(a).total_cmp(&near(b)))
         .map(|(i, _)| i)?;
-    let flow = lines[line_idx].flow;
-    let (px, py) = upright_point(flow, px, py);
+    let (flow, tilt) = (lines[line_idx].flow, lines[line_idx].tilt);
+    let (px, py) = upright_point(&lines[line_idx], px, py);
     let mut pick = pick_upright(&lines, line_idx, px, py, seg)?;
     (pick.x0, pick.y0, pick.x1, pick.y1) = on_screen(flow, (pick.x0, pick.y0, pick.x1, pick.y1));
+    if let Some(t) = tilt {
+        (pick.x0, pick.y0, pick.x1, pick.y1) = turned_on_screen(&t, (pick.x0, pick.y0, pick.x1, pick.y1));
+        pick.angle = t.angle;
+    }
     pick.vertical = flow != Flow::Across;
     Some(pick)
 }
@@ -467,7 +524,7 @@ fn pick_upright(lines: &[OcrLine], line_idx: usize, px: f32, py: f32, seg: Optio
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, line_idx, span);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false })
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false, angle: 0.0 })
 }
 
 fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
@@ -485,6 +542,8 @@ fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
 const MAX_LINE_GAP: f32 = 1.0;
 /// Height ratio above which two lines are different text (a title over its body).
 const MAX_HEIGHT_RATIO: f32 = 1.6;
+/// Lines whose turns differ by more than this (radians, 2 degrees) are not one paragraph.
+const MAX_TILT_DIFFERENCE: f32 = 0.035;
 /// Horizontal gap between two pieces of one row (a line the OCR split), in line heights.
 const MAX_ROW_GAP: f32 = 1.5;
 /// Bounds the paragraph search on a full screen of text.
@@ -508,6 +567,11 @@ fn same_row(a: &OcrLine, b: &OcrLine) -> bool {
 fn joins(a: &OcrLine, b: &OcrLine) -> bool {
     // Lines running different ways are in different frames (see `upright`), and different text.
     if a.flow != b.flow {
+        return false;
+    }
+    // So are lines turned differently (a line upright on the capture has no `Tilt`).
+    let angle = |l: &OcrLine| l.tilt.map_or(0.0, |t| t.angle);
+    if (angle(a) - angle(b)).abs() > MAX_TILT_DIFFERENCE {
         return false;
     }
     let (ha, hb) = (height(a), height(b));
@@ -695,14 +759,14 @@ fn around(text: &[char], ranges: &[std::ops::Range<usize>], from: usize, to: usi
 #[cfg(test)]
 mod tests {
     use super::pick;
-    use crate::ocr::{Flow, OcrChar, OcrLine};
+    use crate::ocr::{Flow, OcrChar, OcrLine, Tilt};
     use crate::segment::{Kind, Segment, Word};
 
     fn line(text: &str, x0: f32, y0: f32) -> OcrLine {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x0 + i as f32 * 10.0, x1: x0 + i as f32 * 10.0 + 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across }
+        OcrLine { text: text.into(), x0, y0, x1: x0 + text.len() as f32 * 10.0, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across, tilt: None }
     }
 
     #[test]
@@ -869,7 +933,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: x1 - (i + 1) as f32 * 10.0, x1: x1 - i as f32 * 10.0 })
             .collect();
-        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across }
+        OcrLine { text: text.into(), x0: x1 - n as f32 * 10.0, y0, x1, y1: y0 + 20.0, chars, ink_y: None, flow: Flow::Across, tilt: None }
     }
 
     #[test]
@@ -896,7 +960,7 @@ mod tests {
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: y0 + i as f32 * 20.0, x1: y0 + (i + 1) as f32 * 20.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0, x1: x0 + 20.0, y1: y0 + n as f32 * 20.0, chars, ink_y: None, flow: Flow::Down }
+        OcrLine { text: text.into(), x0, y0, x1: x0 + 20.0, y1: y0 + n as f32 * 20.0, chars, ink_y: None, flow: Flow::Down, tilt: None }
     }
 
     #[test]
@@ -926,13 +990,73 @@ mod tests {
         assert_eq!(pick(&lines, 105.0, 30.0, None).unwrap().word, "Title", "a row is apart from the columns");
     }
 
+    /// "hello world" on a line turned by `angle`: 10 per character from (100, 100) in its frame.
+    fn turned(text: &str, angle: f32) -> OcrLine {
+        let n = text.chars().count() as f32;
+        let tilt = Tilt { angle, rect: (100.0, 100.0, 100.0 + 10.0 * n, 120.0) };
+        let corners = [(100.0, 100.0), (100.0 + 10.0 * n, 100.0), (100.0 + 10.0 * n, 120.0), (100.0, 120.0)].map(|(x, y)| tilt.to_capture(x, y));
+        let xs = corners.map(|p| p.0);
+        let ys = corners.map(|p| p.1);
+        let chars: Vec<OcrChar> = text.chars().enumerate()
+            .map(|(i, ch)| OcrChar { ch, x0: 100.0 + i as f32 * 10.0, x1: 110.0 + i as f32 * 10.0 })
+            .collect();
+        OcrLine {
+            text: text.into(),
+            x0: xs.iter().copied().fold(f32::MAX, f32::min),
+            y0: ys.iter().copied().fold(f32::MAX, f32::min),
+            x1: xs.iter().copied().fold(f32::MIN, f32::max),
+            y1: ys.iter().copied().fold(f32::MIN, f32::max),
+            chars,
+            ink_y: None,
+            flow: Flow::Across,
+            tilt: Some(tilt),
+        }
+    }
+
+    #[test]
+    fn a_turned_line_is_read_in_its_own_frame_and_its_words_are_turned_boxes() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        let turned_line = turned("hello world", 0.3);
+        let t = turned_line.tilt.unwrap();
+        let boxes = super::word_boxes(std::slice::from_ref(&turned_line), None);
+        let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["hello", "world"]);
+        let world = &boxes[1];
+        assert!(close(world.angle, 0.3));
+        // Upright about its centre, the drawn box sits against the hit area as in the frame: the hit
+        // area runs from halfway to "hello" (155) to the line's end (210); the word from 160.
+        let center = |r: (f32, f32, f32, f32)| ((r.0 + r.2) / 2.0, (r.1 + r.3) / 2.0);
+        let (hx, hy) = center(world.hit);
+        let (cx, cy) = t.to_capture(182.5, 110.0);
+        assert!(close(hx, cx) && close(hy, cy), "the hit area's centre is where the frame puts it");
+        assert!(close(world.x0 - world.hit.0, 5.0) && close(world.y0 - world.hit.1, 0.0));
+        // On "w" of "world", turned onto the capture.
+        let (px, py) = t.to_capture(165.0, 110.0);
+        let p = pick(std::slice::from_ref(&turned_line), px, py, None).unwrap();
+        assert_eq!(p.word, "world");
+        assert!(close(p.angle, 0.3));
+        let (wx, wy) = t.to_capture(185.0, 110.0);
+        assert!(close((p.x0 + p.x1) / 2.0, wx) && close((p.y0 + p.y1) / 2.0, wy));
+        assert!(close(p.x1 - p.x0, 50.0) && close(p.y1 - p.y0, 20.0), "its own size, not its bounds'");
+        assert!(p.is_under(px, py));
+        let (ax, ay) = t.to_capture(165.0, 121.0);
+        assert!(p.is_under(ax, ay), "just past its bottom edge, within the slack");
+        let (bx, by) = t.to_capture(165.0, 126.0);
+        assert!(!p.is_under(bx, by), "below its turned box");
+        let (b0, b1, b2, b3) = p.bounds();
+        assert!(b2 - b0 > 50.0 && b3 - b1 > 20.0, "the pop-up is placed by the box around it");
+        // A turned line and an upright one are not one paragraph.
+        let lines = [turned("hello world", 0.3), line("cat sat", 100.0, 125.0)];
+        assert_eq!(pick(&lines, px, py, None).unwrap().context, "hello world");
+    }
+
     /// A line running up 20 wide at `x0`, its characters 20 tall from `bottom` up.
     fn rising(text: &str, x0: f32, bottom: f32) -> OcrLine {
         let n = text.chars().count();
         let chars: Vec<OcrChar> = text.chars().enumerate()
             .map(|(i, ch)| OcrChar { ch, x0: bottom - (i + 1) as f32 * 20.0, x1: bottom - i as f32 * 20.0 })
             .collect();
-        OcrLine { text: text.into(), x0, y0: bottom - n as f32 * 20.0, x1: x0 + 20.0, y1: bottom, chars, ink_y: None, flow: Flow::Up }
+        OcrLine { text: text.into(), x0, y0: bottom - n as f32 * 20.0, x1: x0 + 20.0, y1: bottom, chars, ink_y: None, flow: Flow::Up, tilt: None }
     }
 
     #[test]

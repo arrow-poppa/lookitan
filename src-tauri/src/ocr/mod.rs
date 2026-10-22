@@ -6,11 +6,12 @@ pub mod cache;
 pub mod ink;
 mod lens_proto;
 pub mod paddle;
+pub mod quad;
 
 use serde::Serialize;
 
 /// A character's span along its line: `x0..x1` across a horizontal line, and its `y0..y1` in
-/// capture pixels on a vertical one (see `Flow`).
+/// capture pixels on a vertical one (see `Flow`). On a turned line, in the line's frame (`Tilt`).
 #[derive(Clone, Debug, Serialize)]
 pub struct OcrChar {
     pub ch: char,
@@ -32,6 +33,31 @@ pub struct OcrLine {
     pub ink_y: Option<(f32, f32)>,
     /// Which way the text runs.
     pub flow: Flow,
+    /// For a turned line (quad.rs), its frame: there its characters and ink are given, while
+    /// `x0..y1` stay the box around it on the capture.
+    pub tilt: Option<Tilt>,
+}
+
+/// A turned line's frame: the capture turned by `-angle` (radians) about its origin, where the
+/// line stands upright (or, for a column, straight down) in `rect`, `(x0, y0, x1, y1)`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Tilt {
+    pub angle: f32,
+    pub rect: (f32, f32, f32, f32),
+}
+
+impl Tilt {
+    /// A capture point in this frame.
+    pub fn to_frame(&self, x: f32, y: f32) -> (f32, f32) {
+        let (s, c) = self.angle.sin_cos();
+        (x * c + y * s, -x * s + y * c)
+    }
+
+    /// A point of this frame on the capture.
+    pub fn to_capture(&self, x: f32, y: f32) -> (f32, f32) {
+        let (s, c) = self.angle.sin_cos();
+        (x * c - y * s, x * s + y * c)
+    }
 }
 
 /// Which way a line's text runs on screen.
