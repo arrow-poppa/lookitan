@@ -694,7 +694,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
             boxes
         }
     };
-    let (focus, rest, block) = if reading == Reading::Block {
+    let (focus, rest, mut block) = if reading == Reading::Block {
         let focus: Vec<TextBox> = block::under(&boxes, px, py).into_iter().map(|i| boxes[i]).collect();
         let bounds = block::bounds(&focus);
         (focus, Vec::new(), bounds)
@@ -704,7 +704,13 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     };
     // The lines around the pointer stay one run per line: the pop-up waits only for these. A
     // larger block shares recognizer runs between lines of similar width.
-    let lines = cached_recognize(state, &p, image, key, &focus, reading == Reading::Block && focus.len() > 6);
+    let mut lines = cached_recognize(state, &p, image, key, &focus, reading == Reading::Block && focus.len() > 6);
+    // Like Lookupper, a block read as at most one letter or digit is not trusted: every box on the
+    // screen is read, and the lookup goes on as if the pointer were on no block.
+    if reading == Reading::Block && !focus.is_empty() && !block::reads_as_text(lines.iter().map(|l| l.text.as_str())) {
+        lines = cached_recognize(state, &p, image, key, &boxes, true);
+        block = None;
+    }
     let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
     let engine = format!("PP-OCRv6 {} · {gpu}", p.det_model());
     Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key, block })

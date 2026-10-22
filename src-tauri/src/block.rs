@@ -1,7 +1,8 @@
 // The block of text under the pointer, found on the detected boxes before anything is recognized.
 // In the automatic capture, as in Lookupper's pointer mode, the whole monitor is detected but only
-// this block is recognized. A pointer on no box finds no block, and the lookup reads the whole
-// screen instead. The rules and thresholds are Lookupper's (REA: XpressOCR's `0x1409505c0`, its
+// this block is recognized. A pointer on no box finds no block, and neither does a block that
+// reads as at most one letter or digit (`reads_as_text`): the lookup reads the whole screen
+// instead. The rules and thresholds are Lookupper's (REA: XpressOCR's `0x1409505c0`, its
 // pointer test `0x140950940` and its clustering `0x14094b8c0`).
 
 use std::collections::VecDeque;
@@ -96,6 +97,13 @@ pub fn under(boxes: &[TextBox], x: f32, y: f32) -> Vec<usize> {
     std::iter::once(start).chain((0..boxes.len()).filter(|&j| j != start && label[j] == label[start])).collect()
 }
 
+/// Whether the lines read from a block are text: more than one letter or digit in all, as
+/// Lookupper requires (`0x140947790`: the lines with words, summing `char.IsLetterOrDigit`).
+/// Otherwise (a stray mark, an icon, a lone symbol) it reads every box on the screen.
+pub fn reads_as_text<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
+    lines.into_iter().flat_map(str::chars).filter(|c| c.is_alphanumeric()).nth(1).is_some()
+}
+
 /// The rectangle around some boxes.
 pub fn bounds(boxes: &[TextBox]) -> Option<TextBox> {
     let first = *boxes.first()?;
@@ -157,6 +165,15 @@ mod tests {
         assert_eq!(under(&boxes, 1340.0, 443.0), [0, 1], "neighbouring columns join, the far picture does not");
         assert_eq!(under(&boxes, 1320.0, 443.0), [0, 1], "within a fifth of the column's width");
         assert!(under(&boxes, 1317.0, 443.0).is_empty());
+    }
+
+    #[test]
+    fn a_block_of_one_letter_or_digit_at_most_is_not_text() {
+        assert!(reads_as_text(["今日", "は"]));
+        assert!(reads_as_text(["a", "b"]), "counted over all the lines");
+        assert!(!reads_as_text(["a"]));
+        assert!(!reads_as_text(["→ ✓", "", "7 —"]));
+        assert!(!reads_as_text(Vec::<&str>::new()));
     }
 
     #[test]
