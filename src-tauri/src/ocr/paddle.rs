@@ -17,7 +17,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
-use super::{quad, ink, is_rtl_text, is_vertical_box, reverse_rtl, Flow, OcrChar, OcrLine};
+use super::{quad, ink, is_rtl_text, is_vertical_box, reverse_rtl, Flow, OcrChar, OcrLine, Tilt};
 use crate::settings::GpuPreference;
 
 macro_rules! ortx {
@@ -1185,16 +1185,23 @@ impl PaddleOcr {
         let blank: Vec<bool> = decoded.iter().map(|(c, _)| c.is_whitespace()).collect();
         // Word edges snap to the ink of the line, as in Lookupper.
         let mut spans = ink::spans(&centers, &blank, crop.ink.as_ref(), start as f32, lo, hi, step_w);
-        if let Some(q) = &b.quad {
-            // Along a turned line, a position maps onto the capture's x (a row) or y (a column)
-            // through the line's middle.
-            let mid = |a: quad::Point, c: quad::Point| [(a[0] + c[0]) / 2.0, (a[1] + c[1]) / 2.0];
-            let (from, to) = match crop.turn {
-                Turn::Upright => (mid(q[0], q[3])[0], mid(q[1], q[2])[0]),
-                Turn::Left => (mid(q[0], q[1])[1], mid(q[3], q[2])[1]),
-                Turn::Right => (mid(q[3], q[2])[1], mid(q[0], q[1])[1]),
+        // A turned line is given in its own frame, where it stands upright (see `Tilt`): the
+        // straightened crop's positions map onto that frame's rectangle.
+        let tilt = b.quad.as_ref().map(|q| {
+            let angle = (q[1][1] - q[0][1]).atan2(q[1][0] - q[0][0]);
+            let frame = Tilt { angle, rect: (0.0, 0.0, 0.0, 0.0) };
+            let (x0, y0) = frame.to_frame(q[0][0], q[0][1]);
+            let (x1, _) = frame.to_frame(q[1][0], q[1][1]);
+            let (_, y1) = frame.to_frame(q[3][0], q[3][1]);
+            Tilt { angle, rect: (x0, y0, x1, y1) }
+        });
+        if let Some(t) = &tilt {
+            let (x0, y0, x1, y1) = t.rect;
+            let at = |s: f32| match crop.turn {
+                Turn::Upright => x0 + (x1 - x0) * s / crop.cw as f32,
+                Turn::Left => y0 + (y1 - y0) * s / crop.ch as f32,
+                Turn::Right => y1 - (y1 - y0) * s / crop.ch as f32,
             };
-            let at = |s: f32| from + (to - from) * s / len.max(1) as f32;
             for span in &mut spans {
                 let (a, c) = (at(span.0), at(span.1));
                 *span = (a.min(c), a.max(c));
@@ -1214,21 +1221,34 @@ impl PaddleOcr {
         let text: String = chars.iter().map(|c| c.ch).collect();
         // A turned crop's rows are the columns of the line: from its right side when turned left,
         // from its left side when turned right.
-        // A turned line has no rows of ink on the capture's axes.
-        let ink_y = crop.ink.as_ref().filter(|_| b.quad.is_none()).map(|ink| match crop.turn {
-            Turn::Upright => (crop.y as f32 + ink.y0 as f32, crop.y as f32 + ink.y1 as f32),
-            Turn::Left => {
-                let right = (crop.x + crop.cw) as f32;
-                (right - ink.y1 as f32, right - ink.y0 as f32)
+        let ink_y = crop.ink.as_ref().map(|ink| {
+            let (r0, r1) = (ink.y0 as f32, ink.y1 as f32);
+            if let Some(t) = &tilt {
+                // In the turned line's frame, from the straightened crop's rows.
+                let (x0, y0, x1, y1) = t.rect;
+                let across = |k: f32| match crop.turn {
+                    Turn::Upright => y0 + (y1 - y0) * k / crop.ch as f32,
+                    Turn::Left => x1 - (x1 - x0) * k / crop.cw as f32,
+                    Turn::Right => x0 + (x1 - x0) * k / crop.cw as f32,
+                };
+                let (a, c) = (across(r0), across(r1));
+                return (a.min(c), a.max(c));
             }
-            Turn::Right => (crop.x as f32 + ink.y0 as f32, crop.x as f32 + ink.y1 as f32),
+            match crop.turn {
+                Turn::Upright => (crop.y as f32 + r0, crop.y as f32 + r1),
+                Turn::Left => {
+                    let right = (crop.x + crop.cw) as f32;
+                    (right - r1, right - r0)
+                }
+                Turn::Right => (crop.x as f32 + r0, crop.x as f32 + r1),
+            }
         });
         let flow = match crop.turn {
             Turn::Upright => Flow::Across,
             Turn::Left => Flow::Down,
             Turn::Right => Flow::Up,
         };
-        let line = OcrLine { text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, chars, ink_y, flow };
+        let line = OcrLine { text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, chars, ink_y, flow, tilt };
         Some(Reading { line, score: sure / read.max(1) as f32 })
     }
 }

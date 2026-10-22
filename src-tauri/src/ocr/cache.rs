@@ -119,6 +119,7 @@ mod tests {
             chars: vec![],
             ink_y: None,
             flow: Default::default(),
+            tilt: None,
         }
     }
 
