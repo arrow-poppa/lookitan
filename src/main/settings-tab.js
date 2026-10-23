@@ -130,8 +130,9 @@ const GAMEPAD_ACTIONS = [
     ['anki', 'Enviar ao Anki', 'O botão do Anki no pop-up.'],
     ['pronounce', 'Pronunciar', 'Toca o áudio da palavra.'],
     ['explain', 'Explicar', 'Gera a explicação da IA.'],
+    ['meme', 'Modo meme', 'Liga e desliga o modo meme das imagens.'],
 ];
-const GAMEPAD_DEFAULTS = {hotkey: [], navigation: true, confirm: ['A'], close: ['B'], save: ['X'], pronounce: ['Y'], explain: ['RB'], anki: ['LB']};
+const GAMEPAD_DEFAULTS = {hotkey: [], navigation: true, confirm: ['A'], close: ['B'], save: ['X'], pronounce: ['Y'], explain: ['RB'], anki: ['LB'], meme: []};
 // The connected pad's layout, for the buttons' names (a PlayStation pad shows ✕ ○ □ △).
 let gamepadLayout = 'xbox';
 // One "gamepad-capture" listener for the window; it calls the box recording now.
@@ -159,9 +160,10 @@ const sameButtons = (a, b) => a.length === b.length && a.every((x) => b.includes
 
 /**
  * A box that records buttons from the controller: click, hold one button or several together
- * and let go. `get()` and `set(buttons)` read and store them.
+ * and let go. `get()` and `set(buttons)` read and store them. × leaves it empty; with `defaults`,
+ * ↺ puts them back.
  */
-function gamepadComboBox(get, set) {
+function gamepadComboBox(get, set, defaults = []) {
     const val = el('span', {class: 'val'});
     const show = () => {
         const text = gamepadLabel(get());
@@ -169,8 +171,11 @@ function gamepadComboBox(get, set) {
         val.classList.toggle('placeholder', !text);
     };
     show();
-    const clear = el('button', {class: 'ghost icon', title: 'Remover', html: icon('close', 'sm')});
-    const box = el('div', {class: 'hotkey', tabindex: '0', html: icon('gamepad')}, val, clear);
+    const clear = el('button', {class: 'ghost icon', title: 'Deixar vazio', 'aria-label': 'Deixar vazio', html: icon('close', 'sm')});
+    const reset = defaults.length
+        ? el('button', {class: 'ghost icon', title: `Voltar ao padrão (${gamepadLabel(defaults)})`, 'aria-label': 'Voltar ao padrão', html: icon('refresh', 'sm')})
+        : null;
+    const box = el('div', {class: 'hotkey', tabindex: '0', html: icon('gamepad')}, val, reset, clear);
     let capturing = false;
     const stop = () => {
         if (!capturing) { return; }
@@ -179,6 +184,10 @@ function gamepadComboBox(get, set) {
         void api.gamepadCapture(false);
         show();
     };
+    reset?.addEventListener('click', () => {
+        set([...defaults]);
+        show();
+    });
     const handler = ({buttons, done}) => {
         if (!capturing) { return; }
         if (!done) { val.textContent = `${gamepadLabel(buttons)}…`; return; }
@@ -241,12 +250,12 @@ function gamepadSection() {
     if (g.navigation) {
         for (const [key, label, desc] of GAMEPAD_ACTIONS) {
             const box = gamepadComboBox(() => g[key], (buttons) => {
-                const other = GAMEPAD_ACTIONS.find(([k]) => k !== key && sameButtons(g[k], buttons));
+                const other = buttons.length ? GAMEPAD_ACTIONS.find(([k]) => k !== key && sameButtons(g[k], buttons)) : null;
                 if (other) { g[other[0]] = g[key]; }
                 g[key] = buttons;
                 save();
                 rerender();
-            });
+            }, GAMEPAD_DEFAULTS[key]);
             box.setAttribute('data-setting', `gamepad.${key}`);
             body.push(cardRow({icon: 'gamepad', title: label, desc: `${desc} Um botão ou vários juntos.`, wide: true, control: box}));
         }

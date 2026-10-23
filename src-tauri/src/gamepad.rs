@@ -44,7 +44,7 @@ pub enum Direction { Up, Down, Left, Right }
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum Action { Confirm, Close, Save, Pronounce, Explain, Anki }
+pub enum Action { Confirm, Close, Save, Pronounce, Explain, Anki, Meme }
 
 #[derive(Debug, PartialEq)]
 pub enum Signal {
@@ -197,7 +197,8 @@ fn names(buttons: &[String]) -> Vec<&'static str> {
 /// Each action with its buttons; actions left without buttons are off.
 fn bindings(config: &GamepadSettings) -> Vec<(Vec<&'static str>, Action)> {
     [(&config.confirm, Action::Confirm), (&config.close, Action::Close), (&config.save, Action::Save),
-     (&config.pronounce, Action::Pronounce), (&config.explain, Action::Explain), (&config.anki, Action::Anki)]
+     (&config.pronounce, Action::Pronounce), (&config.explain, Action::Explain), (&config.anki, Action::Anki),
+     (&config.meme, Action::Meme)]
         .into_iter().map(|(b, a)| (names(b), a)).filter(|(c, _)| !c.is_empty()).collect()
 }
 
@@ -459,6 +460,9 @@ mod tests {
         m.step(&input(&["LB"]), &c, true, t);
         assert_eq!(m.step(&input(&[]), &c, true, t), vec![Signal::Act(Action::Anki)], "LB pressed and let go alone");
         assert_eq!(m.step(&input(&["RB"]), &c, true, t), vec![Signal::Act(Action::Explain)]);
+        c.meme = combo(&["View"]);
+        m.step(&input(&[]), &c, true, t);
+        assert_eq!(m.step(&input(&["View"]), &c, true, t), vec![Signal::Act(Action::Meme)]);
     }
 
     #[test]

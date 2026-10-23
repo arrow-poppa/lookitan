@@ -364,7 +364,15 @@ test('the gamepad section folds, records combinations and each action takes one 
     record('confirm', ['LT', 'A']);
     assert.deepEqual([...fixture.settings.gamepad.confirm], ['LT', 'A']);
     assert.deepEqual([...fixture.settings.gamepad.save], ['A'], 'the action that had LT + A takes A');
-    for (const key of ['explain', 'anki', 'pronounce', 'close']) { assert(box(key), `${key} has its box`); }
+    for (const key of ['explain', 'anki', 'pronounce', 'close', 'meme']) { assert(box(key), `${key} has its box`); }
+    // × leaves an action empty; ↺ puts its default back.
+    const buttonOf = (key, title) => box(key).children.find((node) => node.tagName === 'button' && String(node.attributes.title).startsWith(title));
+    buttonOf('pronounce', 'Deixar vazio').dispatch('click');
+    assert.deepEqual([...fixture.settings.gamepad.pronounce], []);
+    assert.deepEqual([...fixture.settings.gamepad.meme], [], 'an empty action takes nothing from another empty one');
+    buttonOf('pronounce', 'Voltar ao padrão').dispatch('click');
+    assert.deepEqual([...fixture.settings.gamepad.pronounce], ['Y']);
+    assert(!buttonOf('meme', 'Voltar ao padrão'), 'meme mode has no default button');
     assert(fixture.root.textContent.includes('Explicar: RB'));
     // The chevron folds everything under the Gamepad row, as in Lookupper.
     const head = descendants(fixture.root).find((node) => node.className === 'gamepad-ctl');

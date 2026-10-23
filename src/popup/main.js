@@ -1443,6 +1443,15 @@ void listen('gamepad', ({payload}) => {
         const explain = document.querySelector('#sections .explain-word');
         explain?.click();
         explain?.scrollIntoView?.({block: 'nearest'});
+    } else if (p.action === 'meme') {
+        // The Imagens section's switch when it is showing; else only the setting, for the next pictures.
+        const meme = document.querySelector('#sections .img-meme input');
+        if (meme) {
+            meme.click();
+        } else {
+            ai.imageMemeMode = ai.imageMemeMode !== true;
+            void saveMemeMode(ai.imageMemeMode);
+        }
     } else if (p.action === 'pronounce') {
         document.querySelector('#sections .speak')?.click();
     } else if (p.action === 'scroll') {

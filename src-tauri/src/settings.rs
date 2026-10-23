@@ -144,12 +144,15 @@ pub struct GamepadSettings {
     /// Sends the word to Anki (the pop-up's Anki button); "save" keeps it in Palavras.
     #[serde(deserialize_with = "combo")]
     pub anki: Vec<String>,
+    /// Switches the pictures' meme mode (the pop-up's "Modo meme"); no button by default.
+    #[serde(deserialize_with = "combo")]
+    pub meme: Vec<String>,
 }
 
 impl Default for GamepadSettings {
     fn default() -> Self {
         let one = |b: &str| vec![b.to_string()];
-        Self { hotkey: Vec::new(), navigation: true, confirm: one("A"), close: one("B"), save: one("X"), pronounce: one("Y"), explain: one("RB"), anki: one("LB") }
+        Self { hotkey: Vec::new(), navigation: true, confirm: one("A"), close: one("B"), save: one("X"), pronounce: one("Y"), explain: one("RB"), anki: one("LB"), meme: Vec::new() }
     }
 }
 
@@ -363,6 +366,7 @@ mod tests {
         assert!(saved.gamepad.save.is_empty());
         assert_eq!(saved.gamepad.explain, vec!["RB"], "missing actions take their default");
         assert_eq!(saved.gamepad.anki, vec!["LB"]);
+        assert!(saved.gamepad.meme.is_empty());
     }
 
     #[test]
