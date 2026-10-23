@@ -198,3 +198,5 @@ details.ctx .body { padding: 0 14px 12px; color: var(--muted); font-size: 13.5px
 .saved-foot { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 4px; }
 .saved-foot .spacer { flex: 1; }
 .saved-foot button { font-size: 12px; min-height: 26px; padding: 2px 8px; gap: 5px; color: var(--muted); }
+/* The control the game controller is on (gamepad.rs), outlined like Lookupper's gamepad focus. */
+.gp-focus { outline: 3px solid #4cc2ff !important; outline-offset: 1px; border-radius: 4px; }

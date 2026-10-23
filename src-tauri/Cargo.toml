@@ -51,6 +51,9 @@ lzma-rs = "0.3"
 regex = "1"
 # Yomitan's Arabic rules use lookbehind and lookahead, which `regex` does not have.
 fancy-regex = "0.13"
+# Game controllers (gamepad.rs): XInput on Windows, which reads while another window has the
+# focus as Lookupper's does (the default WGI backend would not), and evdev on Linux.
+gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 hunspell-rs = "0.4"
 # hunspell-rs turns off hunspell-sys's default features, so its bindgen would not load libclang
 # itself; with another bindgen user (pipewire on Linux) clang-sys is in runtime mode and panics.

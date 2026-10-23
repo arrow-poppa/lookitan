@@ -118,6 +118,28 @@ impl Default for MouseHotkey {
     }
 }
 
+/// Game controller settings (gamepad.rs). Buttons go by their Xbox names (`gamepad::BUTTONS`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GamepadSettings {
+    /// Buttons held together to look up the word at the cursor; empty turns it off.
+    pub hotkey: Vec<String>,
+    /// The D-pad and the left stick move between the pop-up's controls (or the overlay's words),
+    /// the right stick scrolls, and the four buttons below act. Off for a controller that
+    /// already moves the mouse cursor (Steam Input), as Lookupper advises.
+    pub navigation: bool,
+    pub confirm: String,
+    pub close: String,
+    pub save: String,
+    pub pronounce: String,
+}
+
+impl Default for GamepadSettings {
+    fn default() -> Self {
+        Self { hotkey: Vec::new(), navigation: true, confirm: "A".into(), close: "B".into(), save: "X".into(), pronounce: "Y".into() }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -126,6 +148,7 @@ pub struct Settings {
     /// Global shortcut in Tauri accelerator syntax; empty disables it.
     pub hotkey: String,
     pub mouse_hotkey: MouseHotkey,
+    pub gamepad: GamepadSettings,
     pub ocr_engine: OcrEngineKind,
     pub ocr_scope: OcrScope,
     /// Engine for whole-screen passes (the Screen scope, or a shortcut pressed away from text).
@@ -191,6 +214,7 @@ impl Default for Settings {
             app_mode: "popup".into(),
             hotkey: "Alt+D".into(),
             mouse_hotkey: MouseHotkey::default(),
+            gamepad: GamepadSettings::default(),
             ocr_engine: OcrEngineKind::Paddle,
             // Keep the original lookup's small capture; full-screen overlay remains opt-in.
             ocr_scope: OcrScope::Region,

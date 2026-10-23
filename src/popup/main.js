@@ -13,6 +13,7 @@ import {cardFromLookup} from '../lib/cards.js';
 import {invoke} from '@tauri-apps/api/core';
 import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
+import {nearest} from '../lib/gamepad-nav.js';
 import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1352,17 +1353,21 @@ function animateOpen(origin) {
 }
 
 let closeTimer = null;
-/** Plays the close animation, then hides the window (the backend hides it at once for a new scan). */
-function closePopup() {
+/**
+ * Plays the close animation, then hides the window (the backend hides it at once for a new scan).
+ * `keepOverlay` (the controller's Close) leaves the overlay's words up to choose another.
+ */
+function closePopup(keepOverlay = false) {
     const card = $('card');
     if (closeTimer !== null) { return; }
+    const hide = () => (keepOverlay ? api.popupDismiss() : api.hidePopup());
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (reduced) { void api.hidePopup(); return; }
+    if (reduced) { void hide(); return; }
     card.classList.remove('tip-open');
     card.classList.add('tip-close');
     closeTimer = setTimeout(() => {
         closeTimer = null;
-        void api.hidePopup();
+        void hide();
         // Stay empty instead of growing back to full size before the window is hidden.
         card.classList.add('tip-blank');
         card.classList.remove('tip-close');
@@ -1390,7 +1395,53 @@ void listen('popup-blank', (event) => {
 void listen('popup-open', (event) => {
     // A new lookup during the close animation keeps the popup open.
     if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
+    gamepadMark(null);
     animateOpen(event.payload);
+});
+
+// ------------------------------------------------------------------ controller (gamepad.rs)
+
+// The control the controller is on, outlined like Lookupper's gamepad focus.
+let gamepadFocus = null;
+
+function gamepadMark(el) {
+    gamepadFocus?.classList.remove('gp-focus');
+    gamepadFocus = el;
+    if (el) {
+        el.classList.add('gp-focus');
+        el.scrollIntoView?.({block: 'nearest', inline: 'nearest'});
+    }
+}
+
+/** The pop-up's visible controls, the enlarged picture or the saved cards' first when open. */
+function gamepadControls() {
+    const layer = document.querySelector('.img-viewer:not([hidden]), .saved-view:not([hidden])') || $('card');
+    const selector = 'button, a[href], summary, select, input, [tabindex]:not([tabindex="-1"])';
+    return [...layer.querySelectorAll(selector)].filter((el) => !el.disabled && el.getClientRects().length > 0
+        && getComputedStyle(el).visibility !== 'hidden');
+}
+
+void listen('gamepad', ({payload}) => {
+    const p = payload || {};
+    if (p.action === 'move') {
+        const controls = gamepadControls();
+        if (controls.length === 0) { return; }
+        if (!gamepadFocus || !controls.includes(gamepadFocus)) { gamepadMark(controls[0]); return; }
+        const r = gamepadFocus.getBoundingClientRect();
+        const rects = controls.map((el) => { const b = el.getBoundingClientRect(); return {x: b.left, y: b.top, w: b.width, h: b.height}; });
+        const next = nearest({x: r.left + r.width / 2, y: r.top + r.height / 2}, rects, p.dir);
+        if (next >= 0) { gamepadMark(controls[next]); }
+    } else if (p.action === 'confirm') {
+        gamepadFocus?.click();
+    } else if (p.action === 'close') {
+        if (!closeViewer() && !closeSavedCards()) { closePopup(true); }
+    } else if (p.action === 'save') {
+        $('btn-save').click();
+    } else if (p.action === 'pronounce') {
+        document.querySelector('#sections .speak')?.click();
+    } else if (p.action === 'scroll') {
+        $('sections').scrollBy({top: Number(p.dy) || 0});
+    }
 });
 
 $('btn-close').addEventListener('click', () => { closePopup(); });

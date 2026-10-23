@@ -6,6 +6,7 @@
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
 import {schemeBase} from '../lib/api.js';
+import {nearest} from '../lib/gamepad-nav.js';
 
 const root = document.getElementById('words');
 const frame = document.getElementById('frame');
@@ -20,6 +21,8 @@ const DIM_ALPHA = 0.15;
 const FADE_IN = {duration: 220, easing: 'ease-out'};
 let current = null;
 let selected = null;
+/** The word the game controller is on (index into current.words), outlined until confirmed. */
+let gamepadWord = null;
 
 /** Says Google Lens failed, when no pop-up opened to say it (a word lookup shows it there). */
 function showNotice(text) {
@@ -119,7 +122,7 @@ function render() {
     drawDim(Boolean(current.spotlight) && !blurred, scale);
     drawBlock(scale);
     const frag = document.createDocumentFragment();
-    for (const w of current.words) {
+    current.words.forEach((w, index) => {
         // The element takes the pointer over the whole hit area; its child draws the word.
         const hit = hitRect(w);
         const el = document.createElement('div');
@@ -139,8 +142,9 @@ function render() {
         if (blurred) { cutOut(ink, w, current.frameRect, scale); }
         el.appendChild(ink);
         el.title = w.text;
+        if (index === gamepadWord) { el.classList.add('gp'); }
         frag.appendChild(el);
-    }
+    });
     root.replaceChildren(frag);
 }
 
@@ -166,6 +170,7 @@ void listen('overlay-closed', (event) => {
     setVisible(false);
     // Drop the old words, so a click before the next lookup arrives cannot pick one of them.
     current = null;
+    gamepadWord = null;
     root.replaceChildren();
     showNotice('');
     confirmBlank(event?.payload?.token);
@@ -180,6 +185,7 @@ void listen('overlay', (event) => {
         }
         selected = null;
         seen = [];
+        gamepadWord = null;
         if (p.frameUrl) {
             frame.src = `${schemeBase()}${p.frameUrl}`;
             frame.style.display = 'block';
@@ -199,17 +205,22 @@ void listen('overlay', (event) => {
     render();
 });
 
+/** Marks the word as the one being looked up and looks it up at `x, y` (unscaled CSS pixels). */
+function pick(target, x, y) {
+    for (const el of root.querySelectorAll('.w.sel')) { el.classList.remove('sel'); el.classList.add('seen'); }
+    if (selected) { seen.push(selected); }
+    target.classList.remove('seen');
+    target.classList.add('sel');
+    showNotice('');
+    void invoke('overlay_pick', {x, y});
+}
+
 document.addEventListener('mousedown', (ev) => {
     ev.preventDefault();
     const target = ev.target;
     if (target instanceof HTMLElement && target.classList.contains('w')) {
-        for (const el of root.querySelectorAll('.w.sel')) { el.classList.remove('sel'); el.classList.add('seen'); }
-        if (selected) { seen.push(selected); }
-        target.classList.remove('seen');
-        target.classList.add('sel');
-        showNotice('');
         const scale = viewportScale();
-        void invoke('overlay_pick', {x: ev.clientX / scale.x, y: ev.clientY / scale.y});
+        pick(target, ev.clientX / scale.x, ev.clientY / scale.y);
     } else {
         void invoke('overlay_dismiss');
     }
@@ -219,4 +230,29 @@ window.addEventListener('resize', render);
 
 document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { void invoke('overlay_close'); }
+});
+
+// The controller (gamepad.rs) with the pop-up closed: the D-pad moves between the words, starting
+// from the word looked up, and Confirm looks the outlined word up.
+void listen('gamepad', ({payload}) => {
+    const words = current?.words || [];
+    if (words.length === 0) { return; }
+    const centre = (r) => ({x: r.x + r.w / 2, y: r.y + r.h / 2});
+    if (payload?.action === 'move') {
+        if (gamepadWord === null || !words[gamepadWord]) {
+            const from = selected ? words.findIndex((w) => containsCenter(w, selected)) : -1;
+            gamepadWord = from >= 0 ? from : 0;
+            if (from < 0) { render(); return; }
+        }
+        const next = nearest(centre(words[gamepadWord]), words, payload.dir);
+        if (next >= 0) { gamepadWord = next; }
+        render();
+    } else if (payload?.action === 'confirm' && gamepadWord !== null && words[gamepadWord]) {
+        const w = words[gamepadWord];
+        const el = root.children[gamepadWord];
+        const c = centre(w);
+        if (el) { pick(el, c.x, c.y); }
+        selected = w;
+        render();
+    }
 });

@@ -1,3 +1,4 @@
+import {nearest} from '../src/lib/gamepad-nav.js';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
@@ -37,6 +38,7 @@ async function fixture(userAgent = 'Mozilla/5.0 (X11; Linux x86_64)') {
         '@tauri-apps/api/core': {invoke: async (command, args) => { requests.push({command, args}); }},
         '@tauri-apps/api/event': {listen: async (name, callback) => { listeners[name] = callback; }},
         '../lib/api.js': {schemeBase: () => 'lkt://localhost'},
+        '../lib/gamepad-nav.js': {nearest},
     };
     const module = new SourceTextModule(await readFile(resolve(import.meta.dirname, '../src/overlay/main.js'), 'utf8'), {context});
     await module.link((name) => new SyntheticModule(Object.keys(stubs[name]), function () {
@@ -44,8 +46,25 @@ async function fixture(userAgent = 'Mozilla/5.0 (X11; Linux x86_64)') {
     }, {context}));
     await module.evaluate();
     return {root, frame, body, dim: others.dim, block: others.block, window, handlers, requests, document: {getElementById: (id) => (others[id] ||= new Element())},
-        emit: (payload) => listeners.overlay({payload}), close: (payload = null) => listeners['overlay-closed']({payload})};
+        emit: (payload) => listeners.overlay({payload}), close: (payload = null) => listeners['overlay-closed']({payload}),
+        gamepad: (payload) => listeners.gamepad({payload})};
 }
+
+test('the controller moves between words from the one looked up, and Confirm looks one up', async () => {
+    const view = await fixture();
+    const words = [0, 1, 2].map((i) => ({text: `w${i}`, x: 10 + i * 60, y: 20, w: 50, h: 18}));
+    view.emit({id: 1, words, selected: words[0], viewportWidth: 1920, viewportHeight: 1080});
+    view.gamepad({action: 'move', dir: 'right'});
+    assert(view.root.children[1].classList.contains('gp'), 'from the word looked up');
+    view.gamepad({action: 'move', dir: 'right'});
+    assert(view.root.children[2].classList.contains('gp'));
+    view.gamepad({action: 'move', dir: 'right'});
+    assert(view.root.children[2].classList.contains('gp'), 'the end of the line stays put');
+    view.gamepad({action: 'confirm'});
+    assert.equal(JSON.stringify(view.requests.at(-1)), JSON.stringify({command: 'overlay_pick', args: {x: 155, y: 29}}));
+    assert(view.root.children[2].classList.contains('sel'));
+    assert(view.root.children[0].classList.contains('seen'));
+});
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {
     const view = await fixture();

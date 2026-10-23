@@ -14,6 +14,8 @@
         .w > .ink { position: absolute; border-radius: 2px; pointer-events: none; transition: background 60ms; }
         .w:hover > .ink, .w.seen > .ink { background: rgba(255, 221, 0, 0.26); }
         .w.sel > .ink, .w.sel:hover > .ink { background: rgba(255, 221, 0, 0.5); }
+        /* The word the game controller is on (gamepad.rs), outlined like Lookupper's gamepad focus. */
+        .w.gp > .ink { outline: 3px solid #4cc2ff; outline-offset: 1px; }
         /* Between lookups, and while a whole-screen lookup is still being read: nothing visible.
            The near-transparent shade stays, so the window still takes the clicks and the wheel. */
         body.idle #frame, body.idle #dim, body.idle #block, body.idle #words { visibility: hidden; }

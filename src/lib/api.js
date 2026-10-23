@@ -31,6 +31,17 @@ export const api = {
     deleteWord: (id) => invoke('delete_word', {id}),
     /** A saved word's picture, cropped to `crop` ([x, y, width, height]) when given. */
     wordImage: (name, crop = null) => invoke('word_image', {name, crop: crop || null}),
+    /** Starts (true) or stops recording a controller combination; see onGamepadCapture. */
+    gamepadCapture: (on) => invoke('gamepad_capture', {on}),
+    /** The connected controller's name, or null. */
+    gamepadStatus: () => invoke('gamepad_status'),
+    /** `handler({buttons, done})` as a combination is recorded. Resolves to the unlisten function. */
+    onGamepadCapture: async (handler) => {
+        const {listen} = await import('@tauri-apps/api/event');
+        return listen('gamepad-capture', ({payload}) => handler(payload));
+    },
+    /** Hides the pop-up and keeps the overlay (the controller's Close). */
+    popupDismiss: () => invoke('popup_dismiss'),
     /** The whole image OCR read for a lookup, with the sentence's crop: `{data, crop}`. */
     captureCardImage: (recognition) => invoke('capture_card_image', {recognition: recognition ?? null}),
 };

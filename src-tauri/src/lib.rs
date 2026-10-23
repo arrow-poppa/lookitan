@@ -7,6 +7,7 @@
 mod audio;
 mod edge_tts;
 mod block;
+mod gamepad;
 mod cards;
 mod dict;
 mod dictionaries;
@@ -1181,6 +1182,51 @@ fn apply_mouse_hotkey(app: &AppHandle, cfg: &settings::MouseHotkey) {
     }
 }
 
+/// The window the controller navigates: the pop-up while it is up, else the overlay's words.
+fn gamepad_target(app: &AppHandle) -> Option<&'static str> {
+    let visible = |label: &str| app.get_webview_window(label).is_some_and(|w| w.is_visible().unwrap_or(false));
+    if visible("popup") { Some("popup") } else if visible("overlay") { Some("overlay") } else { None }
+}
+
+fn on_gamepad(app: &AppHandle, signal: gamepad::Signal) {
+    use gamepad::{Action, Signal};
+    let close = matches!(signal, Signal::Act(Action::Close));
+    let message = match signal {
+        Signal::Hotkey => return scan(app),
+        Signal::Capture { buttons, done } => {
+            let _ = app.emit("gamepad-capture", serde_json::json!({"buttons": buttons, "done": done}));
+            return;
+        }
+        Signal::Move(dir) => serde_json::json!({"action": "move", "dir": dir}),
+        Signal::Scroll(dy) => serde_json::json!({"action": "scroll", "dy": dy}),
+        Signal::Act(action) => serde_json::json!({"action": action}),
+    };
+    match gamepad_target(app) {
+        // Close takes the pop-up away first and leaves the overlay's words to move between,
+        // as Lookupper's DismissTopmost does; on the overlay it closes the lookup.
+        Some("overlay") if close => overlay_close(app.clone()),
+        Some(label) => { let _ = app.emit_to(label, "gamepad", message); }
+        None => {}
+    }
+}
+
+#[tauri::command]
+fn gamepad_capture(on: bool) {
+    gamepad::capture(on);
+}
+
+/// The connected controller's name, for the settings.
+#[tauri::command]
+fn gamepad_status() -> Option<String> {
+    gamepad::connected()
+}
+
+/// The pop-up closed from the controller: the overlay stays, so another word can be chosen.
+#[tauri::command]
+fn popup_dismiss(app: AppHandle) {
+    dismiss_popup(&app);
+}
+
 fn apply_autostart(app: &AppHandle, enabled: bool) {
     let launcher = app.autolaunch();
     let r = if enabled { launcher.enable() } else { launcher.disable() };
@@ -1267,6 +1313,7 @@ fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: S
         apply_autostart(app, next.autostart);
     }
     apply_mouse_hotkey(app, &next.mouse_hotkey);
+    gamepad::configure(&next.gamepad);
     if previous.hotkey != next.hotkey {
         apply_hotkey(app, &next.hotkey)?;
     }
@@ -1761,6 +1808,7 @@ pub fn run() {
             let settings = settings::load(&config_dir);
             let hotkey = settings.hotkey.clone();
             let mouse = settings.mouse_hotkey.clone();
+            gamepad::configure(&settings.gamepad);
             app.manage(AppState {
                 config_dir,
                 dictionaries_dir,
@@ -1802,6 +1850,10 @@ pub fn run() {
                 log::warn!("{e}");
             }
             apply_mouse_hotkey(&handle, &mouse);
+            {
+                let (visible, signal) = (handle.clone(), handle.clone());
+                gamepad::start(move || gamepad_target(&visible).is_some(), move |s| on_gamepad(&signal, s));
+            }
 
             #[cfg(target_os = "linux")]
             if platform::session_kind() == SessionKind::KdeWayland {
@@ -1918,6 +1970,9 @@ pub fn run() {
             save_word,
             delete_word,
             word_image,
+            gamepad_capture,
+            gamepad_status,
+            popup_dismiss,
             audio_lookup,
             audio_db_sources,
             edge_tts_voices,

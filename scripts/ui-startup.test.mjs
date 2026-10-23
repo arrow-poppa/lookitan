@@ -98,13 +98,16 @@ async function settingsFixture(overrides = {}) {
     let saves = 0;
     const calls = [];
     let later = null;
+    const gamepadCapture = {handler: null};
     const settings = {ocrLanguage: 'en-US', appMode: 'popup', profiles: [], mouseHotkey: {button: 'none'}, useGpu: true,
         ocrScope: 'screen', captureWidth: 900, captureHeight: 260, ...overrides};
     const ui = await load('src/main/settings-tab.js', {document: view.document}, {
         '@tauri-apps/api/app': {getVersion: async () => 'test'},
         '@tauri-apps/plugin-dialog': {ask: async () => true},
         [file('src/lib/api.js')]: {api: {ocrLanguages: () => languages.promise, engineStatus: () => later ?? status.promise,
-            installSegmenter: async () => { calls.push('install'); }, removeSegmenter: async () => { calls.push('remove'); }}, escapeHtml: String},
+            installSegmenter: async () => { calls.push('install'); }, removeSegmenter: async () => { calls.push('remove'); },
+            gamepadStatus: async () => 'Xbox Controller', gamepadCapture: async (on) => { calls.push(`capture ${on}`); },
+            onGamepadCapture: async (handler) => { gamepadCapture.handler = handler; }}, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/main/anki-panel.js')]: {renderAnkiSection: async () => {}},
         [file('src/main/audio-panel.js')]: {renderAudioSection: () => {}},
@@ -112,7 +115,7 @@ async function settingsFixture(overrides = {}) {
         [file('src/main/store.js')]: {store: {settings, anki: {}}, save: () => { saves += 1; }},
     });
     const initialization = ui.initSettingsTab(root);
-    return {view, root, settings, languages, status, initialization, calls, ui,
+    return {view, root, settings, languages, status, initialization, calls, ui, gamepadCapture,
         setStatus: (next) => { later = Promise.resolve(next); }, saves: () => saves, finish: async () => {
         languages.resolve([{tag: 'en-US', name: 'English'}]);
         status.resolve({session: 'windows'});
@@ -334,6 +337,30 @@ test('settings render and GPU toggle work while OCR status is pending', async ()
     await initialization;
     assert(view.document.getElementById('engine-status').textContent.includes('test-det'));
     assert.equal(view.document.getElementById('ocr-language'), languageControl, 'status must not replace the edited controls');
+});
+
+test('the gamepad row records a combination and each action button can be changed', async () => {
+    const fixture = await settingsFixture();
+    await fixture.finish();
+    await flush();
+    assert(fixture.root.textContent.includes('Conectado: Xbox Controller'));
+    const row = descendants(fixture.root).find((node) => node.className === 'card-row' && node.textContent.startsWith('Gamepad'));
+    const gamepad = descendants(row).find((node) => node.className === 'hotkey');
+    gamepad.focus = () => {};
+    gamepad.closest = () => null;
+    gamepad.dispatch('click');
+    assert(fixture.calls.includes('capture true'));
+    fixture.gamepadCapture.handler({buttons: ['LB', 'Y'], done: false});
+    assert(gamepad.textContent.includes('LB + Y…'));
+    fixture.gamepadCapture.handler({buttons: ['LB', 'Y'], done: true});
+    assert.deepEqual([...fixture.settings.gamepad.hotkey], ['LB', 'Y']);
+    assert(gamepad.textContent.includes('LB + Y'));
+    const save = descendants(fixture.root).find((node) => node.attributes['data-setting'] === 'gamepad.save');
+    assert.equal(save.value, 'X');
+    save.value = 'A';
+    save.dispatch('change');
+    assert.equal(fixture.settings.gamepad.save, 'A');
+    assert.equal(fixture.settings.gamepad.confirm, 'X', 'the action that had A takes X');
 });
 
 test('the word analyzer row deletes it, then downloads it', async () => {
