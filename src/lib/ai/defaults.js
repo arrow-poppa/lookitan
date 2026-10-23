@@ -79,7 +79,6 @@ function baseAiOptions() {
         autoExplain: false,
         streamResponse: true,
         cancelPendingRequests: true,
-        unknownWordFallback: true,
         temperature: 0.7,
         openai: {apiKey: '', model: 'gpt-4o-mini'},
         gemini: {apiKey: '', model: 'gemini-2.5-flash', thinkingLevel: ''},

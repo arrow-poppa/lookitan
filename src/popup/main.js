@@ -1242,7 +1242,6 @@ async function render(payload) {
     }
 
     const aiReady = isConfigured(ai);
-    const noEntries = (payload.entries || []).length === 0;
     let shown = 0;
     for (const d of dicts.filter((x) => x.enabled)) {
         if (d.kind === 'ai-word') {
@@ -1250,7 +1249,7 @@ async function render(payload) {
             shown++;
             if (!aiReady) {
                 body.innerHTML = '<p class="hint">Configure o seu provedor de IA em Dicionários › IA — palavra no contexto.</p>';
-            } else if (ai.autoGenerateOnLookup || (noEntries && ai.unknownWordFallback)) {
+            } else if (ai.autoGenerateOnLookup) {
                 void runCard(body);
             } else {
                 body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Gerar</button>`;

@@ -163,9 +163,12 @@ test('every BYOK provider option remains reachable when switching AI providers',
         fixture.change('provider', provider);
         for (const key of keys) { assert(fixture.control(`${provider}.${key}`), `${provider}.${key} must be visible`); }
         for (const key of ['provider', 'temperature', 'customPrompt', 'systemPrompt', 'autoGenerateOnLookup',
-            'streamResponse', 'cancelPendingRequests', 'unknownWordFallback', 'autoExplain', 'cardPrompt', 'wordTranslationPrompt']) {
+            'streamResponse', 'cancelPendingRequests', 'autoExplain', 'cardPrompt', 'wordTranslationPrompt']) {
             assert(fixture.control(key), `${key} must be visible`);
         }
+        // Removed at the user's request: Lookupper has no such option, and the AI reads the word
+        // without the dictionaries.
+        assert(!fixture.control('unknownWordFallback'));
         assert(!descendants(fixture.root).some((node) => node.tagName === '#text' && node.textContent === 'null'));
     }
 });
@@ -209,7 +212,7 @@ test('the context translator has its own provider, which changes only the transl
     for (const key of ['provider', 'custom.model', 'temperature', 'streamResponse', 'cancelPendingRequests', 'systemPrompt']) {
         assert(fixture.control(`${own}${key}`), `the translator has its own ${key}`);
     }
-    for (const key of ['provider', 'custom.thinkingIntensity', 'autoGenerateOnLookup', 'autoExplain', 'unknownWordFallback', 'streamResponse']) {
+    for (const key of ['provider', 'custom.thinkingIntensity', 'autoGenerateOnLookup', 'autoExplain', 'streamResponse']) {
         assert(!fixture.control(key), `${key} belongs to "IA — palavra no contexto"`);
     }
     assert.equal(fixture.control(`${own}custom.thinkingIntensity`).value, 'low', 'it starts as a copy of the word card provider');
