@@ -4,8 +4,8 @@
 //! stick scrolls, and four buttons confirm, close, save the word and pronounce it. Lookupper reads
 //! XInput (plus raw HID); Lookitan reads gilrs's XInput backend on Windows, which works while
 //! another window has the focus, PlayStation pads' HID reports there (playstation.rs), and evdev
-//! on Linux, by the standard codes when gilrs has no mapping for the pad. Unlike Lookupper, the
-//! four action buttons can be changed.
+//! on Linux, by the standard codes when gilrs has no mapping for the pad. Unlike Lookupper, each
+//! action takes any button or combination, and two more act: Explicar and sending to Anki.
 //!
 //! `Machine` turns the buttons held at each tick into `Signal`s and knows nothing of gilrs, so it
 //! is tested without a controller.
@@ -44,7 +44,7 @@ pub enum Direction { Up, Down, Left, Right }
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum Action { Confirm, Close, Save, Pronounce }
+pub enum Action { Confirm, Close, Save, Pronounce, Explain, Anki }
 
 #[derive(Debug, PartialEq)]
 pub enum Signal {
@@ -76,6 +76,9 @@ pub struct Machine {
     wait_release: bool,
     held: Option<(Direction, Instant, bool)>,
     capture: Option<(BTreeSet<&'static str>, Instant)>,
+    /// An action whose buttons are also part of a longer binding (LB alone and LB + A) waits
+    /// for its buttons to be let go, and fires then only if no other button joined them.
+    pending: Option<(Action, Vec<&'static str>, bool)>,
 }
 
 impl Machine {
@@ -116,11 +119,13 @@ impl Machine {
             return out;
         }
 
-        let combo: Vec<&str> = config.hotkey.iter().map(String::as_str).filter(|b| BUTTONS.iter().any(|k| k == b)).collect();
+        let combo = names(&config.hotkey);
         let holds_combo = !combo.is_empty() && combo.iter().all(|b| pressed.contains(*b));
         if holds_combo && !self.hotkey_held {
             out.push(Signal::Hotkey);
             self.wait_release = true;
+            // An action waiting for its buttons' release was the start of this combination.
+            self.pending = None;
         }
         self.hotkey_held = holds_combo;
         if self.wait_release {
@@ -131,11 +136,31 @@ impl Machine {
         }
 
         if config.navigation && navigate {
-            let newly = |b: &str| !b.is_empty() && pressed.contains(b) && !self.previous.contains(b);
-            for (button, action) in [(&config.confirm, Action::Confirm), (&config.close, Action::Close), (&config.save, Action::Save), (&config.pronounce, Action::Pronounce)] {
-                if newly(button.as_str()) { out.push(Signal::Act(action)); }
+            let actions = bindings(config);
+            let holds = |set: &BTreeSet<&'static str>, combo: &[&'static str]| !combo.is_empty() && combo.iter().all(|b| set.contains(*b));
+            // A shorter binding inside a longer one (the look-up combination counts) waits for release.
+            let longer: Vec<Vec<&'static str>> = actions.iter().map(|(c, _)| c.clone()).chain(std::iter::once(names(&config.hotkey))).collect();
+            let inside = |combo: &[&'static str]| longer.iter().any(|l| l.len() > combo.len() && combo.iter().all(|b| l.contains(b)));
+            if let Some((action, combo, spoiled)) = &mut self.pending {
+                if pressed.iter().any(|b| !combo.contains(b)) { *spoiled = true; }
+                if !holds(pressed, combo) {
+                    if !*spoiled { out.push(Signal::Act(*action)); }
+                    self.pending = None;
+                }
             }
+            let completed: Vec<_> = actions.iter().filter(|(c, _)| holds(pressed, c) && !holds(&self.previous, c)).collect();
+            let longest = completed.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
+            for (combo, action) in completed.into_iter().filter(|(c, _)| c.len() == longest) {
+                if inside(combo) {
+                    self.pending = Some((*action, combo.clone(), false));
+                } else {
+                    out.push(Signal::Act(*action));
+                }
+            }
+            // A direction that is part of an action held now does not also move.
+            let direction_bound = actions.iter().any(|(c, _)| holds(pressed, c) && c.iter().any(|b| matches!(*b, "Up" | "Down" | "Left" | "Right")));
             match direction(input) {
+                _ if direction_bound => self.held = None,
                 Some(dir) => match self.held {
                     Some((held, since, repeated)) if held == dir => {
                         let wait = if repeated { REPEAT } else { FIRST_REPEAT };
@@ -157,10 +182,23 @@ impl Machine {
             }
         } else {
             self.held = None;
+            self.pending = None;
         }
         self.previous = pressed.clone();
         out
     }
+}
+
+/// Known button names of a binding, as the static names `Input` holds.
+fn names(buttons: &[String]) -> Vec<&'static str> {
+    buttons.iter().filter_map(|b| BUTTONS.iter().copied().find(|k| k == b)).collect()
+}
+
+/// Each action with its buttons; actions left without buttons are off.
+fn bindings(config: &GamepadSettings) -> Vec<(Vec<&'static str>, Action)> {
+    [(&config.confirm, Action::Confirm), (&config.close, Action::Close), (&config.save, Action::Save),
+     (&config.pronounce, Action::Pronounce), (&config.explain, Action::Explain), (&config.anki, Action::Anki)]
+        .into_iter().map(|(b, a)| (names(b), a)).filter(|(c, _)| !c.is_empty()).collect()
 }
 
 /// The D-pad, or the left stick past `STICK_PRESS` along its stronger axis.
@@ -382,23 +420,68 @@ mod tests {
         assert!(m.step(&input(&["LB", "A"]), &c, true, t).is_empty(), "held, it does not repeat");
         assert!(m.step(&input(&["A"]), &c, true, t).is_empty(), "A does not confirm while the combination is let go");
         assert!(m.step(&input(&[]), &c, true, t).is_empty());
-        assert_eq!(m.step(&input(&["A"]), &c, true, t), vec![Signal::Act(Action::Confirm)]);
+        // A is also in LB + A, so Confirm waits for A to be let go alone.
+        assert!(m.step(&input(&["A"]), &c, true, t).is_empty());
+        assert_eq!(m.step(&input(&[]), &c, true, t), vec![Signal::Act(Action::Confirm)]);
     }
 
     #[test]
     fn actions_follow_the_chosen_buttons_and_need_something_on_screen() {
         let mut c = config(&[]);
-        c.save = "RB".into();
+        c.save = vec!["LT".into()];
         let mut m = Machine::new();
         let t = Instant::now();
         assert!(m.step(&input(&["B"]), &c, false, t).is_empty(), "nothing on screen");
         m.step(&input(&[]), &c, true, t);
         assert_eq!(m.step(&input(&["B"]), &c, true, t), vec![Signal::Act(Action::Close)]);
         m.step(&input(&[]), &c, true, t);
-        assert_eq!(m.step(&input(&["RB"]), &c, true, t), vec![Signal::Act(Action::Save)]);
+        assert_eq!(m.step(&input(&["LT"]), &c, true, t), vec![Signal::Act(Action::Save)]);
         assert!(m.step(&input(&["X"]), &c, true, t).is_empty(), "X saves no more");
         c.navigation = false;
         assert!(m.step(&input(&["Y"]), &c, true, t).is_empty(), "navigation turned off");
+    }
+
+    fn combo(buttons: &[&str]) -> Vec<String> {
+        buttons.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_combination_fires_its_action_and_not_the_single_buttons_inside_it() {
+        let mut c = config(&[]);
+        c.save = combo(&["LB", "A"]);
+        c.anki = combo(&["LB"]);
+        let mut m = Machine::new();
+        let t = Instant::now();
+        assert!(m.step(&input(&["LB"]), &c, true, t).is_empty(), "LB alone waits: it starts LB + A");
+        assert_eq!(m.step(&input(&["LB", "A"]), &c, true, t), vec![Signal::Act(Action::Save)], "the longer binding wins over A alone");
+        assert!(m.step(&input(&["LB"]), &c, true, t).is_empty());
+        assert!(m.step(&input(&[]), &c, true, t).is_empty(), "LB was used in a combination");
+        m.step(&input(&["LB"]), &c, true, t);
+        assert_eq!(m.step(&input(&[]), &c, true, t), vec![Signal::Act(Action::Anki)], "LB pressed and let go alone");
+        assert_eq!(m.step(&input(&["RB"]), &c, true, t), vec![Signal::Act(Action::Explain)]);
+    }
+
+    #[test]
+    fn the_look_up_combination_cancels_an_action_waiting_inside_it() {
+        let mut c = config(&["LB", "Y"]);
+        c.anki = combo(&["LB"]);
+        let mut m = Machine::new();
+        let t = Instant::now();
+        assert!(m.step(&input(&["LB"]), &c, true, t).is_empty());
+        assert_eq!(m.step(&input(&["LB", "Y"]), &c, true, t), vec![Signal::Hotkey]);
+        m.step(&input(&[]), &c, true, t);
+        assert!(m.step(&input(&[]), &c, true, t).is_empty(), "no Anki after the look-up");
+    }
+
+    #[test]
+    fn a_direction_bound_to_an_action_does_not_also_move() {
+        let mut c = config(&[]);
+        c.pronounce = combo(&["LB", "Up"]);
+        let mut m = Machine::new();
+        let t = Instant::now();
+        m.step(&input(&["LB"]), &c, true, t);
+        assert_eq!(m.step(&input(&["LB", "Up"]), &c, true, t), vec![Signal::Act(Action::Pronounce)]);
+        assert_eq!(m.step(&input(&["Up"]), &c, true, t), vec![Signal::Move(Direction::Up)], "Up alone moves again");
     }
 
     #[test]

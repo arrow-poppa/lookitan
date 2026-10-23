@@ -339,28 +339,39 @@ test('settings render and GPU toggle work while OCR status is pending', async ()
     assert.equal(view.document.getElementById('ocr-language'), languageControl, 'status must not replace the edited controls');
 });
 
-test('the gamepad row records a combination and each action button can be changed', async () => {
+test('the gamepad section folds, records combinations and each action takes one button or several', async () => {
     const fixture = await settingsFixture();
     await fixture.finish();
     await flush();
     assert(fixture.root.textContent.includes('Conectado: Xbox Controller'));
-    const row = descendants(fixture.root).find((node) => node.className === 'card-row' && node.textContent.startsWith('Gamepad'));
-    const gamepad = descendants(row).find((node) => node.className === 'hotkey');
-    gamepad.focus = () => {};
-    gamepad.closest = () => null;
-    gamepad.dispatch('click');
+    const box = (key) => descendants(fixture.root).find((node) => node.attributes['data-setting'] === `gamepad.${key}`);
+    const record = (key, buttons) => {
+        const target = box(key);
+        target.focus = () => {};
+        target.closest = () => null;
+        target.dispatch('click');
+        fixture.gamepadCapture.handler({buttons, done: false});
+        const live = target.textContent;
+        fixture.gamepadCapture.handler({buttons, done: true});
+        return live;
+    };
+    assert.equal(record('hotkey', ['LB', 'Y']), 'LB + Y…');
     assert(fixture.calls.includes('capture true'));
-    fixture.gamepadCapture.handler({buttons: ['LB', 'Y'], done: false});
-    assert(gamepad.textContent.includes('LB + Y…'));
-    fixture.gamepadCapture.handler({buttons: ['LB', 'Y'], done: true});
     assert.deepEqual([...fixture.settings.gamepad.hotkey], ['LB', 'Y']);
-    assert(gamepad.textContent.includes('LB + Y'));
-    const save = descendants(fixture.root).find((node) => node.attributes['data-setting'] === 'gamepad.save');
-    assert.equal(save.value, 'X');
-    save.value = 'A';
-    save.dispatch('change');
-    assert.equal(fixture.settings.gamepad.save, 'A');
-    assert.equal(fixture.settings.gamepad.confirm, 'X', 'the action that had A takes X');
+    // Actions: a combination, and a combination another action has swaps with it.
+    record('save', ['LT', 'A']);
+    assert.deepEqual([...fixture.settings.gamepad.save], ['LT', 'A']);
+    record('confirm', ['LT', 'A']);
+    assert.deepEqual([...fixture.settings.gamepad.confirm], ['LT', 'A']);
+    assert.deepEqual([...fixture.settings.gamepad.save], ['A'], 'the action that had LT + A takes A');
+    for (const key of ['explain', 'anki', 'pronounce', 'close']) { assert(box(key), `${key} has its box`); }
+    assert(fixture.root.textContent.includes('Explicar: RB'));
+    // The chevron folds everything under the Gamepad row, as in Lookupper.
+    const head = descendants(fixture.root).find((node) => node.className === 'gamepad-ctl');
+    const chevron = head.children.find((node) => node.className === 'ghost icon collapse');
+    chevron.dispatch('click');
+    const navigation = descendants(fixture.root).find((node) => node.className === 'card-row' && node.textContent.startsWith('Navegação pelo gamepad'));
+    assert.equal(navigation.hidden, true);
 });
 
 test('the word analyzer row deletes it, then downloads it', async () => {

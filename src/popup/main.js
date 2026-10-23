@@ -280,7 +280,7 @@ function renderCard(body, card, pending = false) {
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${cardExtrasHtml(card, ai.cardComponents !== false)}
-        ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
+        ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn explain-word">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
         ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div>${markContext(p)}</div></div></details>` : ''}`;
     bindSentence(body, p.context || p.sentence);
     const speaker = body.querySelector('.speak');
@@ -1437,6 +1437,12 @@ void listen('gamepad', ({payload}) => {
         if (!closeViewer() && !closeSavedCards()) { closePopup(true); }
     } else if (p.action === 'save') {
         $('btn-save').click();
+    } else if (p.action === 'anki') {
+        $('btn-anki').click();
+    } else if (p.action === 'explain') {
+        const explain = document.querySelector('#sections .explain-word');
+        explain?.click();
+        explain?.scrollIntoView?.({block: 'nearest'});
     } else if (p.action === 'pronounce') {
         document.querySelector('#sections .speak')?.click();
     } else if (p.action === 'scroll') {

@@ -173,3 +173,6 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .audio-sources.sub > li { align-items: center; padding: 6px 10px; background: var(--surface); }
 .audio-sources.sub > li > .num { padding-top: 0; }
 .audio-sources.sub .name { flex: 1; }
+/* The Gamepad row: the look-up combination box and the chevron that folds the controller options. */
+.gamepad-ctl { display: flex; align-items: center; gap: 8px; width: 100%; }
+.gamepad-ctl .hotkey { flex: 1; min-width: 0; }

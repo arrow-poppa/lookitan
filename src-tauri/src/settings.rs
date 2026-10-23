@@ -125,19 +125,43 @@ pub struct GamepadSettings {
     /// Buttons held together to look up the word at the cursor; empty turns it off.
     pub hotkey: Vec<String>,
     /// The D-pad and the left stick move between the pop-up's controls (or the overlay's words),
-    /// the right stick scrolls, and the four buttons below act. Off for a controller that
+    /// the right stick scrolls, and the actions below act. Off for a controller that
     /// already moves the mouse cursor (Steam Input), as Lookupper advises.
     pub navigation: bool,
-    pub confirm: String,
-    pub close: String,
-    pub save: String,
-    pub pronounce: String,
+    /// Each action's button, or buttons held together; empty leaves the action off. Settings
+    /// saved before combinations had one name each, read as a list of one.
+    #[serde(deserialize_with = "combo")]
+    pub confirm: Vec<String>,
+    #[serde(deserialize_with = "combo")]
+    pub close: Vec<String>,
+    #[serde(deserialize_with = "combo")]
+    pub save: Vec<String>,
+    #[serde(deserialize_with = "combo")]
+    pub pronounce: Vec<String>,
+    /// Generates the AI explanation ("Explicar"); Lookupper has no such action.
+    #[serde(deserialize_with = "combo")]
+    pub explain: Vec<String>,
+    /// Sends the word to Anki (the pop-up's Anki button); "save" keeps it in Palavras.
+    #[serde(deserialize_with = "combo")]
+    pub anki: Vec<String>,
 }
 
 impl Default for GamepadSettings {
     fn default() -> Self {
-        Self { hotkey: Vec::new(), navigation: true, confirm: "A".into(), close: "B".into(), save: "X".into(), pronounce: "Y".into() }
+        let one = |b: &str| vec![b.to_string()];
+        Self { hotkey: Vec::new(), navigation: true, confirm: one("A"), close: one("B"), save: one("X"), pronounce: one("Y"), explain: one("RB"), anki: one("LB") }
     }
+}
+
+fn combo<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany { One(String), Many(Vec<String>) }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(b) if b.is_empty() => Vec::new(),
+        OneOrMany::One(b) => vec![b],
+        OneOrMany::Many(buttons) => buttons,
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -330,6 +354,16 @@ pub fn save(config_dir: &Path, settings: &Settings) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gamepad_actions_saved_as_one_button_read_as_a_list() {
+        let saved: Settings = serde_json::from_str(r#"{"gamepad": {"confirm": "RB", "close": ["LB", "B"], "save": ""}}"#).unwrap();
+        assert_eq!(saved.gamepad.confirm, vec!["RB"]);
+        assert_eq!(saved.gamepad.close, vec!["LB", "B"]);
+        assert!(saved.gamepad.save.is_empty());
+        assert_eq!(saved.gamepad.explain, vec!["RB"], "missing actions take their default");
+        assert_eq!(saved.gamepad.anki, vec!["LB"]);
+    }
 
     #[test]
     fn renamed_definition_and_translation_languages_are_migrated() {

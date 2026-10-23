@@ -123,11 +123,18 @@ function mouseBox(supported) {
 }
 
 // Controller buttons by their Xbox names, as gamepad.rs reads them.
-const GAMEPAD_BUTTONS = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', 'Up', 'Down', 'Left', 'Right'];
+const GAMEPAD_ACTIONS = [
+    ['confirm', 'Confirmar', 'Clica no botão marcado no pop-up, ou consulta a palavra marcada na tela.'],
+    ['close', 'Fechar', 'Fecha o pop-up e deixa as palavras na tela; de novo, fecha a consulta.'],
+    ['save', 'Salvar palavra', 'Salva no próprio Lookitan (Palavras).'],
+    ['anki', 'Enviar ao Anki', 'O botão do Anki no pop-up.'],
+    ['pronounce', 'Pronunciar', 'Toca o áudio da palavra.'],
+    ['explain', 'Explicar', 'Gera a explicação da IA.'],
+];
+const GAMEPAD_DEFAULTS = {hotkey: [], navigation: true, confirm: ['A'], close: ['B'], save: ['X'], pronounce: ['Y'], explain: ['RB'], anki: ['LB']};
 // The connected pad's layout, for the buttons' names (a PlayStation pad shows ✕ ○ □ △).
 let gamepadLayout = 'xbox';
-const GAMEPAD_ACTIONS = [['confirm', 'Confirmar'], ['close', 'Fechar'], ['save', 'Salvar palavra'], ['pronounce', 'Pronunciar']];
-// One "gamepad-capture" listener for the window; it calls the box shown now.
+// One "gamepad-capture" listener for the window; it calls the box recording now.
 let gamepadCaptureHandler = null;
 let gamepadCaptureListening = false;
 
@@ -135,9 +142,11 @@ let gamepadCaptureListening = false;
 function gamepadSettings() {
     const s = store.settings;
     s.gamepad ||= {};
-    const defaults = {hotkey: [], navigation: true, confirm: 'A', close: 'B', save: 'X', pronounce: 'Y'};
-    for (const [key, value] of Object.entries(defaults)) {
-        if (s.gamepad[key] === undefined) { s.gamepad[key] = value; }
+    for (const [key, value] of Object.entries(GAMEPAD_DEFAULTS)) {
+        const current = s.gamepad[key];
+        if (current === undefined) { s.gamepad[key] = Array.isArray(value) ? [...value] : value; }
+        // A single button, as an earlier build saved the actions.
+        else if (typeof current === 'string') { s.gamepad[key] = current ? [current] : []; }
     }
     return s.gamepad;
 }
@@ -146,12 +155,16 @@ function gamepadLabel(buttons) {
     return (buttons || []).map((b) => buttonName(b, gamepadLayout)).join(' + ');
 }
 
-/** The look-up combination: click, then hold the buttons on the controller and let go. */
-function gamepadBox() {
-    const g = gamepadSettings();
+const sameButtons = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+
+/**
+ * A box that records buttons from the controller: click, hold one button or several together
+ * and let go. `get()` and `set(buttons)` read and store them.
+ */
+function gamepadComboBox(get, set) {
     const val = el('span', {class: 'val'});
     const show = () => {
-        const text = gamepadLabel(g.hotkey);
+        const text = gamepadLabel(get());
         val.textContent = text || 'Não definido';
         val.classList.toggle('placeholder', !text);
     };
@@ -166,37 +179,37 @@ function gamepadBox() {
         void api.gamepadCapture(false);
         show();
     };
+    const handler = ({buttons, done}) => {
+        if (!capturing) { return; }
+        if (!done) { val.textContent = `${gamepadLabel(buttons)}…`; return; }
+        capturing = false;
+        box.classList.remove('capturing');
+        if (buttons.length) { set(buttons); }
+        show();
+    };
     box.addEventListener('click', (ev) => {
         if (ev.target.closest('button') || capturing) { return; }
         capturing = true;
+        gamepadCaptureHandler = handler;
         box.classList.add('capturing');
-        val.textContent = 'Segure os botões no controle e solte…';
+        val.textContent = 'Segure um botão ou vários no controle e solte…';
         void api.gamepadCapture(true);
         box.focus();
     });
     box.addEventListener('blur', stop);
     box.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { stop(); } });
-    gamepadCaptureHandler = ({buttons, done}) => {
-        if (!capturing) { return; }
-        if (!done) { val.textContent = `${gamepadLabel(buttons)}…`; return; }
-        capturing = false;
-        box.classList.remove('capturing');
-        if (buttons.length) { g.hotkey = buttons; save(); }
-        show();
-    };
     if (!gamepadCaptureListening) {
         gamepadCaptureListening = true;
         void api.onGamepadCapture((payload) => gamepadCaptureHandler?.(payload));
     }
     clear.addEventListener('click', () => {
-        g.hotkey = [];
-        save();
+        set([]);
         show();
     });
     return box;
 }
 
-/** "Controle conectado: …", checked each time the settings are drawn. */
+/** "Conectado: …", checked each time the settings are drawn. */
 function gamepadStatusLine() {
     const line = el('span', {}, 'Combinação de botões para consultar a palavra sob o cursor.');
     void api.gamepadStatus().then((name) => {
@@ -213,26 +226,38 @@ function gamepadStatusLine() {
     return line;
 }
 
-/** The navigation switch and, with it on, the button of each action; a button taken by another action swaps with it. */
-function gamepadRows() {
+/**
+ * The Gamepad row with the look-up combination, folding like Lookupper's: under it the navigation
+ * switch with its legend and, with it on, each action's button or buttons. A combination another
+ * action has swaps with it.
+ */
+function gamepadSection() {
     const g = gamepadSettings();
-    const rows = [cardRow({icon: 'gamepad', title: 'Navegação pelo gamepad',
-        desc: 'Direcional ou analógico esquerdo: selecionar · analógico direito: rolar. Com o pop-up aberto, anda pelos botões dele; fechado, pelas palavras na tela. Desligue se o seu controle já move o cursor do mouse (Steam Input).',
+    const legend = ['Selecionar: direcional ou analógico esquerdo', 'Rolar: analógico direito',
+        ...GAMEPAD_ACTIONS.filter(([key]) => g[key].length).map(([key, label]) => `${label}: ${gamepadLabel(g[key])}`)].join(' · ');
+    const body = [cardRow({icon: 'gamepad', title: 'Navegação pelo gamepad',
+        desc: `${legend}. Com o pop-up aberto, anda pelos botões dele; fechado, pelas palavras na tela. Desligue se o seu controle já move o cursor do mouse (Steam Input).`,
         control: toggle(g.navigation, (v) => { g.navigation = v; save(); rerender(); })})];
-    if (!g.navigation) { return rows; }
-    const choices = GAMEPAD_BUTTONS.filter((b) => !['Up', 'Down', 'Left', 'Right'].includes(b)).map((b) => ({value: b, label: buttonName(b, gamepadLayout)}));
-    for (const [key, label] of GAMEPAD_ACTIONS) {
-        const control = select(choices, g[key], (v) => {
-            const other = GAMEPAD_ACTIONS.find(([k]) => k !== key && g[k] === v);
-            if (other) { g[other[0]] = g[key]; }
-            g[key] = v;
-            save();
-            rerender();
-        });
-        control.setAttribute('data-setting', `gamepad.${key}`);
-        rows.push(cardRow({icon: 'gamepad', title: label, control}));
+    if (g.navigation) {
+        for (const [key, label, desc] of GAMEPAD_ACTIONS) {
+            const box = gamepadComboBox(() => g[key], (buttons) => {
+                const other = GAMEPAD_ACTIONS.find(([k]) => k !== key && sameButtons(g[k], buttons));
+                if (other) { g[other[0]] = g[key]; }
+                g[key] = buttons;
+                save();
+                rerender();
+            });
+            box.setAttribute('data-setting', `gamepad.${key}`);
+            body.push(cardRow({icon: 'gamepad', title: label, desc: `${desc} Um botão ou vários juntos.`, wide: true, control: box}));
+        }
     }
-    return rows;
+    const collapse = collapser('gamepad', () => body);
+    const hotkey = gamepadComboBox(() => g.hotkey, (buttons) => { g.hotkey = buttons; save(); });
+    hotkey.setAttribute('data-setting', 'gamepad.hotkey');
+    const head = cardRow({icon: 'gamepad', title: 'Gamepad', desc: gamepadStatusLine(), wide: true,
+        control: el('div', {class: 'gamepad-ctl'}, hotkey, collapse.button)});
+    collapse.apply();
+    return [head, ...body];
 }
 
 function engineStatusText() {
@@ -440,8 +465,7 @@ function render(root) {
         cardRow({icon: 'keyboard', title: 'Teclado', desc: 'Pressione para consultar a palavra sob o cursor.', wide: true, control: keyboardBox()}),
         cardRow({icon: 'mouse', title: 'Mouse', desc: isWindows ? 'Um botão do mouse, com Alt, Ctrl ou Shift se quiser.' : 'No Linux, use o atalho de teclado ou o comando abaixo.', wide: true, control: mouseBox(isWindows)}),
         isWindows ? cardRow({icon: 'mouse', title: 'Acionar o mouse', desc: 'Clicar dispara na hora; segurar dispara após meio segundo e mantém o clique normal.', control: longPress}) : null,
-        cardRow({icon: 'gamepad', title: 'Gamepad', desc: gamepadStatusLine(), wide: true, control: gamepadBox()}),
-        ...gamepadRows(),
+        ...gamepadSection(),
         isWayland ? cardRow({icon: 'keyboard', title: 'Atalho no Wayland', desc: 'Em Configurações do Sistema › Atalhos › Adicionar novo › Comando, use este comando:', wide: true,
             control: (() => { const i = textInput('lookitan --scan', () => {}); i.readOnly = true; return i; })()}) : null,
     ));
