@@ -1,0 +1,4168 @@
+{
+  "language": "es",
+  "provenance": {
+    "project": "Yomitan",
+    "upstream": "https://github.com/yomidevs/yomitan/blob/master/ext/js/language/es/spanish-transforms.js",
+    "sourceCommit": "d3c54c10264673eca0d66b970ef74cd5c8b048e3",
+    "sourceSha256": "d41a8045f54de8b5d4858300c52b858f793ece281c04e40dc663794a4ac90fd9",
+    "copyright": "Copyright (C) 2024-2026 Yomitan Authors",
+    "license": "GPL-3.0-or-later",
+    "skippedContextualRules": 27
+  },
+  "conditionMasks": {
+    "n": 3,
+    "np": 1,
+    "ns": 2,
+    "v": 28,
+    "v_ar": 4,
+    "v_er": 8,
+    "v_ir": 16,
+    "adj": 32
+  },
+  "rules": [
+    {
+      "kind": "suffix",
+      "from": "s",
+      "to": "",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "es",
+      "to": "",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "ces",
+      "to": "z",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "ases",
+      "to": "ás",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "eses",
+      "to": "és",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "ises",
+      "to": "ís",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "oses",
+      "to": "ós",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "uses",
+      "to": "ús",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "anes",
+      "to": "án",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "enes",
+      "to": "én",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "ines",
+      "to": "ín",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "ones",
+      "to": "ón",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "unes",
+      "to": "ún",
+      "input": 1,
+      "output": 2,
+      "reason": "plural"
+    },
+    {
+      "kind": "suffix",
+      "from": "a",
+      "to": "o",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "a",
+      "to": "",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "ana",
+      "to": "án",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "ena",
+      "to": "én",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "ina",
+      "to": "ín",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "ona",
+      "to": "ón",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "asa",
+      "to": "ás",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "esa",
+      "to": "és",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "isa",
+      "to": "ís",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "osa",
+      "to": "ós",
+      "input": 32,
+      "output": 32,
+      "reason": "feminine adjective"
+    },
+    {
+      "kind": "suffix",
+      "from": "o",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "as",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "a",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "amos",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "áis",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "an",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "o",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "es",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "e",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "emos",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "éis",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "en",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "o",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "es",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "e",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "imos",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "ís",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "en",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "uyo",
+      "to": "uir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "uyes",
+      "to": "uir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "uye",
+      "to": "uir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "uyen",
+      "to": "uir",
+      "input": 16,
+      "output": 16,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "tengo",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "tienes",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "tiene",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "tenemos",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "tenéis",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "tienen",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "oigo",
+      "to": "oír",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "oyes",
+      "to": "oír",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "oye",
+      "to": "oír",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "oímos",
+      "to": "oír",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "oís",
+      "to": "oír",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "oyen",
+      "to": "oír",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "vengo",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "vienes",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "viene",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "venimos",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "venís",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "vienen",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "go",
+      "to": "guir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "jo",
+      "to": "ger",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "jo",
+      "to": "gir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "aigo",
+      "to": "aer",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "zco",
+      "to": "cer",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "zco",
+      "to": "cir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "hago",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "pongo",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "lgo",
+      "to": "lir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "lgo",
+      "to": "ler",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "quepo",
+      "to": "caber",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "doy",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "sé",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "veo",
+      "to": "ver",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "soy",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "eres",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "es",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "somos",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "sois",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "son",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "estoy",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "estás",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "está",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "estamos",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "estáis",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "están",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "voy",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "vas",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "va",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "vamos",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "vais",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "van",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "he",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "has",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "ha",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "hemos",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "habéis",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "whole",
+      "from": "han",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present indicative"
+    },
+    {
+      "kind": "suffix",
+      "from": "é",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "aste",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "ó",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "amos",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "asteis",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "aron",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "í",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "iste",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "ió",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "imos",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "isteis",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieron",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "í",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "iste",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "ió",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "imos",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "isteis",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieron",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "qué",
+      "to": "car",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "gué",
+      "to": "gar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "cé",
+      "to": "zar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "í",
+      "to": "uir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fui",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fuiste",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fue",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fuimos",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fuisteis",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fueron",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fui",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fuiste",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fue",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fuimos",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fuisteis",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "fueron",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "di",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "diste",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "dio",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "dimos",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "disteis",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "dieron",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "hice",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "hiciste",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "hizo",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "hicimos",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "hicisteis",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "hicieron",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "puse",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "pusiste",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "puso",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "pusimos",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "pusisteis",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "pusieron",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "dije",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "dijiste",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "dijo",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "dijimos",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "dijisteis",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "dijeron",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "vine",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "viniste",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "vino",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "vinimos",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "vinisteis",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "vinieron",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "quise",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "quisiste",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "quiso",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "quisimos",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "quisisteis",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "quisieron",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "tuve",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "tuviste",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "tuvo",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "tuvimos",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "tuvisteis",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "tuvieron",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "pude",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "pudiste",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "pudo",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "pudimos",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "pudisteis",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "pudieron",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "supe",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "supiste",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "supo",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "supimos",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "supisteis",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "supieron",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "estuve",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "estuviste",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "estuvo",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "estuvimos",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "estuvisteis",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "estuvieron",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "anduve",
+      "to": "andar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "anduviste",
+      "to": "andar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "anduvo",
+      "to": "andar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "anduvimos",
+      "to": "andar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "anduvisteis",
+      "to": "andar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "whole",
+      "from": "anduvieron",
+      "to": "andar",
+      "input": 28,
+      "output": 28,
+      "reason": "preterite"
+    },
+    {
+      "kind": "suffix",
+      "from": "aba",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "abas",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "aba",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ábamos",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "abais",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "aban",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ía",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ías",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ía",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "íamos",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "íais",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ían",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ía",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ías",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ía",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "íamos",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "íais",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ían",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "eía",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "eías",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "eía",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "eíamos",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "eíais",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "eían",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "era",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "eras",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "era",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "éramos",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "erais",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "eran",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "iba",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "ibas",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "iba",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "íbamos",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "ibais",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "iban",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "veía",
+      "to": "ver",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "veías",
+      "to": "ver",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "veía",
+      "to": "ver",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "veíamos",
+      "to": "ver",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "veíais",
+      "to": "ver",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "whole",
+      "from": "veían",
+      "to": "ver",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect"
+    },
+    {
+      "kind": "suffix",
+      "from": "ando",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "progressive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iendo",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "progressive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iendo",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "progressive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ayendo",
+      "to": "aer",
+      "input": 8,
+      "output": 8,
+      "reason": "progressive"
+    },
+    {
+      "kind": "suffix",
+      "from": "eyendo",
+      "to": "eer",
+      "input": 8,
+      "output": 8,
+      "reason": "progressive"
+    },
+    {
+      "kind": "suffix",
+      "from": "uyendo",
+      "to": "uir",
+      "input": 16,
+      "output": 16,
+      "reason": "progressive"
+    },
+    {
+      "kind": "whole",
+      "from": "oyendo",
+      "to": "oír",
+      "input": 28,
+      "output": 28,
+      "reason": "progressive"
+    },
+    {
+      "kind": "whole",
+      "from": "yendo",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "progressive"
+    },
+    {
+      "kind": "suffix",
+      "from": "a",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "emos",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "ad",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "e",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "amos",
+      "to": "ar",
+      "input": 8,
+      "output": 8,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "ed",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "e",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "amos",
+      "to": "ar",
+      "input": 16,
+      "output": 16,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "id",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "diga",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "sé",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "ve",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "ten",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "ven",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "haz",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "di",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "pon",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "whole",
+      "from": "sal",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "es",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "emos",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "éis",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "as",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "amos",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "áis",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "as",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "amos",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "áis",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "ía",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "suffix",
+      "from": "ías",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "suffix",
+      "from": "ía",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "suffix",
+      "from": "íamos",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "suffix",
+      "from": "íais",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "suffix",
+      "from": "ían",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "diría",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "dirías",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "diría",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "diríamos",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "diríais",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "dirían",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "haría",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "harías",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "haría",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "haríamos",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "haríais",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "harían",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "pondría",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "pondrías",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "pondría",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "pondríamos",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "pondríais",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "pondrían",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "saldría",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "saldrías",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "saldría",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "saldríamos",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "saldríais",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "saldrían",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "tendría",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "tendrías",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "tendría",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "tendríamos",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "tendríais",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "tendrían",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "vendría",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "vendrías",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "vendría",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "vendríamos",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "vendríais",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "vendrían",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "querría",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "querrías",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "querría",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "querríamos",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "querríais",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "querrían",
+      "to": "querer",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "podría",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "podrías",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "podría",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "podríamos",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "podríais",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "podrían",
+      "to": "poder",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "sabría",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "sabrías",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "sabría",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "sabríamos",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "sabríais",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "whole",
+      "from": "sabrían",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "conditional"
+    },
+    {
+      "kind": "suffix",
+      "from": "é",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "ás",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "á",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "emos",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "éis",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "án",
+      "to": "",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "diré",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "dirás",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "dirá",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "diremos",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "diréis",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "dirán",
+      "to": "decir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "haré",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "harás",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "hará",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "haremos",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "haréis",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "harán",
+      "to": "hacer",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "pondré",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "pondrás",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "pondrá",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "pondremos",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "pondréis",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "pondrán",
+      "to": "poner",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "saldré",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "saldrás",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "saldrá",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "saldremos",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "saldréis",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "whole",
+      "from": "saldrán",
+      "to": "salir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "tendré",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "tendrás",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "tendrá",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "tendremos",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "tendréis",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "tendrán",
+      "to": "tener",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "vendré",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "vendrás",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "vendrá",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "vendremos",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "vendréis",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "vendrán",
+      "to": "venir",
+      "input": 28,
+      "output": 28,
+      "reason": "future"
+    },
+    {
+      "kind": "suffix",
+      "from": "e",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "es",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "e",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "emos",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "éis",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "en",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "a",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "as",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "a",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "amos",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "áis",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "an",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "a",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "as",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "a",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "amos",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "áis",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "an",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "dé",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "des",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "dé",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "demos",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "deis",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "den",
+      "to": "dar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "esté",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "estés",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "esté",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "estemos",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "estéis",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "estén",
+      "to": "estar",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sea",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "seas",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sea",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "seamos",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "seáis",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sean",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "vaya",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "vayas",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "vaya",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "vayamos",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "vayáis",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "vayan",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "haya",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "hayas",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "haya",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "hayamos",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "hayáis",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "hayan",
+      "to": "haber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sepa",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sepas",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sepa",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sepamos",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sepáis",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "sepan",
+      "to": "saber",
+      "input": 28,
+      "output": 28,
+      "reason": "present subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ara",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ase",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "aras",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ases",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ara",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ase",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "áramos",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ásemos",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "arais",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "aseis",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "aran",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "asen",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iera",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iese",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieras",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieses",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iera",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iese",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iéramos",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iésemos",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ierais",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieseis",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieran",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iesen",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iera",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iese",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieras",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieses",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iera",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iese",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iéramos",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iésemos",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ierais",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieseis",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ieran",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "iesen",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuera",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuese",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fueras",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fueses",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuera",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuese",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuéramos",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuésemos",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuerais",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fueseis",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fueran",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuesen",
+      "to": "ser",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuera",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuese",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fueras",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fueses",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuera",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuese",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuéramos",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuésemos",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuerais",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fueseis",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fueran",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "whole",
+      "from": "fuesen",
+      "to": "ir",
+      "input": 28,
+      "output": 28,
+      "reason": "imperfect subjunctive"
+    },
+    {
+      "kind": "suffix",
+      "from": "ado",
+      "to": "ar",
+      "input": 32,
+      "output": 4,
+      "reason": "participle"
+    },
+    {
+      "kind": "suffix",
+      "from": "ido",
+      "to": "er",
+      "input": 32,
+      "output": 8,
+      "reason": "participle"
+    },
+    {
+      "kind": "suffix",
+      "from": "ido",
+      "to": "ir",
+      "input": 32,
+      "output": 16,
+      "reason": "participle"
+    },
+    {
+      "kind": "suffix",
+      "from": "oído",
+      "to": "oír",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "whole",
+      "from": "dicho",
+      "to": "decir",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "whole",
+      "from": "escrito",
+      "to": "escribir",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "whole",
+      "from": "hecho",
+      "to": "hacer",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "whole",
+      "from": "muerto",
+      "to": "morir",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "whole",
+      "from": "puesto",
+      "to": "poner",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "whole",
+      "from": "roto",
+      "to": "romper",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "whole",
+      "from": "visto",
+      "to": "ver",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "whole",
+      "from": "vuelto",
+      "to": "volver",
+      "input": 32,
+      "output": 28,
+      "reason": "participle"
+    },
+    {
+      "kind": "suffix",
+      "from": "arse",
+      "to": "ar",
+      "input": 4,
+      "output": 4,
+      "reason": "reflexive"
+    },
+    {
+      "kind": "suffix",
+      "from": "erse",
+      "to": "er",
+      "input": 8,
+      "output": 8,
+      "reason": "reflexive"
+    },
+    {
+      "kind": "suffix",
+      "from": "irse",
+      "to": "ir",
+      "input": 16,
+      "output": 16,
+      "reason": "reflexive"
+    },
+    {
+      "kind": "suffix",
+      "from": "arme",
+      "to": "arse",
+      "input": 4,
+      "output": 4,
+      "reason": "pronoun substitution"
+    },
+    {
+      "kind": "suffix",
+      "from": "arte",
+      "to": "arse",
+      "input": 4,
+      "output": 4,
+      "reason": "pronoun substitution"
+    },
+    {
+      "kind": "suffix",
+      "from": "arnos",
+      "to": "arse",
+      "input": 8,
+      "output": 8,
+      "reason": "pronoun substitution"
+    },
+    {
+      "kind": "suffix",
+      "from": "erme",
+      "to": "erse",
+      "input": 8,
+      "output": 8,
+      "reason": "pronoun substitution"
+    },
+    {
+      "kind": "suffix",
+      "from": "erte",
+      "to": "erse",
+      "input": 8,
+      "output": 8,
+      "reason": "pronoun substitution"
+    },
+    {
+      "kind": "suffix",
+      "from": "ernos",
+      "to": "erse",
+      "input": 8,
+      "output": 8,
+      "reason": "pronoun substitution"
+    },
+    {
+      "kind": "suffix",
+      "from": "irme",
+      "to": "irse",
+      "input": 16,
+      "output": 16,
+      "reason": "pronoun substitution"
+    },
+    {
+      "kind": "suffix",
+      "from": "irte",
+      "to": "irse",
+      "input": 16,
+      "output": 16,
+      "reason": "pronoun substitution"
+    },
+    {
+      "kind": "suffix",
+      "from": "irnos",
+      "to": "irse",
+      "input": 16,
+      "output": 16,
+      "reason": "pronoun substitution"
+    }
+  ]
+}

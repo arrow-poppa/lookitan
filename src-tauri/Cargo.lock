@@ -3046,6 +3046,7 @@ dependencies = [
  "bzip2",
  "encoding_rs",
  "env_logger",
+ "fancy-regex",
  "flate2",
  "hunspell-rs",
  "hunspell-sys",

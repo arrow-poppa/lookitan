@@ -1,0 +1,552 @@
+{
+  "language": "de",
+  "provenance": {
+    "project": "Yomitan",
+    "upstream": "https://github.com/yomidevs/yomitan/blob/master/ext/js/language/de/german-transforms.js",
+    "sourceCommit": "d3c54c10264673eca0d66b970ef74cd5c8b048e3",
+    "sourceSha256": "679f4d6578058a845d0e2b9484c61c0d97dcabf555d269832ac768b7b915c2ae",
+    "copyright": "Copyright (C) 2024-2026 Yomitan Authors",
+    "license": "GPL-3.0-or-later",
+    "keptTransforms": [
+      "zu-infinitive"
+    ],
+    "skippedContextualRules": 0
+  },
+  "conditionMasks": {
+    "v": 3,
+    "vw": 1,
+    "vst": 2,
+    "n": 4,
+    "adj": 8
+  },
+  "rules": [
+    {
+      "kind": "prefix",
+      "from": "abzu",
+      "to": "ab",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "anzu",
+      "to": "an",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "aufzu",
+      "to": "auf",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "auszu",
+      "to": "aus",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "auseinanderzu",
+      "to": "auseinander",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "beizu",
+      "to": "bei",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "dazu",
+      "to": "da",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "dabeizu",
+      "to": "dabei",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "darzu",
+      "to": "dar",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "daranzu",
+      "to": "daran",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "dazwischenzu",
+      "to": "dazwischen",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "durchzu",
+      "to": "durch",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "einzu",
+      "to": "ein",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "emporzu",
+      "to": "empor",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "entgegenzu",
+      "to": "entgegen",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "entlangzu",
+      "to": "entlang",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "entzweizu",
+      "to": "entzwei",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "fehlzu",
+      "to": "fehl",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "fernzu",
+      "to": "fern",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "festzu",
+      "to": "fest",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "fortzu",
+      "to": "fort",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "freizu",
+      "to": "frei",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "gegenüberzu",
+      "to": "gegenüber",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "gleichzu",
+      "to": "gleich",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "heimzu",
+      "to": "heim",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "herzu",
+      "to": "her",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "herabzu",
+      "to": "herab",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "heranzu",
+      "to": "heran",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "heraufzu",
+      "to": "herauf",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "herauszu",
+      "to": "heraus",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "herbeizu",
+      "to": "herbei",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hereinzu",
+      "to": "herein",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "herüberzu",
+      "to": "herüber",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "herumzu",
+      "to": "herum",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "herunterzu",
+      "to": "herunter",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hervorzu",
+      "to": "hervor",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hinzu",
+      "to": "hin",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hinabzu",
+      "to": "hinab",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hinaufzu",
+      "to": "hinauf",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hinauszu",
+      "to": "hinaus",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hineinzu",
+      "to": "hinein",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hinterherzu",
+      "to": "hinterher",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hinunterzu",
+      "to": "hinunter",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hinwegzu",
+      "to": "hinweg",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hinzuzu",
+      "to": "hinzu",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "hochzu",
+      "to": "hoch",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "loszu",
+      "to": "los",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "mitzu",
+      "to": "mit",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "nachzu",
+      "to": "nach",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "nebenherzu",
+      "to": "nebenher",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "niederzu",
+      "to": "nieder",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "stattzu",
+      "to": "statt",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "umzu",
+      "to": "um",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "vorzu",
+      "to": "vor",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "voranzu",
+      "to": "voran",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "vorauszu",
+      "to": "voraus",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "vorbeizu",
+      "to": "vorbei",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "vorüberzu",
+      "to": "vorüber",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "vorwegzu",
+      "to": "vorweg",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "wegzu",
+      "to": "weg",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "weiterzu",
+      "to": "weiter",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "wiederzu",
+      "to": "wieder",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "zuzu",
+      "to": "zu",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "zurechtzu",
+      "to": "zurecht",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "zurückzu",
+      "to": "zurück",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    },
+    {
+      "kind": "prefix",
+      "from": "zusammenzu",
+      "to": "zusammen",
+      "input": 0,
+      "output": 3,
+      "reason": "zu-infinitive"
+    }
+  ]
+}

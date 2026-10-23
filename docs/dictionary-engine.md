@@ -82,7 +82,9 @@ mesmos arquivos `.aff`/`.dic` que ele distribui: os pacotes `dictionary-*` do wo
 
 Inglês utiliza ainda regras literais do Yomitan e
 exceções lexicais do WordNet 3.0; japonês utiliza regras condicionais do Yomitan e normalização
-de kana. Português possui regras conservadoras de plural e `-mente`. Os outros idiomas
+de kana. Espanhol, árabe e ucraniano usam as regras do Yomitan (as do árabe e parte das do
+ucraniano com os padrões dele), e alemão as de zu-infinitivo mais particípios ge…t/ge…en
+escritos no Lookitan. Português possui regras conservadoras de plural e `-mente`. Os outros idiomas
 recebem normalização de grafia, sem aplicar indevidamente sufixos ingleses ou portugueses.
 As regras são limitadas a 256 candidatos, 1.024 estados e 12 passos por consulta.
 

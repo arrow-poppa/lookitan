@@ -1,12 +1,14 @@
 //! Bounded lookup candidates, independently implemented for Lookitan.
 //!
-//! Japanese/English literal rules are derived from Yomitan's GPL-3.0-or-later
-//! descriptors (Copyright 2024-2026 Yomitan Authors); see data/README.md and the
-//! source hashes in data/*-yomitan.json. This is a bounded Rust implementation
-//! of condition-aware rule traversal, not a Lookupper language-pack port.
-//! English exceptions are Princeton WordNet 3.0 data, with its license retained.
+//! Japanese, English, Spanish, Arabic, Ukrainian and German rules are derived
+//! from Yomitan's GPL-3.0-or-later descriptors (Copyright 2024-2026 Yomitan
+//! Authors); see data/README.md and the source hashes in data/*-yomitan.json.
+//! This is a bounded Rust implementation of condition-aware rule traversal, not
+//! a Lookupper language-pack port. English exceptions are Princeton WordNet 3.0
+//! data, with its license retained.
 
 use super::folded;
+use fancy_regex::Regex;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::OnceLock;
@@ -27,25 +29,57 @@ struct RuleData {
 #[derive(Deserialize)]
 struct Rule {
     kind: RuleKind,
+    #[serde(default)]
     from: String,
+    #[serde(default)]
     to: String,
+    /// Yomitan's own pattern, when the literal ending is not the whole test: a minimum stem
+    /// (Ukrainian) or letters around the affixes (Arabic). Arabic has thousands, so each is
+    /// compiled the first time a word passes the rule's literal test.
+    #[serde(default)]
+    pattern: Option<String>,
+    #[serde(skip)]
+    compiled: OnceLock<Option<Regex>>,
+    /// An affix rule: the literal text its pattern starts and ends with, the characters it cuts
+    /// from the front and the back, and the text it adds there.
+    #[serde(default)]
+    starts: String,
+    #[serde(default)]
+    ends: String,
+    #[serde(default)]
+    cut: [usize; 2],
+    #[serde(default)]
+    add: [String; 2],
     input: u64,
     output: u64,
 }
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum RuleKind { Suffix, Prefix, Whole }
+enum RuleKind { Suffix, Prefix, Whole, Affix }
 
+impl Rule {
+    /// Whether `word` matches the rule's pattern; true without one. A pattern that does not
+    /// compile matches nothing (the embedded data's test compiles them all).
+    fn pattern_matches(&self, word: &str) -> bool {
+        let Some(source) = &self.pattern else { return true };
+        self.compiled.get_or_init(|| Regex::new(source).ok()).as_ref()
+            .is_some_and(|re| re.is_match(word).unwrap_or(false))
+    }
+}
+
+/// The rules of a Yomitan language code; English for any other.
 fn rules(language: &str) -> &'static RuleData {
-    static JAPANESE: OnceLock<RuleData> = OnceLock::new();
-    static ENGLISH: OnceLock<RuleData> = OnceLock::new();
-    let (cell, source) = if language == "ja" {
-        (&JAPANESE, include_str!("data/ja-yomitan.json"))
-    } else {
-        (&ENGLISH, include_str!("data/en-yomitan.json"))
+    static DATA: [OnceLock<RuleData>; 6] = [const { OnceLock::new() }; 6];
+    let (index, source) = match language {
+        "ja" => (0, include_str!("data/ja-yomitan.json")),
+        "es" => (2, include_str!("data/es-yomitan.json")),
+        "ar" => (3, include_str!("data/ar-yomitan.json")),
+        "uk" => (4, include_str!("data/uk-yomitan.json")),
+        "de" => (5, include_str!("data/de-yomitan.json")),
+        _ => (1, include_str!("data/en-yomitan.json")),
     };
-    cell.get_or_init(|| serde_json::from_str(source).expect("validated embedded Yomitan morphology data"))
+    DATA[index].get_or_init(|| serde_json::from_str(source).expect("validated embedded Yomitan morphology data"))
 }
 
 struct Candidates {
@@ -109,6 +143,13 @@ pub fn candidates(word: &str, language: &str) -> Vec<String> {
             portuguese(&normalized, &mut result);
             if unquoted != normalized { portuguese(unquoted, &mut result); }
         }
+        "es" | "spa" | "ar" | "ara" | "uk" | "ukr" | "de" | "deu" | "ger" => {
+            let code = match language.as_str() { "spa" => "es", "ara" => "ar", "ukr" => "uk", "deu" | "ger" => "de", code => code };
+            let data = rules(code);
+            transform(&normalized, data, false, &mut result);
+            if unquoted != normalized { transform(unquoted, data, false, &mut result); }
+            if code == "de" { german(&normalized, data, &mut result); }
+        }
         _ => {}
     }
     result.values
@@ -123,7 +164,17 @@ fn apply(rule: &Rule, word: &str) -> Option<String> {
         RuleKind::Suffix => format!("{}{}", word.strip_suffix(&rule.from)?, rule.to),
         RuleKind::Prefix => format!("{}{}", rule.to, word.strip_prefix(&rule.from)?),
         RuleKind::Whole => { if word != rule.from { return None; } rule.to.clone() }
+        RuleKind::Affix => {
+            if !word.starts_with(&rule.starts) || !word.ends_with(&rule.ends) { return None; }
+            let chars: Vec<char> = word.chars().collect();
+            let [front, back] = rule.cut;
+            if front + back > chars.len() { return None; }
+            let stem: String = chars[front..chars.len() - back].iter().collect();
+            format!("{}{stem}{}", rule.add[0], rule.add[1])
+        }
     };
+    // The literal test passed; Yomitan's pattern may still ask for more around it.
+    if !rule.pattern_matches(word) { return None; }
     (candidate != word && valid_length(&candidate) && !candidate.trim().is_empty()).then_some(candidate)
 }
 
@@ -215,6 +266,25 @@ fn portuguese(word: &str, result: &mut Candidates) {
     }
 }
 
+/// German past participles, which Yomitan finds with patterns rather than literal rules: ge…t
+/// gives …en and …n (gemacht -> machen, gearbeitet -> arbeiten), ge…en gives …en (gesehen ->
+/// sehen), each also after a separable prefix (angerufen -> anrufen). The separable prefixes are
+/// the ones Yomitan's zu-infinitive rules take off.
+fn german(word: &str, data: &RuleData, result: &mut Candidates) {
+    if !word.chars().all(char::is_alphabetic) { return; }
+    let prefixes = data.rules.iter().filter(|r| matches!(r.kind, RuleKind::Prefix)).map(|r| r.to.as_str());
+    for prefix in std::iter::once("").chain(prefixes) {
+        let Some(rest) = word.strip_prefix(prefix).and_then(|r| r.strip_prefix("ge")) else { continue };
+        if let Some(stem) = rest.strip_suffix('t').filter(|s| s.chars().count() >= 2) {
+            result.add(&format!("{prefix}{stem}en"));
+            result.add(&format!("{prefix}{stem}n"));
+        }
+        if rest.ends_with("en") && rest.chars().count() >= 4 {
+            result.add(&format!("{prefix}{rest}"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +316,32 @@ mod tests {
             has(word, "ja-JP", lemma);
         }
         has("ﾀﾍﾞﾏｼﾀ", "ja", "たべる");
+        // Forms the rules of Yomitan's October 2026 source added.
+        for (word, lemma) in [("食べやしない", "食べる"), ("行きやしません", "行く"), ("書かう", "書く")] {
+            has(word, "ja-JP", lemma);
+        }
+    }
+
+    #[test]
+    fn spanish_arabic_and_ukrainian_follow_yomitan() {
+        for (word, lemma) in [("fui", "ser"), ("fui", "ir"), ("puesto", "poner"), ("hecho", "hacer"), ("dijo", "decir"), ("hablando", "hablar"), ("vendrá", "venir")] {
+            has(word, "es-MX", lemma);
+        }
+        for (word, lemma) in [("الكتاب", "كتاب"), ("كتبت", "كتب"), ("يكتبون", "كتب"), ("والمدرسة", "مدرسة")] {
+            has(word, "ar-SA", lemma);
+        }
+        for (word, lemma) in [("книги", "книга"), ("пішов", "піти"), ("написала", "написати"), ("людей", "людина"), ("кращий", "добрий")] {
+            has(word, "uk-UA", lemma);
+        }
+        // Ukrainian's minimum stem: an ending is not taken off a word that is only the ending.
+        assert!(!candidates("зі", "uk").contains(&"зь".to_string()));
+    }
+
+    #[test]
+    fn german_participles_and_zu_infinitives() {
+        for (word, lemma) in [("gemacht", "machen"), ("gearbeitet", "arbeiten"), ("gesehen", "sehen"), ("angerufen", "anrufen"), ("aufzumachen", "aufmachen")] {
+            has(word, "de-DE", lemma);
+        }
     }
 
     #[test]
@@ -280,10 +376,20 @@ mod tests {
 
     #[test]
     fn embedded_data_has_the_expected_provenance_and_rules() {
-        assert_eq!(rules("ja").rules.len(), 834);
-        assert_eq!(rules("en").rules.len(), 98);
+        for (language, count) in [("ja", 928), ("en", 98), ("es", 518), ("ar", 7157), ("uk", 2959), ("de", 66)] {
+            let data = rules(language);
+            assert_eq!(data.rules.len(), count, "{language}");
+            // A literal rule has its text; an affix rule has its pattern. Every pattern compiles.
+            for r in &data.rules {
+                match r.kind {
+                    RuleKind::Affix => assert!(r.pattern.is_some(), "{language}"),
+                    _ => assert!(!r.from.is_empty(), "{language}"),
+                }
+                if let Some(source) = &r.pattern {
+                    assert!(Regex::new(source).is_ok(), "{language}: {source}");
+                }
+            }
+        }
         assert!(english_exceptions().len() > 4000);
-        assert!(rules("ja").rules.iter().all(|r| !r.from.is_empty()));
-        assert!(rules("en").rules.iter().all(|r| !r.from.is_empty()));
     }
 }

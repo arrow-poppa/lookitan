@@ -3,11 +3,11 @@
   "provenance": {
     "project": "Yomitan",
     "upstream": "https://github.com/yomidevs/yomitan/blob/master/ext/js/language/en/english-transforms.js",
-    "localSourceVersion": "26.6.15.0",
-    "sourceSha256": "7d1e97f9fd87dadbf85388db8f64bad4736583ad5b48932c61f0e9d389923977",
+    "sourceCommit": "d3c54c10264673eca0d66b970ef74cd5c8b048e3",
+    "sourceSha256": "2fea24ca321c0ccc2c4ed505195f4ab6b70fc618e2850fc72e82c43650b4aeb4",
     "copyright": "Copyright (C) 2024-2026 Yomitan Authors",
     "license": "GPL-3.0-or-later",
-    "skippedContextualRules": 39
+    "skippedContextualRules": 1
   },
   "conditionMasks": {
     "v": 1,
@@ -687,120 +687,120 @@
       "kind": "suffix",
       "from": "able",
       "to": "",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "able",
       "to": "e",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "iable",
       "to": "y",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "bbable",
       "to": "b",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "ddable",
       "to": "d",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "ggable",
       "to": "g",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "kkable",
       "to": "k",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "llable",
       "to": "l",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "mmable",
       "to": "m",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "nnable",
       "to": "n",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "ppable",
       "to": "p",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "rrable",
       "to": "r",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "ssable",
       "to": "s",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "ttable",
       "to": "t",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     },
     {
       "kind": "suffix",
       "from": "zzable",
       "to": "z",
-      "input": 1,
-      "output": 8,
+      "input": 8,
+      "output": 1,
       "reason": "-able"
     }
   ]

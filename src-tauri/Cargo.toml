@@ -49,6 +49,8 @@ quick-xml = "0.38"
 bzip2 = "0.6"
 lzma-rs = "0.3"
 regex = "1"
+# Yomitan's Arabic rules use lookbehind and lookahead, which `regex` does not have.
+fancy-regex = "0.13"
 hunspell-rs = "0.4"
 # hunspell-rs turns off hunspell-sys's default features, so its bindgen would not load libclang
 # itself; with another bindgen user (pipewire on Linux) clang-sys is in runtime mode and panics.

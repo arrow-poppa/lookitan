@@ -8,21 +8,40 @@ included. Original surface spelling wins before all proposed reductions.
 
 - Copyright (C) 2024–2026 Yomitan Authors.
 - License: **GPL-3.0-or-later**, under the project's included GPL license.
-- Source: the user-selected Yomitan extension, version **26.6.15.0**, at
-  `js/language/ja/japanese-transforms.js` and
-  `js/language/en/english-transforms.js`.
-- Canonical upstream locations:
-  <https://github.com/yomidevs/yomitan/blob/master/ext/js/language/ja/japanese-transforms.js>
-  and <https://github.com/yomidevs/yomitan/blob/master/ext/js/language/en/english-transforms.js>.
-- The exact source SHA256 and source version are embedded in each JSON file.
-  The upstream URLs identify the project; the local source hashes identify the
-  precise input used here.
-- Rebuild with `node generate-yomitan.mjs <extension-root>`.
-- `ja-yomitan.json` contains all **834** literal suffix/whole-word rules and
-  the condition masks resolved from Yomitan's condition hierarchy.
-- `en-yomitan.json` contains **98** literal suffix/prefix rules. **39**
-  contextual regex/phrasal-verb rules are intentionally omitted. This is not a
-  claim of complete Yomitan language-transform parity.
+- Source: the yomidevs/yomitan repository at commit
+  **d3c54c10264673eca0d66b970ef74cd5c8b048e3** (2026-10-22), files
+  `ext/js/language/<code>/<name>-transforms.js` for ja, en, es, ar, uk and de.
+  Before 2026-10-23, ja and en came from the user's extension 26.6.15.0.
+- Canonical upstream location:
+  <https://github.com/yomidevs/yomitan/tree/master/ext/js/language>.
+- The exact source SHA256 and commit are embedded in each JSON file.
+- Rebuild with `node generate-yomitan.mjs <yomitan-checkout>/ext`.
+- Rule counts and what is left out:
+  - `ja-yomitan.json`: all **928** suffix/whole-word rules, with the condition
+    masks resolved from Yomitan's condition hierarchy.
+  - `en-yomitan.json`: **98** suffix/prefix rules. One contextual
+    (phrasal-verb) rule is left out.
+  - `es-yomitan.json`: **518** suffix/whole-word rules, including the 239
+    irregular forms (fui → ser/ir). The **27** stem-change regex rules
+    (quiero → querer) are left out; Hunspell finds most of those forms.
+  - `ar-yomitan.json`: **7157** rules. 6764 of them are Yomitan's
+    prefix-and-suffix forms, kept with Yomitan's pattern (which uses lookbehind,
+    hence `fancy-regex`), the literal text the pattern starts and ends with,
+    and the characters cut and added at each end.
+  - `uk-yomitan.json`: **2959** rules. Where Yomitan's `requireStem` asks for
+    letters before an ending, the rule keeps its pattern (`.зі$`). **64**
+    contextual regex rules are left out.
+  - `de-yomitan.json`: only the **66** zu-infinitive rules
+    (aufzumachen → aufmachen). Yomitan's German participles are regex rules;
+    morphology.rs writes its own ge…t/ge…en rules, using these rules'
+    separable prefixes.
+- This is not a claim of complete Yomitan language-transform parity.
+
+The generator reads each rule's literal text from the three helper functions it
+substitutes. A rule made by a language's own helper (Arabic) is kept only when
+its deinflection merely cuts characters at the ends and adds text there. It runs
+the deinflection on runs of private-use characters to read off what is cut and
+added; other contextual rules are left out.
 
 The JSON is static data. The Rust runtime does not load or execute the source
 JavaScript. Its bounded traversal is independently written, using the condition

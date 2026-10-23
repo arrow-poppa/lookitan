@@ -96,8 +96,10 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   (Lookupper's de/en/es/fr/pt/ru plus every other recognition language with a wooorm/dictionaries
   package: bg cs da el hr hu it la nb nl pl ro sk sl sr sr-latn sv tr uk; Bosnian uses hr; fi, id and ar have none;
   `dictionaries/hunspell.rs`; files in `resources/hunspell/` from
-  `fetch-assets.py`, one language loaded at a time), then Yomitan JA/EN rules + WordNet EN
-  exceptions and conservative PT rules. Original Lookupper language packs/algorithms are not copied.
+  `fetch-assets.py`, one language loaded at a time), then Yomitan rules for ja, en, es, ar, uk
+  and de (zu-infinitive only; `data/*-yomitan.json` from yomidevs/yomitan d3c54c1, Arabic and
+  some Ukrainian rules carry Yomitan's pattern, run with fancy-regex), German ge…t/ge…en
+  participles written in morphology.rs, WordNet EN exceptions and conservative PT rules. Original Lookupper language packs/algorithms are not copied.
   Run reader tests on GitHub Actions (`dictionary-engine` / `scripts/dictionary-harness`), never
   compile Rust locally. Dependency lockfile resolution without compiling is allowed.
 
@@ -326,6 +328,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-23 (Claude, `tests`): at the user's request, Yomitan's Spanish, Arabic and Ukrainian rules (fui → ser/ir, يكتبون → كتب, людей → людина), its newer Japanese rules (928, from 834) and English, all regenerated from yomidevs/yomitan d3c54c1, plus German zu-infinitives and ge…t/ge…en participles. The generator now keeps Yomitan's patterns and Arabic's prefix-and-suffix rules (`kind: "affix"`). NOTICE.md also lists the 19 Hunspell dictionaries added on 2026-10-22.
 
 - 2026-10-22 (Claude, `tests`): at the user's request, Hunspell dictionary forms for every recognition language with a wooorm/dictionaries package (bg cs da el hr hu it la nb nl pl ro sk sl sr sr-latn sv tr uk, about 19 MB more in the installer; Bosnian uses hr; fi, id and ar have none), and Settings › Essenciais › "Separação de palavras" to delete the ja/zh/ko analyzer or, once deleted, download it, like Lookupper's analyzer model buttons.
 - 2026-10-22 (Claude, `tests`): at the user's request, a Japanese, Chinese or Korean lookup made while the word analyzer is still downloading or loading shows a waiting pop-up with its progress and goes on when it is ready, instead of using the longest-match path (`wait_for_segmenter`).

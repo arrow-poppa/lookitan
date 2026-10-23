@@ -3,8 +3,8 @@
   "provenance": {
     "project": "Yomitan",
     "upstream": "https://github.com/yomidevs/yomitan/blob/master/ext/js/language/ja/japanese-transforms.js",
-    "localSourceVersion": "26.6.15.0",
-    "sourceSha256": "467b7973efec4ba871bda47a0098e13585aa223b936a95a8d734bea474d0589a",
+    "sourceCommit": "d3c54c10264673eca0d66b970ef74cd5c8b048e3",
+    "sourceSha256": "478750d4ad2eae019d4eeb43112d7cf7683598f2725ebc1c973e546efe024d39",
     "copyright": "Copyright (C) 2024-2026 Yomitan Authors",
     "license": "GPL-3.0-or-later",
     "skippedContextualRules": 0
@@ -45,6 +45,14 @@
     {
       "kind": "suffix",
       "from": "えば",
+      "to": "う",
+      "input": 4096,
+      "output": 28,
+      "reason": "-ば"
+    },
+    {
+      "kind": "suffix",
+      "from": "へば",
       "to": "う",
       "input": 4096,
       "output": 28,
@@ -652,6 +660,14 @@
     },
     {
       "kind": "suffix",
+      "from": "ひなさい",
+      "to": "う",
+      "input": 65536,
+      "output": 28,
+      "reason": "-なさい"
+    },
+    {
+      "kind": "suffix",
       "from": "きなさい",
       "to": "く",
       "input": 65536,
@@ -772,7 +788,23 @@
     },
     {
       "kind": "suffix",
+      "from": "さう",
+      "to": "い",
+      "input": 0,
+      "output": 256,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "そう",
+      "to": "る",
+      "input": 0,
+      "output": 3,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
+      "from": "さう",
       "to": "る",
       "input": 0,
       "output": 3,
@@ -788,7 +820,23 @@
     },
     {
       "kind": "suffix",
+      "from": "ひさう",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "きそう",
+      "to": "く",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
+      "from": "きさう",
       "to": "く",
       "input": 0,
       "output": 28,
@@ -804,7 +852,23 @@
     },
     {
       "kind": "suffix",
+      "from": "ぎさう",
+      "to": "ぐ",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "しそう",
+      "to": "す",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
+      "from": "しさう",
       "to": "す",
       "input": 0,
       "output": 28,
@@ -820,7 +884,23 @@
     },
     {
       "kind": "suffix",
+      "from": "ちさう",
+      "to": "つ",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "にそう",
+      "to": "ぬ",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
+      "from": "にさう",
       "to": "ぬ",
       "input": 0,
       "output": 28,
@@ -836,7 +916,23 @@
     },
     {
       "kind": "suffix",
+      "from": "びさう",
+      "to": "ぶ",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "みそう",
+      "to": "む",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
+      "from": "みさう",
       "to": "む",
       "input": 0,
       "output": 28,
@@ -852,7 +948,23 @@
     },
     {
       "kind": "suffix",
+      "from": "りさう",
+      "to": "る",
+      "input": 0,
+      "output": 28,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "じそう",
+      "to": "ずる",
+      "input": 0,
+      "output": 128,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
+      "from": "じさう",
       "to": "ずる",
       "input": 0,
       "output": 128,
@@ -868,7 +980,23 @@
     },
     {
       "kind": "suffix",
+      "from": "しさう",
+      "to": "する",
+      "input": 0,
+      "output": 64,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "為そう",
+      "to": "為る",
+      "input": 0,
+      "output": 64,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
+      "from": "為さう",
       "to": "為る",
       "input": 0,
       "output": 64,
@@ -884,6 +1012,14 @@
     },
     {
       "kind": "suffix",
+      "from": "きさう",
+      "to": "くる",
+      "input": 0,
+      "output": 32,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "来そう",
       "to": "来る",
       "input": 0,
@@ -892,7 +1028,23 @@
     },
     {
       "kind": "suffix",
+      "from": "来さう",
+      "to": "来る",
+      "input": 0,
+      "output": 32,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
       "from": "來そう",
+      "to": "來る",
+      "input": 0,
+      "output": 32,
+      "reason": "-そう"
+    },
+    {
+      "kind": "suffix",
+      "from": "來さう",
       "to": "來る",
       "input": 0,
       "output": 32,
@@ -917,6 +1069,14 @@
     {
       "kind": "suffix",
       "from": "いすぎる",
+      "to": "う",
+      "input": 3,
+      "output": 28,
+      "reason": "-すぎる"
+    },
+    {
+      "kind": "suffix",
+      "from": "ひすぎる",
       "to": "う",
       "input": 3,
       "output": 28,
@@ -1060,6 +1220,14 @@
     },
     {
       "kind": "suffix",
+      "from": "ひ過ぎる",
+      "to": "う",
+      "input": 3,
+      "output": 28,
+      "reason": "-過ぎる"
+    },
+    {
+      "kind": "suffix",
       "from": "き過ぎる",
       "to": "く",
       "input": 3,
@@ -1181,6 +1349,14 @@
     {
       "kind": "suffix",
       "from": "いたい",
+      "to": "う",
+      "input": 256,
+      "output": 28,
+      "reason": "-たい"
+    },
+    {
+      "kind": "suffix",
+      "from": "ひたい",
       "to": "う",
       "input": 256,
       "output": 28,
@@ -2260,6 +2436,14 @@
     },
     {
       "kind": "suffix",
+      "from": "はず",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "-ず"
+    },
+    {
+      "kind": "suffix",
       "from": "ぜず",
       "to": "ずる",
       "input": 0,
@@ -2381,6 +2565,14 @@
     {
       "kind": "suffix",
       "from": "わぬ",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "-ぬ"
+    },
+    {
+      "kind": "suffix",
+      "from": "はぬ",
       "to": "う",
       "input": 0,
       "output": 28,
@@ -2516,6 +2708,14 @@
     },
     {
       "kind": "suffix",
+      "from": "はん",
+      "to": "う",
+      "input": 32768,
+      "output": 28,
+      "reason": "-ん"
+    },
+    {
+      "kind": "suffix",
       "from": "ぜん",
       "to": "ずる",
       "input": 32768,
@@ -2637,6 +2837,14 @@
     {
       "kind": "suffix",
       "from": "わんばかり",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "-んばかり"
+    },
+    {
+      "kind": "suffix",
+      "from": "はんばかり",
       "to": "う",
       "input": 0,
       "output": 28,
@@ -2772,6 +2980,14 @@
     },
     {
       "kind": "suffix",
+      "from": "はんとする",
+      "to": "う",
+      "input": 64,
+      "output": 28,
+      "reason": "-んとする"
+    },
+    {
+      "kind": "suffix",
       "from": "ぜんとする",
       "to": "ずる",
       "input": 64,
@@ -2893,6 +3109,14 @@
     {
       "kind": "suffix",
       "from": "わむ",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "-む"
+    },
+    {
+      "kind": "suffix",
+      "from": "はむ",
       "to": "う",
       "input": 0,
       "output": 28,
@@ -3028,6 +3252,14 @@
     },
     {
       "kind": "suffix",
+      "from": "はざる",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "-ざる"
+    },
+    {
+      "kind": "suffix",
       "from": "ぜざる",
       "to": "ずる",
       "input": 0,
@@ -3149,6 +3381,14 @@
     {
       "kind": "suffix",
       "from": "わねば",
+      "to": "う",
+      "input": 4096,
+      "output": 28,
+      "reason": "-ねば"
+    },
+    {
+      "kind": "suffix",
+      "from": "はねば",
       "to": "う",
       "input": 4096,
       "output": 28,
@@ -3285,6 +3525,14 @@
     {
       "kind": "suffix",
       "from": "わせる",
+      "to": "う",
+      "input": 3,
+      "output": 28,
+      "reason": "causative"
+    },
+    {
+      "kind": "suffix",
+      "from": "はせる",
       "to": "う",
       "input": 3,
       "output": 28,
@@ -3444,6 +3692,14 @@
     },
     {
       "kind": "suffix",
+      "from": "はす",
+      "to": "う",
+      "input": 16,
+      "output": 28,
+      "reason": "short causative"
+    },
+    {
+      "kind": "suffix",
       "from": "じさす",
       "to": "ずる",
       "input": 8,
@@ -3517,6 +3773,14 @@
     {
       "kind": "suffix",
       "from": "え",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "imperative"
+    },
+    {
+      "kind": "suffix",
+      "from": "へ",
       "to": "う",
       "input": 0,
       "output": 28,
@@ -3844,6 +4108,14 @@
     },
     {
       "kind": "suffix",
+      "from": "ひ",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "continuative"
+    },
+    {
+      "kind": "suffix",
       "from": "き",
       "to": "く",
       "input": 0,
@@ -4028,6 +4300,14 @@
     },
     {
       "kind": "suffix",
+      "from": "はない",
+      "to": "う",
+      "input": 256,
+      "output": 28,
+      "reason": "negative"
+    },
+    {
+      "kind": "suffix",
       "from": "じない",
       "to": "ずる",
       "input": 256,
@@ -4149,6 +4429,14 @@
     {
       "kind": "suffix",
       "from": "われる",
+      "to": "う",
+      "input": 3,
+      "output": 28,
+      "reason": "passive"
+    },
+    {
+      "kind": "suffix",
+      "from": "はれる",
       "to": "う",
       "input": 3,
       "output": 28,
@@ -4612,6 +4900,14 @@
     },
     {
       "kind": "suffix",
+      "from": "ひます",
+      "to": "う",
+      "input": 512,
+      "output": 4,
+      "reason": "-ます"
+    },
+    {
+      "kind": "suffix",
       "from": "きます",
       "to": "く",
       "input": 512,
@@ -4916,7 +5212,23 @@
     },
     {
       "kind": "suffix",
+      "from": "やう",
+      "to": "る",
+      "input": 0,
+      "output": 3,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "おう",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "はう",
       "to": "う",
       "input": 0,
       "output": 28,
@@ -4932,7 +5244,23 @@
     },
     {
       "kind": "suffix",
+      "from": "かう",
+      "to": "く",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "ごう",
+      "to": "ぐ",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "がう",
       "to": "ぐ",
       "input": 0,
       "output": 28,
@@ -4948,7 +5276,23 @@
     },
     {
       "kind": "suffix",
+      "from": "さう",
+      "to": "す",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "とう",
+      "to": "つ",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "たう",
       "to": "つ",
       "input": 0,
       "output": 28,
@@ -4964,7 +5308,23 @@
     },
     {
       "kind": "suffix",
+      "from": "なう",
+      "to": "ぬ",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "ぼう",
+      "to": "ぶ",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "ばう",
       "to": "ぶ",
       "input": 0,
       "output": 28,
@@ -4980,7 +5340,23 @@
     },
     {
       "kind": "suffix",
+      "from": "まう",
+      "to": "む",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "ろう",
+      "to": "る",
+      "input": 0,
+      "output": 28,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "らう",
       "to": "る",
       "input": 0,
       "output": 28,
@@ -4996,7 +5372,23 @@
     },
     {
       "kind": "suffix",
+      "from": "じやう",
+      "to": "ずる",
+      "input": 0,
+      "output": 128,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "しよう",
+      "to": "する",
+      "input": 0,
+      "output": 64,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "しやう",
       "to": "する",
       "input": 0,
       "output": 64,
@@ -5012,7 +5404,23 @@
     },
     {
       "kind": "suffix",
+      "from": "為やう",
+      "to": "為る",
+      "input": 0,
+      "output": 64,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "こよう",
+      "to": "くる",
+      "input": 0,
+      "output": 32,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "こやう",
       "to": "くる",
       "input": 0,
       "output": 32,
@@ -5028,7 +5436,23 @@
     },
     {
       "kind": "suffix",
+      "from": "来やう",
+      "to": "来る",
+      "input": 0,
+      "output": 32,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "來よう",
+      "to": "來る",
+      "input": 0,
+      "output": 32,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "來やう",
       "to": "來る",
       "input": 0,
       "output": 32,
@@ -5044,7 +5468,23 @@
     },
     {
       "kind": "suffix",
+      "from": "ませう",
+      "to": "ます",
+      "input": 0,
+      "output": 512,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
       "from": "かろう",
+      "to": "い",
+      "input": 0,
+      "output": 256,
+      "reason": "volitional"
+    },
+    {
+      "kind": "suffix",
+      "from": "からう",
       "to": "い",
       "input": 0,
       "output": 256,
@@ -5316,6 +5756,14 @@
     },
     {
       "kind": "suffix",
+      "from": "てゐる",
+      "to": "て",
+      "input": 3,
+      "output": 2048,
+      "reason": "-いる"
+    },
+    {
+      "kind": "suffix",
       "from": "ておる",
       "to": "て",
       "input": 28,
@@ -5333,6 +5781,14 @@
     {
       "kind": "suffix",
       "from": "でいる",
+      "to": "で",
+      "input": 3,
+      "output": 2048,
+      "reason": "-いる"
+    },
+    {
+      "kind": "suffix",
+      "from": "でゐる",
       "to": "で",
       "input": 3,
       "output": 2048,
@@ -5369,6 +5825,22 @@
       "input": 3,
       "output": 256,
       "reason": "-いる"
+    },
+    {
+      "kind": "suffix",
+      "from": "ないでゐる",
+      "to": "ない",
+      "input": 3,
+      "output": 256,
+      "reason": "-いる"
+    },
+    {
+      "kind": "suffix",
+      "from": "ふ",
+      "to": "う",
+      "input": 0,
+      "output": 28,
+      "reason": "-ふ"
     },
     {
       "kind": "suffix",
@@ -5413,6 +5885,14 @@
     {
       "kind": "suffix",
       "from": "いやがる",
+      "to": "う",
+      "input": 28,
+      "output": 28,
+      "reason": "-やがる"
+    },
+    {
+      "kind": "suffix",
+      "from": "ひやがる",
       "to": "う",
       "input": 28,
       "output": 28,
@@ -5529,6 +6009,278 @@
       "input": 28,
       "output": 32,
       "reason": "-やがる"
+    },
+    {
+      "kind": "suffix",
+      "from": "やしない",
+      "to": "る",
+      "input": 256,
+      "output": 3,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "いやしない",
+      "to": "う",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "ひやしない",
+      "to": "う",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "きやしない",
+      "to": "く",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "ぎやしない",
+      "to": "ぐ",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "しやしない",
+      "to": "す",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "ちやしない",
+      "to": "つ",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "にやしない",
+      "to": "ぬ",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "びやしない",
+      "to": "ぶ",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "みやしない",
+      "to": "む",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "りやしない",
+      "to": "る",
+      "input": 256,
+      "output": 28,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "じやしない",
+      "to": "ずる",
+      "input": 256,
+      "output": 128,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "しやしない",
+      "to": "する",
+      "input": 256,
+      "output": 64,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "為やしない",
+      "to": "為る",
+      "input": 256,
+      "output": 64,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "きやしない",
+      "to": "くる",
+      "input": 256,
+      "output": 32,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "来やしない",
+      "to": "来る",
+      "input": 256,
+      "output": 32,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "來やしない",
+      "to": "來る",
+      "input": 256,
+      "output": 32,
+      "reason": "-やしない"
+    },
+    {
+      "kind": "suffix",
+      "from": "やしません",
+      "to": "る",
+      "input": 1024,
+      "output": 3,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "いやしません",
+      "to": "う",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "ひやしません",
+      "to": "う",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "きやしません",
+      "to": "く",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "ぎやしません",
+      "to": "ぐ",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "しやしません",
+      "to": "す",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "ちやしません",
+      "to": "つ",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "にやしません",
+      "to": "ぬ",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "びやしません",
+      "to": "ぶ",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "みやしません",
+      "to": "む",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "りやしません",
+      "to": "る",
+      "input": 1024,
+      "output": 28,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "じやしません",
+      "to": "ずる",
+      "input": 1024,
+      "output": 128,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "しやしません",
+      "to": "する",
+      "input": 1024,
+      "output": 64,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "為やしません",
+      "to": "為る",
+      "input": 1024,
+      "output": 64,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "きやしません",
+      "to": "くる",
+      "input": 1024,
+      "output": 32,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "来やしません",
+      "to": "来る",
+      "input": 1024,
+      "output": 32,
+      "reason": "-やしません"
+    },
+    {
+      "kind": "suffix",
+      "from": "來やしません",
+      "to": "來る",
+      "input": 1024,
+      "output": 32,
+      "reason": "-やしません"
     },
     {
       "kind": "suffix",
