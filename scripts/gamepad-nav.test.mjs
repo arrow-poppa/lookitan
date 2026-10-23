@@ -16,3 +16,13 @@ test('the D-pad moves to the nearest word that way, along the line first', () =>
     // From the end of the first line, down goes to the word below, not the next line's first word.
     assert.equal(nearest(centre(words[2]), words, 'down'), 5);
 });
+
+test('a PlayStation pad names the buttons as it prints them', async () => {
+    const {buttonName, detectLayout} = await import('../src/lib/gamepad-buttons.js');
+    assert.equal(detectLayout('DualSense Wireless Controller'), 'ps');
+    assert.equal(detectLayout('Sony Interactive Entertainment Wireless Controller'), 'ps');
+    assert.equal(detectLayout('Xbox Controller'), 'xbox');
+    assert.equal(detectLayout(null), 'xbox');
+    assert.deepEqual(['A', 'B', 'X', 'Y', 'LB', 'RT', 'Menu'].map((b) => buttonName(b, 'ps')), ['✕', '○', '□', '△', 'L1', 'R2', 'Options']);
+    assert.deepEqual(['A', 'LS', 'Up'].map((b) => buttonName(b)), ['A', 'L3', 'Direcional ↑']);
+});

@@ -6,6 +6,7 @@ or adapts the following work.
 | Component | Use in Lookitan | License |
 | --- | --- | --- |
 | [yomitan-byok-ai](https://github.com/arrow-poppa/yomitan-byok-ai) (Yomitan fork) | `src/lib/ai/ai-provider.js` and the AI option set | GPL-3.0-or-later |
+| [Harbor](https://github.com/arrow-poppa/streaming) (branch `claude/harbor-immersion-controller`) | PlayStation HID report reading (`src-tauri/src/gamepad/playstation.rs`), evdev code table (`gamepad.rs`) and PlayStation button names (`src/lib/gamepad-buttons.js`), adapted | MIT |
 | [Yomitan](https://github.com/yomidevs/yomitan) | `src/lib/ai/json.js`, `src/lib/ai/object-utilities.js` | GPL-3.0-or-later |
 | Yomitan Authors, © 2024–2026 | Japanese, English, Spanish, Arabic, Ukrainian and German (zu-infinitive) declarative morphology rules, independently traversed in Rust; source commit/hashes and generator in `src-tauri/src/dictionaries/data/` | GPL-3.0-or-later |
 | [Princeton WordNet 3.0](https://wordnet.princeton.edu/) | English exception lists; original data, full license and immutable-source hashes in `src-tauri/src/dictionaries/data/` | WordNet 3.0 license (© 2006 Princeton University) |

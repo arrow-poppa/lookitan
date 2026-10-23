@@ -3,13 +3,14 @@
 //! between the pop-up's controls, or the overlay's words when the pop-up is closed, the right
 //! stick scrolls, and four buttons confirm, close, save the word and pronounce it. Lookupper reads
 //! XInput (plus raw HID); Lookitan reads gilrs's XInput backend on Windows, which works while
-//! another window has the focus, and evdev on Linux. Unlike Lookupper, the four action buttons can
-//! be changed.
+//! another window has the focus, PlayStation pads' HID reports there (playstation.rs), and evdev
+//! on Linux, by the standard codes when gilrs has no mapping for the pad. Unlike Lookupper, the
+//! four action buttons can be changed.
 //!
 //! `Machine` turns the buttons held at each tick into `Signal`s and knows nothing of gilrs, so it
 //! is tested without a controller.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,8 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::settings::GamepadSettings;
+
+mod playstation;
 
 /// Buttons by their Xbox names, which settings store.
 pub const BUTTONS: [&str; 16] = [
@@ -201,6 +204,8 @@ pub fn connected() -> Option<String> {
 /// Reads the controllers on a thread of its own. `navigate()` says whether a pop-up or an overlay
 /// is on screen; `signal` receives what the buttons mean.
 pub fn start(navigate: impl Fn() -> bool + Send + 'static, signal: impl Fn(Signal) + Send + 'static) {
+    #[cfg(windows)]
+    std::thread::spawn(playstation::run);
     std::thread::spawn(move || {
         let mut gilrs = match gilrs::Gilrs::new() {
             Ok(g) => g,
@@ -211,12 +216,19 @@ pub fn start(navigate: impl Fn() -> bool + Send + 'static, signal: impl Fn(Signa
             }
         };
         let mut machine = Machine::new();
+        let mut raw: HashMap<gilrs::GamepadId, Input> = HashMap::new();
         loop {
-            let _ = gilrs.next_event_blocking(Some(TICK));
-            while gilrs.next_event().is_some() {}
+            if let Some(event) = gilrs.next_event_blocking(Some(TICK)) {
+                raw_event(&mut raw, event);
+                while let Some(event) = gilrs.next_event() {
+                    raw_event(&mut raw, event);
+                }
+            }
+            let hid = playstation::state();
             let (config, capture) = {
                 let mut s = shared().lock();
-                s.connected = gilrs.gamepads().find(|(_, g)| g.is_connected()).map(|(_, g)| g.name().to_string());
+                s.connected = gilrs.gamepads().find(|(_, g)| g.is_connected()).map(|(_, g)| g.name().to_string())
+                    .or_else(|| hid.as_ref().map(|(name, _)| name.clone()));
                 (s.config.clone(), s.capture.take())
             };
             match capture {
@@ -224,7 +236,10 @@ pub fn start(navigate: impl Fn() -> bool + Send + 'static, signal: impl Fn(Signa
                 Some(false) => machine.stop_capture(),
                 None => {}
             }
-            let input = read(&gilrs);
+            let mut input = read(&gilrs);
+            for extra in raw.values().chain(hid.as_ref().map(|(_, input)| input)) {
+                merge(&mut input, extra);
+            }
             let busy = !input.buttons.is_empty() || input.left.0.abs().max(input.left.1.abs()) >= STICK_PRESS || input.right_y.abs() > SCROLL_DEAD;
             let navigate = config.navigation && busy && navigate();
             for s in machine.step(&input, &config, navigate, Instant::now()) {
@@ -232,6 +247,13 @@ pub fn start(navigate: impl Fn() -> bool + Send + 'static, signal: impl Fn(Signa
             }
         }
     });
+}
+
+/// Adds what another source holds: its buttons, and each stick where it is pushed further.
+fn merge(input: &mut Input, other: &Input) {
+    input.buttons.extend(other.buttons.iter().copied());
+    if other.left.0.abs().max(other.left.1.abs()) > input.left.0.abs().max(input.left.1.abs()) { input.left = other.left; }
+    if other.right_y.abs() > input.right_y.abs() { input.right_y = other.right_y; }
 }
 
 fn read(gilrs: &gilrs::Gilrs) -> Input {
@@ -245,15 +267,97 @@ fn read(gilrs: &gilrs::Gilrs) -> Input {
     let mut input = Input::default();
     for (_, pad) in gilrs.gamepads() {
         if !pad.is_connected() { continue; }
+        let mut own = Input::default();
         for (button, name) in NAMES {
-            if pad.is_pressed(button) { input.buttons.insert(name); }
+            if pad.is_pressed(button) { own.buttons.insert(name); }
         }
-        let left = (pad.value(Axis::LeftStickX), pad.value(Axis::LeftStickY));
-        if left.0.abs().max(left.1.abs()) > input.left.0.abs().max(input.left.1.abs()) { input.left = left; }
-        let right = pad.value(Axis::RightStickY);
-        if right.abs() > input.right_y.abs() { input.right_y = right; }
+        // A D-pad some pads report as an axis (a hat) rather than as four buttons.
+        hat(&mut own, pad.value(Axis::DPadX), pad.value(Axis::DPadY));
+        own.left = (pad.value(Axis::LeftStickX), pad.value(Axis::LeftStickY));
+        own.right_y = pad.value(Axis::RightStickY);
+        merge(&mut input, &own);
     }
     input
+}
+
+const HAT_PRESS: f32 = 0.5;
+
+/// A hat's two axes, up positive, as D-pad buttons.
+fn hat(input: &mut Input, x: f32, y: f32) {
+    if x > HAT_PRESS { input.buttons.insert("Right"); }
+    if x < -HAT_PRESS { input.buttons.insert("Left"); }
+    if y > HAT_PRESS { input.buttons.insert("Up"); }
+    if y < -HAT_PRESS { input.buttons.insert("Down"); }
+}
+
+/// Buttons and axes gilrs has no mapping for (a generic pad on Linux), known by their standard
+/// evdev codes, as Harbor (arrow-poppa/streaming, MIT) reads them.
+fn raw_event(raw: &mut HashMap<gilrs::GamepadId, Input>, event: gilrs::Event) {
+    use gilrs::{Axis, Button, EventType};
+    if matches!(event.event, EventType::Disconnected) {
+        raw.remove(&event.id);
+        return;
+    }
+    let pad = raw.entry(event.id).or_default();
+    match event.event {
+        EventType::ButtonPressed(Button::Unknown, code) => {
+            if let Some(name) = evdev_button(code.into_u32()) { pad.buttons.insert(name); }
+        }
+        EventType::ButtonReleased(Button::Unknown, code) => {
+            if let Some(name) = evdev_button(code.into_u32()) { pad.buttons.remove(name); }
+        }
+        EventType::AxisChanged(Axis::Unknown, value, code) => {
+            // gilrs does not turn an unknown axis, so its Y keeps evdev's down positive.
+            match evdev_axis(code.into_u32()) {
+                Some(RawAxis::LeftX) => pad.left.0 = value,
+                Some(RawAxis::LeftY) => pad.left.1 = -value,
+                Some(RawAxis::RightY) => pad.right_y = -value,
+                Some(RawAxis::HatX) => {
+                    pad.buttons.remove("Left");
+                    pad.buttons.remove("Right");
+                    if value > HAT_PRESS { pad.buttons.insert("Right"); } else if value < -HAT_PRESS { pad.buttons.insert("Left"); }
+                }
+                Some(RawAxis::HatY) => {
+                    pad.buttons.remove("Up");
+                    pad.buttons.remove("Down");
+                    if value < -HAT_PRESS { pad.buttons.insert("Up"); } else if value > HAT_PRESS { pad.buttons.insert("Down"); }
+                }
+                None => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+const EV_KEY: u32 = 1;
+const EV_ABS: u32 = 3;
+
+/// A Linux evdev key code (`EV_KEY << 16 | code`, as gilrs packs it) by Xbox name. Other
+/// platforms' codes never match.
+fn evdev_button(raw: u32) -> Option<&'static str> {
+    if !cfg!(target_os = "linux") || raw >> 16 != EV_KEY { return None; }
+    Some(match raw & 0xFFFF {
+        0x130 => "A", 0x131 => "B", 0x133 => "Y", 0x134 => "X",
+        0x136 => "LB", 0x137 => "RB", 0x138 => "LT", 0x139 => "RT",
+        0x13a => "View", 0x13b => "Menu", 0x13d => "LS", 0x13e => "RS",
+        0x220 => "Up", 0x221 => "Down", 0x222 => "Left", 0x223 => "Right",
+        _ => return None,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+enum RawAxis { LeftX, LeftY, RightY, HatX, HatY }
+
+fn evdev_axis(raw: u32) -> Option<RawAxis> {
+    if !cfg!(target_os = "linux") || raw >> 16 != EV_ABS { return None; }
+    Some(match raw & 0xFFFF {
+        0x00 => RawAxis::LeftX,
+        0x01 => RawAxis::LeftY,
+        0x04 => RawAxis::RightY,
+        0x10 => RawAxis::HatX,
+        0x11 => RawAxis::HatY,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -311,6 +415,29 @@ mod tests {
         assert_eq!(m.step(&stick, &c, true, t + Duration::from_millis(620)), vec![Signal::Move(Direction::Right)]);
         let scroll = Input { right_y: -1.0, ..Input::default() };
         assert_eq!(m.step(&scroll, &c, true, t + Duration::from_millis(700)), vec![Signal::Scroll(SCROLL_SPEED)]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unmapped_evdev_codes_are_read_by_their_standard_names() {
+        let key = |code: u32| (EV_KEY << 16) | code;
+        let abs = |code: u32| (EV_ABS << 16) | code;
+        assert_eq!(evdev_button(key(0x130)), Some("A"));
+        assert_eq!(evdev_button(key(0x134)), Some("X"));
+        assert_eq!(evdev_button(key(0x13b)), Some("Menu"));
+        assert_eq!(evdev_button(key(0x223)), Some("Right"));
+        assert_eq!(evdev_axis(abs(0x01)), Some(RawAxis::LeftY));
+        assert_eq!(evdev_axis(abs(0x11)), Some(RawAxis::HatY));
+        assert_eq!(evdev_axis(abs(0x02)), None, "a trigger is not a stick");
+        assert_eq!(evdev_button(abs(0x130)), None);
+        for raw in 0u32..=255 { assert_eq!(evdev_button(raw), None); }
+    }
+
+    #[test]
+    fn a_hat_counts_as_the_d_pad() {
+        let mut input = Input::default();
+        hat(&mut input, 1.0, -1.0);
+        assert_eq!(input.buttons.iter().copied().collect::<Vec<_>>(), vec!["Down", "Right"]);
     }
 
     #[test]

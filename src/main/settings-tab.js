@@ -3,6 +3,7 @@
 import {getVersion} from '@tauri-apps/api/app';
 import {ask} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
+import {buttonName, detectLayout} from '../lib/gamepad-buttons.js';
 import {icon} from '../lib/icons.js';
 import {renderAnkiSection} from './anki-panel.js';
 import {renderAudioSection} from './audio-panel.js';
@@ -123,7 +124,8 @@ function mouseBox(supported) {
 
 // Controller buttons by their Xbox names, as gamepad.rs reads them.
 const GAMEPAD_BUTTONS = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', 'Up', 'Down', 'Left', 'Right'];
-const GAMEPAD_NAMES = {LS: 'L3', RS: 'R3', Up: 'Direcional ↑', Down: 'Direcional ↓', Left: 'Direcional ←', Right: 'Direcional →'};
+// The connected pad's layout, for the buttons' names (a PlayStation pad shows ✕ ○ □ △).
+let gamepadLayout = 'xbox';
 const GAMEPAD_ACTIONS = [['confirm', 'Confirmar'], ['close', 'Fechar'], ['save', 'Salvar palavra'], ['pronounce', 'Pronunciar']];
 // One "gamepad-capture" listener for the window; it calls the box shown now.
 let gamepadCaptureHandler = null;
@@ -141,7 +143,7 @@ function gamepadSettings() {
 }
 
 function gamepadLabel(buttons) {
-    return (buttons || []).map((b) => GAMEPAD_NAMES[b] || b).join(' + ');
+    return (buttons || []).map((b) => buttonName(b, gamepadLayout)).join(' + ');
 }
 
 /** The look-up combination: click, then hold the buttons on the controller and let go. */
@@ -201,6 +203,12 @@ function gamepadStatusLine() {
         line.textContent = name
             ? `Combinação de botões para consultar a palavra sob o cursor. Conectado: ${name}.`
             : 'Combinação de botões para consultar a palavra sob o cursor. Nenhum controle conectado agora.';
+        // A PlayStation pad renames the buttons; the settings redraw once with its names.
+        const layout = name ? detectLayout(name) : gamepadLayout;
+        if (layout !== gamepadLayout) {
+            gamepadLayout = layout;
+            rerender();
+        }
     }, () => {});
     return line;
 }
@@ -212,7 +220,7 @@ function gamepadRows() {
         desc: 'Direcional ou analógico esquerdo: selecionar · analógico direito: rolar. Com o pop-up aberto, anda pelos botões dele; fechado, pelas palavras na tela. Desligue se o seu controle já move o cursor do mouse (Steam Input).',
         control: toggle(g.navigation, (v) => { g.navigation = v; save(); rerender(); })})];
     if (!g.navigation) { return rows; }
-    const choices = GAMEPAD_BUTTONS.filter((b) => !['Up', 'Down', 'Left', 'Right'].includes(b)).map((b) => ({value: b, label: GAMEPAD_NAMES[b] || b}));
+    const choices = GAMEPAD_BUTTONS.filter((b) => !['Up', 'Down', 'Left', 'Right'].includes(b)).map((b) => ({value: b, label: buttonName(b, gamepadLayout)}));
     for (const [key, label] of GAMEPAD_ACTIONS) {
         const control = select(choices, g[key], (v) => {
             const other = GAMEPAD_ACTIONS.find(([k]) => k !== key && g[k] === v);

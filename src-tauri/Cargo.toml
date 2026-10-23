@@ -87,7 +87,9 @@ sevenz-rust2 = { version = "0.24", default-features = false, features = ["ppmd",
 lzma-rust2 = { version = "0.22", default-features = false, features = ["std", "xz", "encoder"] }
 
 [target.'cfg(windows)'.dependencies]
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24", "directml"] }
+# PlayStation pads' HID reports (gamepad/playstation.rs), which XInput does not see.
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+ort ={ version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24", "directml"] }
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_System_Diagnostics_ToolHelp",
