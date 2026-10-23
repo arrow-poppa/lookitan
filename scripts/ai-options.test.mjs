@@ -76,3 +76,14 @@ test('the old default explanation and context prompts become the ones that put t
     const own = normalizeAiOptions({customPrompt: 'Target: {{target}}\n\nSentence: {{sentence}}'});
     assert.equal(own.customPrompt, 'Target: {{target}}\n\nSentence: {{sentence}}', "the user's own prompt stays as written");
 });
+
+test('the explanation has its own language, which starts as the translation language', async () => {
+    const {EXPLAIN_PROMPT, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, CONTEXT_PROMPT, fillLanguages, languageName} = await import('../src/lib/ai/word-card.js');
+    assert.equal(normalizeAiOptions({customPrompt: TRANSLATION_LANGUAGE_EXPLAIN_PROMPT}).customPrompt, EXPLAIN_PROMPT);
+    const [spanish, portuguese] = [languageName('es-419'), languageName('pt-BR')];
+    const settings = {translationLanguage: 'pt-BR', explanationLanguage: 'es-419'};
+    assert(fillLanguages(EXPLAIN_PROMPT, settings).includes(`Write in ${spanish}.`));
+    assert(fillLanguages(CONTEXT_PROMPT, settings).includes(`into ${portuguese}.`));
+    // Settings from before the split have no explanation language: the translation's is used.
+    assert(fillLanguages(EXPLAIN_PROMPT, {translationLanguage: 'pt-BR'}).includes(`Write in ${portuguese}.`));
+});

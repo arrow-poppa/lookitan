@@ -259,6 +259,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Regional variants (en-US/en-GB, es-ES/es-MX, pt-BR/pt-PT, fr-FR/fr-CA, the three Chinese) read the same.
   - The tag also sets the pop-up's speech voice (`speak` in popup/main.js) and is saved on word cards. That is why the variants were kept, while Lookupper shows one Spanish.
 - **Definition and translation languages (`LANGUAGES` in src/main/ui.js):** Lookupper's 58 entries: the 53 languages it translates into, plus en-US/en-GB, es-ES/es-419, pt-BR/pt-PT, Serbian Cyrillic/Latin and Chinese Simplified/Traditional. They are named in English. The AI prompt names them with `Intl.DisplayNames` in English (`languageName` in word-card.js). `settings::migrate` turns the older tags `es-MX`, `zh-CN` and `zh-TW` into `es-419`, `zh-Hans-CN` and `zh-Hant-TW`.
+  - Three settings: `definitionLanguage` (the card's definition and components), `translationLanguage` (the card's word translation and the context translator) and `explanationLanguage` ("Explicar", `{{explanationLanguage}}`). The explanation one was split from the translation one at the user's request. Settings saved before have it empty, and `migrate` copies the translation language. `normalizeAiOptions` moves the old default explanation prompt, which wrote in `{{translationLanguage}}`, to the new one.
 - **OCR engines:** `ocrEngine` reads around the pointer; `screenOcrEngine` reads whole-screen passes (`null` means "same as `ocrEngine`"). `Settings::engine_for(whole_screen)` picks one.
 - **Google Lens:** chosen in Configurações › OCR › Motor de OCR. CI builds work without a key (the `LOOKITAN_LENS_API_KEY` secret; Chromium's key and YomiNinja's default both answered 200 on 2026-10-21); the user's key, if pasted, overrides it. If Lens fails, the scan falls back to PP-OCRv6. Each lookup uploads the capture to Google, shrunk only past 3 megapixels (`fit`, as owocr), with `surface` SURFACE_CHROMIUM. Lookupper has no Lens at all: its exe has no `googleapis`, `crupload` or `lens` strings (checked 2026-10-21); its 1920 px is the local detector's resize. When Lens fails, that pass is read by PP-OCRv6 and the next lookup tries Lens again. The reason is shown in Portuguese: in the pop-up (`notice`), or, when no pop-up opened (a whole-screen lookup), in the overlay's `#lens-notice` strip at the top, which a word click hides.
 - **KDE Wayland:**
@@ -328,6 +329,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-23 (Claude, `tests`): at the user's request, Dicionários › "Idioma da tradução e da explicação" is split into "Idioma da tradução" and "Idioma da explicação" (`explanationLanguage`, `{{explanationLanguage}}`), which starts as the translation language.
 
 - 2026-10-23 (Claude, `tests`): at the user's request, removed the AI option "Usar a IA quando a palavra não estiver nos dicionários" (`unknownWordFallback`): Lookupper has no such option and the AI reads the word without the dictionaries. The word card is generated on opening only with "Gerar o card automaticamente", otherwise on the Gerar button.
 

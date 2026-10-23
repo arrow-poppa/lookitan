@@ -154,9 +154,12 @@ pub struct Settings {
     pub profiles: Vec<AppProfile>,
     pub autostart: bool,
     pub save_words_automatically: bool,
-    /// Language of definitions and of AI explanations and translations.
+    /// Language of definitions, of AI translations, and of the AI explanation ("Explicar").
     pub definition_language: String,
     pub translation_language: String,
+    /// Empty in settings saved before it was its own setting; `migrate()` then copies the
+    /// translation language, which explanations used.
+    pub explanation_language: String,
     /// Shows the word's translation on the AI word card.
     pub show_word_translation: bool,
     pub hide_word_translation: bool,
@@ -206,6 +209,7 @@ impl Default for Settings {
             save_words_automatically: false,
             definition_language: "en-US".into(),
             translation_language: "pt-BR".into(),
+            explanation_language: String::new(),
             show_word_translation: true,
             hide_word_translation: false,
             ai: serde_json::Value::Null,
@@ -240,10 +244,13 @@ fn readable_dictionaries<'de, D: serde::Deserializer<'de>>(deserializer: D) -> R
 pub fn migrate(mut s: Settings) -> Settings {
     // The definition and translation languages follow Lookupper's list: Latin American Spanish
     // and Chinese by script replaced the Mexican, mainland and Taiwanese tags.
-    for tag in [&mut s.definition_language, &mut s.translation_language] {
+    for tag in [&mut s.definition_language, &mut s.translation_language, &mut s.explanation_language] {
         if let Some(new) = renamed_language(tag.as_str()) {
             *tag = new.to_string();
         }
+    }
+    if s.explanation_language.is_empty() {
+        s.explanation_language = s.translation_language.clone();
     }
     // The scope is no longer a setting: lookups read around the pointer, and a shortcut pressed
     // away from text reads the whole screen.
@@ -307,6 +314,12 @@ mod tests {
         assert_eq!(s.translation_language, "es-419");
         let s = migrate(Settings::default());
         assert_eq!((s.definition_language.as_str(), s.translation_language.as_str()), ("en-US", "pt-BR"));
+        // The explanation used the translation language before it had its own.
+        assert_eq!(s.explanation_language, "pt-BR");
+        let saved: Settings = serde_json::from_str(r#"{"translationLanguage": "es-419"}"#).unwrap();
+        assert_eq!(migrate(saved).explanation_language, "es-419");
+        let saved: Settings = serde_json::from_str(r#"{"translationLanguage": "es-419", "explanationLanguage": "en-US"}"#).unwrap();
+        assert_eq!(migrate(saved).explanation_language, "en-US");
     }
 
     #[test]

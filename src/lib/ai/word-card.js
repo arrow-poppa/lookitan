@@ -86,9 +86,12 @@ export const CONTEXT_PROMPT =
 
 export const EXPLAIN_PROMPT =
     'Explain the word as it is used in the context. ' +
-    'Write in {{translationLanguage}}. Cover the meaning here, nuance and register, and give two short example sentences.\n\n' +
+    'Write in {{explanationLanguage}}. Cover the meaning here, nuance and register, and give two short example sentences.\n\n' +
     "Context: '{{sentence}}'\n" +
     "Word: '{{target}}'";
+
+/** The default explanation prompt before the explanation had its own language (for migration). */
+export const TRANSLATION_LANGUAGE_EXPLAIN_PROMPT = EXPLAIN_PROMPT.replace('{{explanationLanguage}}', '{{translationLanguage}}');
 
 /** The default prompts before they put the lookup's text last (for migration). */
 export const LEGACY_CONTEXT_PROMPT =
@@ -112,7 +115,8 @@ export function languageName(tag) {
 export function fillLanguages(template, settings) {
     return template
         .replaceAll('{{definitionLanguage}}', languageName(settings.definitionLanguage || 'en-US'))
-        .replaceAll('{{translationLanguage}}', languageName(settings.translationLanguage || 'en-US'));
+        .replaceAll('{{translationLanguage}}', languageName(settings.translationLanguage || 'en-US'))
+        .replaceAll('{{explanationLanguage}}', languageName(settings.explanationLanguage || settings.translationLanguage || 'en-US'));
 }
 
 /**

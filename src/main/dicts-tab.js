@@ -164,8 +164,10 @@ function languageRows() {
     return [
         cardRow({icon: 'book', title: 'Idioma da definição', wide: true,
             control: select(languageOptions(), s.definitionLanguage, (v) => { s.definitionLanguage = v; save(); })}),
-        cardRow({icon: 'translate', title: 'Idioma da tradução e da explicação', desc: 'As traduções e explicações da IA aparecem neste idioma.', wide: true,
+        cardRow({icon: 'translate', title: 'Idioma da tradução', desc: 'A tradução da palavra no card e o tradutor de contexto aparecem neste idioma.', wide: true,
             control: select(languageOptions(), s.translationLanguage, (v) => { s.translationLanguage = v; save(); })}),
+        cardRow({icon: 'sparkle', title: 'Idioma da explicação', desc: 'A explicação da IA (botão Explicar) aparece neste idioma.', wide: true,
+            control: select(languageOptions(), s.explanationLanguage || s.translationLanguage, (v) => { s.explanationLanguage = v; save(); })}),
     ];
 }
 
@@ -305,7 +307,7 @@ function testButton(dictId = 'ai-word', promptKey = 'customPrompt') {
 function renderAiWord(root) {
     const ai = store.ai;
     const s = store.settings;
-    const vars = escapeHtml('{{target}} (palavra), {{sentence}} (o parágrafo em volta da palavra), {{definitionLanguage}}, {{translationLanguage}}');
+    const vars = escapeHtml('{{target}} (palavra), {{sentence}} (o parágrafo em volta da palavra), {{definitionLanguage}}, {{translationLanguage}}, {{explanationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-word']),
         el('p', {class: 'lead'}, 'Explica a palavra no sentido exato em que aparece na tela, com forma de dicionário, IPA, nível CEFR, classe gramatical, definição, tradução e sinônimos, a leitura em pinyin ou kana no chinês e no japonês e, se quiser, os componentes da palavra. Usa o seu provedor e o seu modelo (BYOK); nada passa por servidores do Lookitan.'),
@@ -392,7 +394,7 @@ function imageTestButton() {
 
 function renderAiImages(root) {
     const ai = store.ai;
-    const vars = escapeHtml('{{target}} (palavra), {{sentence}} (a frase da palavra), {{wordLanguage}} (idioma do OCR), {{definitionLanguage}}, {{translationLanguage}}');
+    const vars = escapeHtml('{{target}} (palavra), {{sentence}} (a frase da palavra), {{wordLanguage}} (idioma do OCR), {{definitionLanguage}}, {{translationLanguage}}, {{explanationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-images']),
         el('p', {class: 'lead'}, 'Mostra imagens da palavra no popup, como o Migaku: a IA transforma a palavra num termo de busca em inglês, e o Lookitan procura esse termo no Bing Imagens. Sem IA, busca a palavra como está na tela. Passe o mouse numa imagem e clique na marca do canto para mandá-la ao Anki (marcador {image}); clique na imagem para ampliar.'),
