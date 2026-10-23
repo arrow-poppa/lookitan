@@ -29,7 +29,10 @@ export const api = {
     listWords: () => invoke('list_words'),
     saveWord: (card) => invoke('save_word', {card}),
     deleteWord: (id) => invoke('delete_word', {id}),
-    wordImage: (name) => invoke('word_image', {name}),
+    /** A saved word's picture, cropped to `crop` ([x, y, width, height]) when given. */
+    wordImage: (name, crop = null) => invoke('word_image', {name, crop: crop || null}),
+    /** The whole image OCR read for a lookup, with the sentence's crop: `{data, crop}`. */
+    captureCardImage: (recognition) => invoke('capture_card_image', {recognition: recognition ?? null}),
 };
 
 /** Settings shared by every window, with AI and Anki options filled with defaults. */

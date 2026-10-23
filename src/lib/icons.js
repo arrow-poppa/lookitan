@@ -30,6 +30,7 @@ const P = {
     power: '<path d="M12 4v7"/><path d="M7.2 7a7 7 0 109.6 0"/>',
     trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13"/>',
     download: '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/>',
+    crop: '<path d="M7 3v14h14M3 7h14v14"/>',
     refresh: '<path d="M18.5 9A7 7 0 006 7.5L4.5 9M5.5 15A7 7 0 0018 16.5l1.5-1.5"/><path d="M4.5 5v4h4M19.5 19v-4h-4"/>',
     alert: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v4.5M12 16h.01"/>',
     cards: '<rect x="4" y="7" width="12" height="13" rx="2"/><path d="M8 4h10a2 2 0 012 2v11"/>',

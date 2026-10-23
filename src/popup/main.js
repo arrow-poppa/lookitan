@@ -821,8 +821,13 @@ async function saveWord(lookup = state, lookupSettings = settings) {
     const card = cardFromLookup(lookup, lookupSettings);
     if (lookup.savedId) { card.id = lookup.savedId; }
     if (lookup.payload.recognition) {
-        const img = await api.captureImage(lookup.payload.recognition, 'sentence').catch(() => null);
-        if (img) { card.imageData = img; }
+        // The whole frame is kept with the sentence's crop, so the crop can be changed later in
+        // Palavras, as Lookupper does.
+        const img = await api.captureCardImage(lookup.payload.recognition).catch(() => null);
+        if (img?.data) {
+            card.imageData = img.data;
+            if (img.crop) { card.imageCrop = img.crop; }
+        }
     }
     if (lookup.ankiNoteId) { card.ankiNoteId = lookup.ankiNoteId; }
     const saved = await api.saveWord(card);
@@ -1005,7 +1010,7 @@ ${savedCardHtml(c, c.id === lookup.savedId)}
             await drawSavedCards();
         });
         if (card.image) {
-            void api.wordImage(card.image).then((data) => {
+            void api.wordImage(card.image, card.imageCrop).then((data) => {
                 const shot = article.querySelector('.saved-shot');
                 if (!data || !shot) { return; }
                 shot.innerHTML = `<img src="data:image/png;base64,${data}" alt="Captura do contexto">`;

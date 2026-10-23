@@ -62,7 +62,7 @@ export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
         contextTranslation: card.contextTranslation,
         title: card.windowTitle,
         query: card.word,
-        screenshot: async () => (card.image ? await api.wordImage(card.image) : null),
+        screenshot: async () => (card.image ? await api.wordImage(card.image, card.imageCrop) : null),
         sentenceAudio: () => sentenceAudioFile(card.sentence, settings.audio, card.language || settings.ocrLanguage, {invoke}),
     };
 }

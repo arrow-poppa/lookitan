@@ -82,3 +82,35 @@ impl CardStore {
         std::fs::read(self.media_dir.join(name)).ok()
     }
 }
+
+/// The part `[x, y, width, height]` of a PNG, as a PNG; the rectangle is clamped to the image.
+/// `None` when the bytes are not an image or the rectangle misses it.
+pub fn crop_png(png: &[u8], [x, y, w, h]: [u32; 4]) -> Option<Vec<u8>> {
+    let img = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?.to_rgba8();
+    if x >= img.width() || y >= img.height() || w == 0 || h == 0 {
+        return None;
+    }
+    let (w, h) = (w.min(img.width() - x), h.min(img.height() - y));
+    let part = image::imageops::crop_imm(&img, x, y, w, h).to_image();
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgba8(part).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_crop_keeps_its_part_and_is_clamped_to_the_image() {
+        let mut img = image::RgbaImage::new(40, 20);
+        img.put_pixel(30, 10, image::Rgba([255, 0, 0, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let part = image::load_from_memory(&crop_png(&png, [25, 5, 100, 100]).unwrap()).unwrap().to_rgba8();
+        assert_eq!(part.dimensions(), (15, 15));
+        assert_eq!(part.get_pixel(5, 5), &image::Rgba([255, 0, 0, 255]));
+        assert!(crop_png(&png, [40, 0, 5, 5]).is_none());
+        assert!(crop_png(b"not a png", [0, 0, 5, 5]).is_none());
+    }
+}

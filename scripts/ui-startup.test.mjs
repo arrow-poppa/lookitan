@@ -669,6 +669,50 @@ test('saved word Anki errors stay visible and the add button can be retried', as
     assert.equal(listRequests, 1, 'failed addition must not erase its message by refreshing the word list');
 });
 
+test('a saved word is edited in place, field by field, as in Lookupper', async () => {
+    const view = dom();
+    for (const id of ['words-list', 'words-detail', 'words-search', 'words-sort', 'anki-sync', 'words-export', 'save-state']) { view.add(id); }
+    view.document.getElementById('words-sort').value = 'newest';
+    const saved = [];
+    let stored = {id: 'word-1', word: 'optimized', dictionaryForm: 'optimise', partOfSpeech: ['verb'], cefr: 'C1', createdAt: 1, updatedAt: 1};
+    const words = await load('src/main/words-tab.js', {document: view.document}, {
+        '@tauri-apps/plugin-dialog': {save: async () => null},
+        '@tauri-apps/api/core': {invoke: async () => null},
+        [file('src/lib/api.js')]: {escapeHtml: String, api: {
+            listWords: async () => [{...stored}],
+            saveWord: async (card) => { saved.push(JSON.parse(JSON.stringify(card))); stored = {...card, updatedAt: card.updatedAt + 1}; return {...stored}; },
+        }},
+        [file('src/lib/icons.js')]: {icon: () => ''},
+        [file('src/lib/cards.js')]: {noteContextFromCard: (card) => ({word: card.word}), toCsv: () => '', toQuizlet: () => ''},
+        [file('src/main/store.js')]: {store: {anki: {enable: true}}},
+        [file('src/lib/anki/notes.js')]: {isFormatReady: () => true, buildNote: async () => ({}), glossaryDictionaryNames: () => [], createConnection: () => ({})},
+    });
+    await words.initWordsTab();
+    await flush();
+    const detail = view.document.getElementById('words-detail');
+    const field = (key) => descendants(detail).find((node) => node.attributes['data-field'] === key);
+    assert.equal(field('dictionaryForm').value, 'optimise');
+    assert.equal(field('cefr').value, 'C1');
+    const form = field('dictionaryForm');
+    form.value = ' optimize ';
+    form.dispatch('change');
+    await flush();
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].dictionaryForm, 'optimize', 'trimmed');
+    assert.equal(field('dictionaryForm'), form, 'the form is not redrawn while it is being edited');
+    field('partOfSpeech').value = 'verb, adjective,';
+    field('partOfSpeech').dispatch('change');
+    await flush();
+    assert.deepEqual(saved[1].partOfSpeech, ['verb', 'adjective']);
+    field('cefr').dispatch('change');
+    await flush();
+    assert.equal(saved.length, 2, 'an unchanged field is not saved again');
+    // The "words-changed" the save sends reloads the list, still without redrawing the form.
+    await words.refreshWords();
+    assert.equal(field('dictionaryForm'), form);
+    assert(detail.textContent.includes('Salvo.'));
+});
+
 async function audioPanelFixture(audio) {
     const view = dom();
     const root = view.add('audio-settings');

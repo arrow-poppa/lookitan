@@ -1084,6 +1084,46 @@ fn open_popup(app: &AppHandle, win: &tauri::WebviewWindow, anchor: Option<(f64, 
 
 /// PNG of the last capture: "sentence" (the lines around the word with some margin), "frame" (the
 /// image OCR read) or "whole" (the whole monitor when it was captured for Anki, else the frame).
+/// The lines around the picked word with a margin, as `[x, y, width, height]` of the image OCR
+/// read: the "sentence" screenshot, and a saved word's crop until the user changes it.
+fn sentence_rect(r: &Recognition) -> Option<[u32; 4]> {
+    if r.focus_lines.is_empty() {
+        return None;
+    }
+    let img = &r.capture.image;
+    let pad = 24.0;
+    let x0 = r.focus_lines.iter().map(|l| l.x0).fold(f32::MAX, f32::min) - pad;
+    let y0 = r.focus_lines.iter().map(|l| l.y0).fold(f32::MAX, f32::min) - pad;
+    let x1 = r.focus_lines.iter().map(|l| l.x1).fold(0.0, f32::max) + pad;
+    let y1 = r.focus_lines.iter().map(|l| l.y1).fold(0.0, f32::max) + pad;
+    let x = (x0.max(0.0) as u32).min(img.width().saturating_sub(1));
+    let y = (y0.max(0.0) as u32).min(img.height().saturating_sub(1));
+    let w = (x1.min(img.width() as f32) as u32).saturating_sub(x).max(1);
+    let h = (y1.min(img.height() as f32) as u32).saturating_sub(y).max(1);
+    Some([x, y, w, h])
+}
+
+/// A saved word's picture: the whole image OCR read, and the part shown (the sentence's lines).
+/// Lookupper keeps the frame and a crop rectangle the same way, and lets the crop be changed.
+#[derive(Serialize)]
+struct CardImage {
+    data: String,
+    crop: Option<[u32; 4]>,
+}
+
+#[tauri::command]
+fn capture_card_image(state: tauri::State<'_, AppState>, recognition: Option<u64>) -> Option<CardImage> {
+    // The frame is copied out so the overlay is not kept waiting while it is encoded.
+    let (img, crop) = {
+        let guard = state.recognition.lock();
+        let r = guard.as_ref().filter(|r| recognition.map(|i| i == r.id).unwrap_or(true))?;
+        (r.capture.image.clone(), sentence_rect(r))
+    };
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img).write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    Some(CardImage { data: base64::engine::general_purpose::STANDARD.encode(png), crop })
+}
+
 pub fn capture_png(state: &AppState, id: Option<u64>, area: &str) -> Option<Vec<u8>> {
     let guard = state.recognition.lock();
     let r = guard.as_ref().filter(|r| id.map(|i| i == r.id).unwrap_or(true))?;
@@ -1093,19 +1133,9 @@ pub fn capture_png(state: &AppState, id: Option<u64>, area: &str) -> Option<Vec<
         ("whole", Some(screen)) => &screen.image,
         _ => &r.capture.image,
     };
-    let cropped = if area == "sentence" && !r.focus_lines.is_empty() {
-        let pad = 24.0;
-        let x0 = r.focus_lines.iter().map(|l| l.x0).fold(f32::MAX, f32::min) - pad;
-        let y0 = r.focus_lines.iter().map(|l| l.y0).fold(f32::MAX, f32::min) - pad;
-        let x1 = r.focus_lines.iter().map(|l| l.x1).fold(0.0, f32::max) + pad;
-        let y1 = r.focus_lines.iter().map(|l| l.y1).fold(0.0, f32::max) + pad;
-        let x = x0.max(0.0) as u32;
-        let y = y0.max(0.0) as u32;
-        let w = (x1.min(img.width() as f32) as u32).saturating_sub(x).max(1);
-        let h = (y1.min(img.height() as f32) as u32).saturating_sub(y).max(1);
-        image::imageops::crop_imm(img, x, y, w, h).to_image()
-    } else {
-        img.clone()
+    let cropped = match sentence_rect(r) {
+        Some([x, y, w, h]) if area == "sentence" => image::imageops::crop_imm(img, x, y, w, h).to_image(),
+        _ => img.clone(),
     };
     let mut png = Vec::new();
     if area == "frame" {
@@ -1683,8 +1713,13 @@ async fn edge_tts_speak(text: String, voice: String, language: String) -> std::r
 }
 
 #[tauri::command]
-fn word_image(state: tauri::State<'_, AppState>, name: String) -> Option<String> {
-    state.cards.media(&name).map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+fn word_image(state: tauri::State<'_, AppState>, name: String, crop: Option<[u32; 4]>) -> Option<String> {
+    let bytes = state.cards.media(&name)?;
+    let bytes = match crop {
+        Some(rect) => cards::crop_png(&bytes, rect).unwrap_or(bytes),
+        None => bytes,
+    };
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1871,6 +1906,7 @@ pub fn run() {
             overlay_close,
             overlay_dismiss,
             capture_image,
+            capture_card_image,
             scan_now,
             hide_popup,
             webview_blank,
