@@ -7,7 +7,7 @@ import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
+import {cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {invoke} from '@tauri-apps/api/core';
@@ -354,6 +354,14 @@ async function runExplain(target, force = false) {
     }
 }
 
+/** The word card's prompt for a lookup: the card prompt and, after the word, the word analyzer's
+ * hints (a prompt without {{target}} is sent as written). */
+function cardRequestPrompt(options, payload) {
+    const prompt = cardPrompt(options.cardPrompt, settings, options);
+    const hints = cardHints(payload);
+    return hints && prompt.includes('{{target}}') ? `${prompt}\n${hints}` : prompt;
+}
+
 async function runCard(body, force = false) {
     const lookup = state;
     const options = ai;
@@ -364,7 +372,7 @@ async function runCard(body, force = false) {
     void refreshAnkiButton();
     body.innerHTML = shimmer();
     try {
-        const prompt = cardPrompt(options.cardPrompt, settings, options);
+        const prompt = cardRequestPrompt(options, lookup.payload);
         const key = await aiKey('card', prompt, lookup, options);
         if (!current()) { return; }
         lookup.keys.add(key);
@@ -1241,7 +1249,7 @@ async function render(payload) {
         // Keep a request for this same word and sentence running, and those of the dictionaries
         // that do not cancel; drop the others.
         const keep = new Set(await Promise.all([
-            aiKey('card', cardPrompt(ai.cardPrompt, settings, ai)),
+            aiKey('card', cardRequestPrompt(ai, payload)),
             aiKey('context', contextPrompt(ai.contextPrompt, settings, ai)),
             aiKey('explain', fillLanguages(ai.customPrompt, settings)),
             aiKey('images', imagePromptKey(optionsOf('images'))),

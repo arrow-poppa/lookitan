@@ -196,6 +196,38 @@ export function contextPrompt(template, settings, ai = {}) {
     return fillLanguages(template + note, settings);
 }
 
+/** Scripts written without spaces, where the run around a word is a whole clause. */
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+/** The characters around `payload.word` in its context up to the spaces, without the punctuation
+ * at their ends: what the OCR read before the word analyzer cut the word out of it. */
+function ocrRun(payload) {
+    const {context, contextAt: at, word} = payload;
+    if (!context || typeof at !== 'number' || !word || UNSPACED.test(word)) { return ''; }
+    const chars = [...context];
+    let [start, end] = [at, at + [...word].length];
+    while (start > 0 && !/\s/u.test(chars[start - 1])) { start--; }
+    while (end < chars.length && !/\s/u.test(chars[end])) { end++; }
+    return chars.slice(start, end).join('').replace(/^[^\p{L}\p{M}\p{N}]+|[^\p{L}\p{M}\p{N}]+$/gu, '');
+}
+
+/**
+ * The word analyzer's hints for the word card, as one line of the lookup's data: the run the OCR
+ * read when the analyzer cut the word out of a longer one, and the dictionary forms it found
+ * (Sudachi, Kiwi, Hunspell…). The line holds {{target}}, so it goes with the word after the cached
+ * instructions (see `_splitPrompts`). Empty when there is nothing to add.
+ * @param {{word?: string, context?: string, contextAt?: number|null, candidates?: string[]}} payload
+ */
+export function cardHints(payload) {
+    const word = String(payload.word || '');
+    const run = ocrRun(payload);
+    const forms = [...new Set((payload.candidates || []).map(String).filter((c) => c && c !== word && c !== run))].slice(0, 3);
+    const hints = [];
+    if (run && run !== word) { hints.push(`the OCR read it inside "${run}"`); }
+    if (forms.length) { hints.push(`the word analyzer's dictionary forms: ${forms.map((f) => `"${f}"`).join(', ')}`); }
+    return hints.length ? `Hints for '{{target}}', which may be wrong: ${hints.join('; ')}.` : '';
+}
+
 /** Fills the language placeholders; {{target}} and {{sentence}} are filled by the provider. */
 export function fillLanguages(template, settings) {
     return template

@@ -25,6 +25,10 @@ const KNOWN: u32 = 50;
 const RANKED: u32 = 500;
 /// Shortest half of a cut, in letters.
 const MIN_PART: usize = 2;
+/// Shortest run tried, in letters. Every run the recognizer made on the user's pages had 6 letters
+/// or more; a shorter unknown run is more often one word it misread (the screen's "وتصحيحه" read
+/// "و حلحه", which حل + حه would cut), and is left whole for the AI to work out (2026-10-24).
+const MIN_RUN: usize = 6;
 /// Longest run tried, in letters.
 const MAX_RUN: usize = 40;
 
@@ -92,7 +96,7 @@ impl Arabic {
 
     /// Where to cut a run of letters (marks and tatweel left out), if it is two words.
     fn cut(&self, letters: &[char]) -> Option<usize> {
-        if letters.len() < 2 * MIN_PART || letters.len() > MAX_RUN {
+        if letters.len() < MIN_RUN.max(2 * MIN_PART) || letters.len() > MAX_RUN {
             return None;
         }
         let whole: String = letters.iter().collect();
@@ -256,6 +260,7 @@ mod tests {
         assert_eq!(texts(&s, "شلونك"), ["شلونك"], "in the list, though شلون + نك are words too");
         assert_eq!(texts(&s, "كورتولموش"), ["كورتولموش"], "Hunspell accepts it");
         assert_eq!(texts(&s, "الفيلمجهول"), ["الفيلمجهول"], "no cut into two known words");
+        assert_eq!(texts(&s, "داسفي"), ["داسفي"], "under 6 letters a run stays whole, though داس + في are words");
     }
 
     #[test]
@@ -290,7 +295,7 @@ mod tests {
             assert_eq!(texts(&s, run), cut, "{run}");
         }
         for word in "يحكى قبرة فباضت وفرخت الأيام فحلقت وتوسلت يحيد قليلا بأمرها وماتت الفراخ وفقأت الضفادع وتنق نقيقا \
-                     أضلاعه ازيك عايز كده شلونك هيك بدي دلوقتي خلاص كتير عشان بتاعي اشوفك مابعرف"
+                     أضلاعه ازيك عايز كده شلونك هيك بدي دلوقتي خلاص كتير عشان بتاعي اشوفك مابعرف حلحه"
             .split_whitespace()
         {
             assert_eq!(texts(&s, word), [word], "{word} stays whole");
