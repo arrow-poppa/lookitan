@@ -214,14 +214,18 @@ function ocrRun(payload) {
 /**
  * The word analyzer's hints for the word card, as one line of the lookup's data: the run the OCR
  * read when the analyzer cut the word out of a longer one, and the dictionary forms it found
- * (Sudachi, Kiwi, Hunspell…). The line holds {{target}}, so it goes with the word after the cached
+ * (Sudachi, Kiwi): the candidates before the word itself, since after it come its prefixes, which
+ * the dictionaries try in unspaced scripts and are not forms of it. The line holds {{target}}, so it goes with the word after the cached
  * instructions (see `_splitPrompts`). Empty when there is nothing to add.
  * @param {{word?: string, context?: string, contextAt?: number|null, candidates?: string[]}} payload
  */
 export function cardHints(payload) {
     const word = String(payload.word || '');
     const run = ocrRun(payload);
-    const forms = [...new Set((payload.candidates || []).map(String).filter((c) => c && c !== word && c !== run))].slice(0, 3);
+    const candidates = (payload.candidates || []).map(String);
+    const own = candidates.indexOf(word);
+    const lemmas = own >= 0 ? candidates.slice(0, own) : [];
+    const forms = [...new Set(lemmas.filter((c) => c && c !== word && c !== run))].slice(0, 3);
     const hints = [];
     if (run && run !== word) { hints.push(`the OCR read it inside "${run}"`); }
     if (forms.length) { hints.push(`the word analyzer's dictionary forms: ${forms.map((f) => `"${f}"`).join(', ')}`); }

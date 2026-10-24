@@ -64,8 +64,11 @@ test('the card gets the word analyzer\'s hints with the word, after the cached i
     const at = [...context].indexOf('ح');
     const cut = cardHints({word: 'حل', context, contextAt: at, candidates: ['حل']});
     assert.equal(cut, `Hints for '{{target}}', which may be wrong: the OCR read it inside "حلحه".`);
-    const ja = cardHints({word: '食べさせられなかった', context: '彼は食べさせられなかった。', contextAt: 2, candidates: ['食べる', '食べさせられなかった']});
-    assert.equal(ja, `Hints for '{{target}}', which may be wrong: the word analyzer's dictionary forms: "食べる".`, 'no run in unspaced text');
+    const ja = cardHints({word: '食べさせられなかった', context: '彼は食べさせられなかった。', contextAt: 2,
+        candidates: ['食べる', '食べさせられなかった', '食べさせられなかっ', '食べさせられなか']});
+    assert.equal(ja, `Hints for '{{target}}', which may be wrong: the word analyzer's dictionary forms: "食べる".`,
+        'no run in unspaced text, and the prefixes after the word are not forms of it');
+    assert.equal(cardHints({word: '更進', context: '勸君更進一杯酒', contextAt: 2, candidates: ['更進', '更']}), '', 'jieba gives no dictionary form');
     assert.equal(cardHints({word: 'run', context: 'I run, daily.', contextAt: 2, candidates: ['run']}), '', 'nothing to add');
     const {AIProvider} = await import('../src/lib/ai/ai-provider.js');
     const split = Object.create(AIProvider.prototype)._splitPrompts('حل', context, `Instructions.\nContext: '{{sentence}}'\nWord: '{{target}}'\n${cut}`, '', undefined);
