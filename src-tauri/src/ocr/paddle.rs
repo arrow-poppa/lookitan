@@ -164,48 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_bands_merge_seam_text_but_preserve_separate_lines() {
-        let mut boxes = vec![TextBox {
-            x0: 20.0,
-            x1: 220.0,
-            y0: 480.0,
-            y1: 512.0,
-            quad: None,
-        }];
-        merge_band_boxes(
-            &mut boxes,
-            vec![
-                TextBox {
-                    x0: 18.0,
-                    x1: 222.0,
-                    y0: 480.0,
-                    y1: 524.0,
-                    quad: None,
-                },
-                TextBox {
-                    x0: 260.0,
-                    x1: 460.0,
-                    y0: 480.0,
-                    y1: 524.0,
-                    quad: None,
-                },
-                TextBox {
-                    x0: 20.0,
-                    x1: 220.0,
-                    y0: 550.0,
-                    y1: 590.0,
-                    quad: None,
-                },
-            ],
-        );
-        assert_eq!(boxes.len(), 3);
-        assert_eq!(
-            (boxes[0].x0, boxes[0].x1, boxes[0].y0, boxes[0].y1),
-            (18.0, 222.0, 480.0, 524.0)
-        );
-    }
-
-    #[test]
     fn a_gap_wider_than_the_line_s_own_spacing_splits_words() {
         let text = |d: Vec<(char, usize)>| split_wide_gaps(d).into_iter().map(|(c, _)| c).collect::<String>();
         // "ArquivoEditar" with letters 3 steps apart and 20 steps between the two labels.
@@ -284,10 +242,6 @@ const DET_PADDING: u32 = 20;
 /// pixels, so small text (dense CJK above all) is not shrunk as much.
 const DET_MAX_SIDE_GPU: f32 = 1920.0;
 const DET_MAX_SIDE_CPU: f32 = 1280.0;
-// Bound intermediate tensors without shrinking small UI text further. Adjacent bands overlap
-// so text crossing a seam can still be detected as a complete line.
-const DET_BAND_HEIGHT: u32 = 512;
-const DET_BAND_OVERLAP: u32 = 64;
 const REC_HEIGHT: u32 = 48;
 /// Most lines per batched recognizer run (whole-screen OCR only). PaddleOCR's `rec_batch_num`
 /// is 6; one GPU run costs about the same for a few more lines.
@@ -584,10 +538,6 @@ pub fn split_focus(boxes: &[TextBox], fx: f32, fy: f32) -> (Vec<TextBox>, Vec<Te
 }
 
 impl TextBox {
-    fn height(&self) -> f32 {
-        self.y1 - self.y0
-    }
-
     /// Width along the line and height across it: the turned rectangle's for a turned box.
     pub fn size(&self) -> (f32, f32) {
         let (w, h) = match &self.quad {
@@ -613,32 +563,6 @@ impl TextBox {
             0.0
         };
         (dx * dx + dy * dy).sqrt()
-    }
-}
-
-fn merge_band_boxes(boxes: &mut Vec<TextBox>, band: Vec<TextBox>) {
-    let previous = boxes.len();
-    for b in band {
-        let duplicate = boxes[..previous].iter_mut().find(|a| {
-            let overlap_x = a.x1.min(b.x1) - a.x0.max(b.x0);
-            let overlap_y = a.y1.min(b.y1) - a.y0.max(b.y0);
-            overlap_x > 0.5 * (a.x1 - a.x0).min(b.x1 - b.x0) && overlap_y > 0.5 * a.height().min(b.height())
-        });
-        if let Some(a) = duplicate {
-            // A turned line found in both bands: one rectangle in the frame of the first piece.
-            let corners = |t: &TextBox| t.quad.unwrap_or([[t.x0, t.y0], [t.x1, t.y0], [t.x1, t.y1], [t.x0, t.y1]]);
-            a.quad = match (a.quad, b.quad) {
-                (None, None) => None,
-                (Some(q), _) => Some(quad::merged(&q, &corners(&b))),
-                (None, Some(q)) => Some(quad::merged(&q, &corners(&*a))),
-            };
-            a.x0 = a.x0.min(b.x0);
-            a.y0 = a.y0.min(b.y0);
-            a.x1 = a.x1.max(b.x1);
-            a.y1 = a.y1.max(b.y1);
-        } else {
-            boxes.push(b);
-        }
     }
 }
 
@@ -907,7 +831,7 @@ impl PaddleOcr {
         }
         let scale = (self.det_max_side() / w.max(h) as f32).min(1.0);
         let pad = DET_PADDING;
-        // The padded size is a multiple of 32, so the bands need no further resize.
+        // The padded size is a multiple of 32, so the detector needs no further resize.
         let round32 = |v: f32| -> u32 { (((v / 32.0).round() as u32) * 32).max(32) };
         let pw = round32(w as f32 * scale + (2 * pad) as f32);
         let ph = round32(h as f32 * scale + (2 * pad) as f32);
@@ -915,27 +839,9 @@ impl PaddleOcr {
         let mut resized = RgbaImage::from_pixel(pw, ph, image::Rgba([255, 255, 255, 255]));
         image::imageops::replace(&mut resized, &image::imageops::resize(img, rw, rh, FilterType::Triangle), pad as i64, pad as i64);
         let (rw, rh, pad) = (rw as f32, rh as f32, pad as f32);
-        let mut boxes = Vec::new();
-        let mut y = 0;
-        loop {
-            let height = DET_BAND_HEIGHT.min(ph - y);
-            let band = image::imageops::crop_imm(&resized, 0, y, pw, height).to_image();
-            let mut found = self.detect_band(&band)?;
-            for b in &mut found {
-                b.y0 += y as f32;
-                b.y1 += y as f32;
-                if let Some(q) = &mut b.quad {
-                    for p in q.iter_mut() {
-                        p[1] += y as f32;
-                    }
-                }
-            }
-            merge_band_boxes(&mut boxes, found);
-            if y + height == ph {
-                break;
-            }
-            y += DET_BAND_HEIGHT - DET_BAND_OVERLAP;
-        }
+        // One pass over the whole image, as Lookupper: in bands, a column longer than a band's
+        // overlap was seen only in pieces, and the tops of columns side by side read as a line.
+        let mut boxes = self.detect_image(&resized)?;
         // The rest of OCR and the overlay continue to use captured-image coordinates.
         let sx = w as f32 / rw;
         let sy = h as f32 / rh;
@@ -954,7 +860,7 @@ impl PaddleOcr {
         Ok(boxes)
     }
 
-    fn detect_band(&self, img: &RgbaImage) -> Result<Vec<TextBox>> {
+    fn detect_image(&self, img: &RgbaImage) -> Result<Vec<TextBox>> {
         let (w, h) = img.dimensions();
         if w < 8 || h < 8 {
             return Ok(Vec::new());

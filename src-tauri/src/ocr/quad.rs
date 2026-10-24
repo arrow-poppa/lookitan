@@ -152,24 +152,6 @@ pub fn bounds(q: &Quad) -> (f32, f32, f32, f32) {
     (xs.clone().fold(f32::MAX, f32::min), ys.clone().fold(f32::MAX, f32::min), xs.fold(f32::MIN, f32::max), ys.fold(f32::MIN, f32::max))
 }
 
-/// The rectangle in the frame of `a` that holds both `a` and `b` (a line found in two detector
-/// bands).
-pub fn merged(a: &Quad, b: &Quad) -> Quad {
-    let r = rect_of(a);
-    let (mut a0, mut a1, mut b0, mut b1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
-    for &p in a.iter().chain(b.iter()) {
-        let (x, y) = r.local(p);
-        a0 = a0.min(x);
-        a1 = a1.max(x);
-        b0 = b0.min(y);
-        b1 = b1.max(y);
-    }
-    let (u, v) = (r.u, r.v());
-    let (x, y) = ((a0 + a1) / 2.0, (b0 + b1) / 2.0);
-    let center = [r.center[0] + u[0] * x + v[0] * y, r.center[1] + u[1] * x + v[1] * y];
-    Rect { center, u, half_w: (a1 - a0) / 2.0, half_h: (b1 - b0) / 2.0 }.corners()
-}
-
 /// The size of the straightened crop of a quad, as PaddleOCR's `get_rotate_crop_image` (and
 /// Lookupper's port of it) takes it: the longer of each pair of opposite sides.
 pub fn crop_size(q: &Quad) -> (f32, f32) {
@@ -244,13 +226,10 @@ mod tests {
     }
 
     #[test]
-    fn a_quad_round_trips_and_merges_in_its_own_frame() {
+    fn a_quad_round_trips_in_its_own_frame() {
         let r = Rect { center: [50.0, 40.0], u: [0.8, 0.6], half_w: 30.0, half_h: 5.0 };
         let back = rect_of(&r.corners());
         assert!(close(back.half_w, 30.0) && close(back.half_h, 5.0) && close(back.u[0], 0.8) && close(back.center[1], 40.0));
-        let longer = Rect { center: [50.0 + 0.8 * 10.0, 40.0 + 0.6 * 10.0], ..r };
-        let m = rect_of(&merged(&r.corners(), &longer.corners()));
-        assert!(close(m.half_w, 35.0) && close(m.half_h, 5.0), "{m:?}");
         assert!(close(r.local([50.0 + 0.8 * 30.0, 40.0 + 0.6 * 30.0]).0, 30.0));
     }
 
