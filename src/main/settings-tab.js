@@ -288,6 +288,45 @@ function segmenterRow() {
     return row;
 }
 
+const OWN_MODELS = {rec_arabic: 'Árabe', rec_cyrillic: 'Cirílico', rec_el: 'Grego', rec_korean: 'Coreano'};
+
+/**
+ * The recognition model of the OCR language: one that reads with rec_tiny can switch to rec_small,
+ * on its own; one on rec_small or on a model of its own shows only that model.
+ */
+function recognizerRow() {
+    const row = el('div', {id: 'recognizer-row'});
+    fillRecognizerRow(row);
+    return row;
+}
+
+function fillRecognizerRow(row) {
+    row.replaceChildren();
+    const s = store.settings;
+    const tag = String(s.ocrLanguage || '').toLowerCase();
+    const language = languages.find((l) => l.tag.toLowerCase() === tag);
+    if (!language?.rec) { return; }
+    const small = () => (Array.isArray(s.smallRecognizer) ? s.smallRecognizer : []);
+    const others = () => small().filter((t) => String(t).toLowerCase() !== tag);
+    let control, desc;
+    if (language.rec === 'rec_tiny') {
+        desc = 'Vale só para este idioma. O small acerta mais, mas na CPU leva cerca de 4× mais tempo por linha.';
+        control = select([
+            {value: 'tiny', label: 'Tiny (padrão)'},
+            {value: 'small', label: 'Small'},
+        ], others().length < small().length ? 'small' : 'tiny', (v) => {
+            s.smallRecognizer = v === 'small' ? [...others(), language.tag] : others();
+            save();
+        });
+    } else {
+        const only = language.rec === 'rec_small';
+        desc = only ? 'Este idioma só tem o modelo small.' : 'Este idioma tem um modelo próprio.';
+        control = select([{value: language.rec, label: only ? 'Small (padrão)' : `${OWN_MODELS[language.rec] || language.rec} (padrão)`}], language.rec, () => {});
+        control.disabled = true;
+    }
+    row.append(cardRow({icon: 'scan', title: 'Modelo de reconhecimento', desc, wide: true, control}));
+}
+
 function fillSegmenterRow(row) {
     row.replaceChildren();
     if (!status?.segmenter) { return; }
@@ -432,6 +471,8 @@ export async function initSettingsTab(root) {
                 control.replaceChildren(...languages.map((l) => el('option', {value: l.tag}, l.name)));
                 control.value = store.settings.ocrLanguage;
             }
+            const row = document.getElementById('recognizer-row');
+            if (row) { fillRecognizerRow(row); }
         }),
         refreshStatus(),
     ]);
@@ -455,7 +496,12 @@ function render(root) {
     root.replaceChildren();
 
     const languageSelect = select(languages.length ? languages.map((l) => ({value: l.tag, label: l.name})) :
-        [{value: s.ocrLanguage, label: s.ocrLanguage}], s.ocrLanguage, (v) => { s.ocrLanguage = v; save(); });
+        [{value: s.ocrLanguage, label: s.ocrLanguage}], s.ocrLanguage, (v) => {
+        s.ocrLanguage = v;
+        save();
+        const row = document.getElementById('recognizer-row');
+        if (row) { fillRecognizerRow(row); }
+    });
     languageSelect.id = 'ocr-language';
     root.append(heading('Essenciais'), el('div', {class: 'group'},
         cardRow({icon: 'scan', title: 'Idioma de reconhecimento', desc: 'O idioma do texto na tela', wide: true,
@@ -494,6 +540,7 @@ function render(root) {
             control: engineSelect(s.ocrEngine, (v) => { s.ocrEngine = v; })}),
         cardRow({icon: 'scan', title: 'OCR da tela inteira', desc: `Usado quando o atalho é apertado fora de uma palavra; depois é só clicar na palavra. ${engineDesc(screenEngine)}`, wide: true,
             control: engineSelect(screenEngine, (v) => { s.screenOcrEngine = v; })}),
+        recognizerRow(),
         usesLens ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'Opcional nos instaladores do GitHub, que já vêm com uma chave. Cole a sua se ela parar de funcionar.', wide: true, control: lensKey}) : null,
         captureRegionRows(),
         cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: isWindows ? 'DirectML, com volta automática para a CPU.' : 'WebGPU via Vulkan (experimental), com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}),

@@ -423,6 +423,32 @@ test('the video card choice stays hidden until its toggle is on', async () => {
     await fixture.finish();
 });
 
+test('a tiny language chooses tiny or small for itself, and the others show their only model', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'pt-BR', smallRecognizer: ['de-DE']});
+    const {view, settings} = fixture;
+    const recognizer = () => descendants(view.document.getElementById('recognizer-row')).find((node) => node.tagName === 'select');
+    assert.equal(recognizer(), undefined, 'shown once the languages are known');
+    fixture.languages.resolve([{tag: 'ja-JP', name: 'Japanese', rec: 'rec_small'}, {tag: 'pt-BR', name: 'Portuguese (Brazil)', rec: 'rec_tiny'},
+        {tag: 'ar-SA', name: 'Arabic', rec: 'rec_arabic'}]);
+    fixture.status.resolve({session: 'windows'});
+    await fixture.initialization;
+    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Tiny (padrão)', 'Small']);
+    assert.equal(recognizer().value, 'tiny');
+    recognizer().value = 'small';
+    recognizer().dispatch('change');
+    assert.equal(JSON.stringify(settings.smallRecognizer), '["de-DE","pt-BR"]');
+    recognizer().value = 'tiny';
+    recognizer().dispatch('change');
+    assert.equal(JSON.stringify(settings.smallRecognizer), '["de-DE"]', 'other languages keep their choice');
+    const language = view.document.getElementById('ocr-language');
+    for (const [tag, only] of [['ja-JP', 'Small (padrão)'], ['ar-SA', 'Árabe (padrão)']]) {
+        language.value = tag;
+        language.dispatch('change');
+        assert.deepEqual(recognizer().children.map((o) => o.textContent), [only]);
+        assert.equal(recognizer().disabled, true);
+    }
+});
+
 test('the capture region offers only Automático and Personalizada, and custom dimensions save on change while OCR is pending', async () => {
     const fixture = await settingsFixture({ocrScope: 'region'});
     const {view, settings} = fixture;

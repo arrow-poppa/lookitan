@@ -183,6 +183,9 @@ pub struct Settings {
     pub screen_ocr_engine: Option<OcrEngineKind>,
     /// BCP 47 tag selecting the recognition model (see `ocr::languages`).
     pub ocr_language: String,
+    /// Languages that read with `rec_tiny` and were switched to `rec_small` (Configurações › OCR,
+    /// "Modelo de reconhecimento"), each language on its own.
+    pub small_recognizer: Vec<String>,
     pub use_gpu: bool,
     /// Off: the GPU API's own default (adapter 0 for DirectML, Dawn's default on Linux).
     /// On: OCR asks for the card in `gpu_preference`.
@@ -233,6 +236,11 @@ impl Settings {
     pub fn gpu_choice(&self) -> Option<GpuPreference> {
         self.choose_gpu.then_some(self.gpu_preference)
     }
+
+    /// The recognition model of the OCR language (`ocr::rec_model`).
+    pub fn rec_model(&self) -> &'static str {
+        crate::ocr::rec_model(&self.ocr_language, &self.small_recognizer)
+    }
 }
 
 impl Default for Settings {
@@ -247,6 +255,7 @@ impl Default for Settings {
             ocr_scope: OcrScope::Region,
             screen_ocr_engine: None,
             ocr_language: "en-US".into(),
+            small_recognizer: Vec::new(),
             use_gpu: true,
             choose_gpu: false,
             gpu_preference: GpuPreference::HighPerformance,
@@ -440,5 +449,20 @@ mod tests {
         assert_eq!(old.gpu_choice(), None, "settings saved before the option keep the API default");
         let chosen: Settings = serde_json::from_str(r#"{"chooseGpu": true, "gpuPreference": "lowPower"}"#).unwrap();
         assert_eq!(chosen.gpu_choice(), Some(GpuPreference::LowPower));
+    }
+
+    #[test]
+    fn only_a_tiny_language_switched_to_small_reads_with_small() {
+        let old: Settings = serde_json::from_str(r#"{"ocrLanguage": "pt-BR"}"#).unwrap();
+        assert_eq!(old.rec_model(), "rec_tiny", "settings saved before the option keep tiny");
+        let mut s: Settings = serde_json::from_str(r#"{"ocrLanguage": "pt-BR", "smallRecognizer": ["pt-br"]}"#).unwrap();
+        assert_eq!(s.rec_model(), "rec_small");
+        s.ocr_language = "de-DE".into();
+        assert_eq!(s.rec_model(), "rec_tiny", "the choice is per language");
+        s.small_recognizer = vec!["ar-SA".into(), "ja-JP".into()];
+        s.ocr_language = "ar-SA".into();
+        assert_eq!(s.rec_model(), "rec_arabic", "a language with its own model keeps it");
+        s.ocr_language = "ja-JP".into();
+        assert_eq!(s.rec_model(), "rec_small");
     }
 }

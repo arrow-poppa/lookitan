@@ -256,6 +256,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Google Lens lines are snapped too (`snap_to_ink` in ocr/lens.rs, since 2026-10-21): `ink::measure` on the line's box in the capture gives `ink_y`, and each word's ends move to its first and last ink column within 0.15 line heights of Lens's word box (`INK_REACH`), never past halfway to the next word. Vertical lines keep Lens's boxes.
 - **OCR languages (`ocr::LANGUAGES`):** the same 38 entries and models as Lookupper's table.
   - Latin scripts use `rec_tiny`, except Romanian. Romanian, Japanese and Chinese use `rec_small`. Korean, Arabic and Greek use their own PP-OCRv5 models. Russian, Ukrainian, Bulgarian and Serbian (Cyrillic) use `rec_cyrillic`.
+  - "Modelo de reconhecimento" (Configurações › OCR, `recognizer-row`): a language on `rec_tiny` can switch to `rec_small`, each language on its own (`smallRecognizer`, read by `ocr::rec_model` / `Settings::rec_model`); the engine reloads and the OCR cache key changes with it. Languages on `rec_small` (rec_tiny lacks ș/ț, and has 6,174 CJK characters to small's 15,565) or on their own model show only that model, disabled. The detector is not a choice (det_small on the GPU, det_tiny on the CPU). Measured on the user's CPU, 4 threads: det tiny/small 30/61 ms on the cursor capture and 103/200 ms on a screen; rec tiny/small 3/11 ms per line and 73/328 ms for 16 lines.
   - Names are in English and the list is sorted by them. An unknown tag falls back to `DEFAULT_LANGUAGE` (en-US).
   - Regional variants (en-US/en-GB, es-ES/es-MX, pt-BR/pt-PT, fr-FR/fr-CA, the three Chinese) read the same.
   - The tag also sets the pop-up's speech voice (`speak` in popup/main.js) and is saved on word cards. That is why the variants were kept, while Lookupper shows one Spanish.
@@ -339,6 +340,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-24 (Claude, `tests`): at the user's request `main` was fast-forwarded to `tests` (6e32086) and a backup pushed to `arrow-poppa/lookitan-old` as `backup/tests-2026-10-24`; then Latin languages can choose the small recognizer ("Modelo de reconhecimento").
 
 - 2026-10-23 (Claude, `tests`): at the user's request, each controller binding can be left empty or reset to its default, and a `meme` action switches the pictures' meme mode.
 

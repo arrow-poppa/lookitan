@@ -158,6 +158,13 @@ pub fn language(tag: &str) -> &'static LanguageModel {
         .expect("the default language is in the table")
 }
 
+/// The recognition model for `tag`: `rec_small` when the language reads with `rec_tiny` and is in
+/// `small`, otherwise its own. Languages on `rec_small` or on a model of their own have no choice.
+pub fn rec_model(tag: &str, small: &[String]) -> &'static str {
+    let l = language(tag);
+    if l.rec == "rec_tiny" && small.iter().any(|t| t.eq_ignore_ascii_case(l.tag)) { "rec_small" } else { l.rec }
+}
+
 /// Scripts written without spaces between words; the picker tries the longest dictionary match.
 pub fn is_unspaced_script(c: char) -> bool {
     matches!(c as u32,

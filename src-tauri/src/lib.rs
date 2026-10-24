@@ -220,6 +220,8 @@ pub struct DictInfo {
 pub struct LanguageInfo {
     pub tag: &'static str,
     pub name: &'static str,
+    /// Its recognition model by default; with `rec_tiny`, it can switch to `rec_small`.
+    pub rec: &'static str,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -255,7 +257,7 @@ fn ensure_paddle(state: &AppState) -> Result<Arc<PaddleOcr>> {
     ensure_ort(state)?;
     let (rec, gpu, choice) = {
         let s = state.settings.read();
-        (ocr::language(&s.ocr_language).rec.to_string(), s.use_gpu && cfg!(any(windows, target_os = "linux")), s.gpu_choice())
+        (s.rec_model().to_string(), s.use_gpu && cfg!(any(windows, target_os = "linux")), s.gpu_choice())
     };
     let mut slot = state.paddle.lock();
     if let Some((r, g, c, engine)) = slot.as_ref() {
@@ -697,7 +699,7 @@ enum Reading {
 /// Recognizes the lines around the pointer first. In a whole-screen pass the other boxes are
 /// returned in `rest` so the overlay can fill in while the user reads.
 fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, reading: Reading) -> Result<OcrPass> {
-    let key = frame_key(image, &format!("{:?}|{}|{}|{}", kind, settings.ocr_language, settings.use_gpu,
+    let key = frame_key(image, &format!("{:?}|{}|{}|{}|{}", kind, settings.ocr_language, settings.rec_model(), settings.use_gpu,
         if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
     let mut notice = None;
     if kind == OcrEngineKind::Lens {
@@ -1298,7 +1300,8 @@ fn import_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: 
 
 fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: Settings) -> std::result::Result<(), String> {
     settings::save(&state.config_dir, &next).map_err(|e| format!("{e:#}"))?;
-    let engine_changed = previous.ocr_language != next.ocr_language || previous.use_gpu != next.use_gpu
+    let engine_changed = previous.ocr_language != next.ocr_language || previous.rec_model() != next.rec_model()
+        || previous.use_gpu != next.use_gpu
         || previous.gpu_choice() != next.gpu_choice();
     *state.settings.write() = next.clone();
     if engine_changed {
@@ -1409,7 +1412,7 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
 
 #[tauri::command]
 fn ocr_languages() -> Vec<LanguageInfo> {
-    ocr::LANGUAGES.iter().map(|l| LanguageInfo { tag: l.tag, name: l.name }).collect()
+    ocr::LANGUAGES.iter().map(|l| LanguageInfo { tag: l.tag, name: l.name, rec: l.rec }).collect()
 }
 
 #[tauri::command]
