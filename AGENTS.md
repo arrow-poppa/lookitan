@@ -344,6 +344,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-24 (Claude, `tests`): the default transliteration prompt asks for Latin letters only (the model sometimes copied the Arabic word); a saved old default (`LEGACY_TRANSLITERATION_PROMPT`) is replaced.
+
 - 2026-10-24 (Claude, `tests`): at the user's request the context translator and the pictures got their own "Corrigir erros de OCR com IA" switch and OCR note, in their own tabs.
 
 - 2026-10-24 (Claude, `tests`): at the user's request the OCR errors note got its own switch, "Corrigir erros de OCR com IA" (`ai.cardOcrFix`, default on), named by the user.

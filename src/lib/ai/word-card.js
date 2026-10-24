@@ -53,8 +53,13 @@ export const FORM_PROMPT =
     '[the grammatical features of the word as written in the context, in {{definitionLanguage}}, e.g. person, number, gender, ' +
     'tense, mood, case or definiteness; [] when it is the dictionary form]';
 
-/** Default instruction for the card's "transliteration" key (the "Prompt da transliteração"). */
-export const TRANSLITERATION_PROMPT = 'the word exactly as written in the context, transliterated into Latin letters';
+/** Default instruction for the card's "transliteration" key (the "Prompt da transliteração"). A
+ * model told only "the word exactly as written" sometimes copied the word in its own script. */
+export const TRANSLITERATION_PROMPT =
+    'the romanization of the word as written in the context, in Latin letters only (e.g. "fa-bāḍat", "an-naṣṣ"); never the original script';
+
+/** The first default transliteration prompt (for migration). */
+export const LEGACY_TRANSLITERATION_PROMPT = 'the word exactly as written in the context, transliterated into Latin letters';
 
 /** Languages written in a script other than Latin, whose card gets a transliteration. Chinese and
  * Japanese have their reading instead. */

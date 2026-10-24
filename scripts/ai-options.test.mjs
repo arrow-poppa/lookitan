@@ -51,6 +51,13 @@ test('the context translator and the pictures have their own "Corrigir erros de 
     assert.equal(normalizeAiOptions({contextOcrFix: false}).imageOcrFix, true, 'each section has its own switch');
 });
 
+test('the first default transliteration prompt becomes the one that asks for Latin letters only', async () => {
+    const {LEGACY_TRANSLITERATION_PROMPT, TRANSLITERATION_PROMPT} = await import('../src/lib/ai/word-card.js');
+    assert(TRANSLITERATION_PROMPT.includes('Latin letters only') && TRANSLITERATION_PROMPT.includes('never the original script'));
+    assert.equal(normalizeAiOptions({transliterationPrompt: LEGACY_TRANSLITERATION_PROMPT}).transliterationPrompt, TRANSLITERATION_PROMPT);
+    assert.equal(normalizeAiOptions({transliterationPrompt: 'my letters'}).transliterationPrompt, 'my letters', "the user's own prompt stays");
+});
+
 test('explanation stays manual for new and existing AI settings without autoExplain', () => {
     assert.equal(defaultAiOptions().autoExplain, false);
     assert.equal(normalizeAiOptions(null).autoExplain, false);

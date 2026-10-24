@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, FORM_FIELD, FORM_PROMPT, IMAGE_OCR_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, OCR_ERRORS_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, FORM_FIELD, FORM_PROMPT, IMAGE_OCR_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -138,6 +138,8 @@ export function normalizeAiOptions(stored) {
     // The default explanation prompt then wrote in the translation language; it has its own now.
     if (out.customPrompt.trim() === TRANSLATION_LANGUAGE_EXPLAIN_PROMPT) { out.customPrompt = EXPLAIN_PROMPT; }
     if (out.contextPrompt.trim() === LEGACY_CONTEXT_PROMPT) { out.contextPrompt = CONTEXT_PROMPT; }
+    // The first default transliteration prompt sometimes got the word back in its own script.
+    if (out.transliterationPrompt.trim() === LEGACY_TRANSLITERATION_PROMPT) { out.transliterationPrompt = TRANSLITERATION_PROMPT; }
     // Card prompts saved before the translation had its own field: move the default translation
     // clause to the {{translationField}} marker and keep the rest of the user's edits.
     if (!out.cardPrompt.includes(TRANSLATION_FIELD) && out.cardPrompt.includes(LEGACY_TRANSLATION_FIELD)) {
