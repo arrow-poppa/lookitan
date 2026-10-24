@@ -76,40 +76,6 @@ test('the card gets the word analyzer\'s hints with the word, after the cached i
     assert(split.prompt.endsWith(`Word: 'حل'\nHints for 'حل', which may be wrong: the OCR read it inside "حلحه".`));
 });
 
-test('an AI profile keeps only what it changes, and Global stays as the options are', async () => {
-    const {activeAiProfile, dropOverride, effectiveAi, overridesPath, profileOverrides} = await import('../src/lib/ai/defaults.js');
-    const global = normalizeAiOptions({provider: 'openai', openai: {apiKey: 'test-only-key', model: 'gpt-x'}, cardPrompt: 'Global card {{target}}'});
-    assert.equal(effectiveAi(global), global, 'with Global the options are used as they are');
-    assert.deepEqual(global.aiProfiles, []);
-    global.aiProfiles.push({id: 'ja', name: 'Japonês', overrides: {}});
-    global.activeAiProfile = 'ja';
-    const view = effectiveAi(global);
-    assert.notEqual(view, global);
-    assert.deepEqual(profileOverrides(view, global), {}, 'a new profile changes nothing');
-    view.cardPrompt = 'Japanese card {{target}}';
-    view.openai.model = 'gpt-ja';
-    view.sectionProviders['ai-context'].temperature = 0.2;
-    activeAiProfile(global).overrides = profileOverrides(view, global);
-    assert.deepEqual(activeAiProfile(global).overrides,
-        {cardPrompt: 'Japanese card {{target}}', openai: {model: 'gpt-ja'}, sectionProviders: {'ai-context': {temperature: 0.2}}});
-    assert.equal(global.cardPrompt, 'Global card {{target}}', 'editing the profile leaves the global options alone');
-    assert.equal(global.openai.model, 'gpt-x');
-    const used = effectiveAi(global);
-    assert.equal(used.cardPrompt, 'Japanese card {{target}}');
-    assert.equal(used.openai.model, 'gpt-ja');
-    assert.equal(used.openai.apiKey, 'test-only-key', 'what the profile leaves alone follows the global options');
-    global.contextPrompt = 'Changed globally';
-    assert.equal(effectiveAi(global).contextPrompt, 'Changed globally');
-    assert(overridesPath(activeAiProfile(global), 'openai.model') && !overridesPath(activeAiProfile(global), 'openai.apiKey'));
-    dropOverride(activeAiProfile(global), 'sectionProviders.ai-context.temperature');
-    assert.deepEqual(activeAiProfile(global).overrides, {cardPrompt: 'Japanese card {{target}}', openai: {model: 'gpt-ja'}}, 'empty objects go too');
-    const saved = normalizeAiOptions(JSON.parse(JSON.stringify(global)));
-    assert.equal(saved.activeAiProfile, 'ja');
-    assert.equal(normalizeAiOptions({...global, activeAiProfile: 'gone'}).activeAiProfile, '', 'a deleted profile falls back to Global');
-    view.imageMemeMode = !global.imageMemeMode;
-    assert(!('imageMemeMode' in profileOverrides(view, global)), "the pop-up's meme mode stays global");
-});
-
 test('explanation stays manual for new and existing AI settings without autoExplain', () => {
     assert.equal(defaultAiOptions().autoExplain, false);
     assert.equal(normalizeAiOptions(null).autoExplain, false);

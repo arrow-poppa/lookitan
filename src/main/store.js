@@ -5,10 +5,6 @@ import {api, loadAllSettings} from '../lib/api.js';
 export const store = {settings: null, ai: null, anki: null};
 let timer = null;
 
-/** Run before each save, to fold edits made on a copy back into the store (AI profiles). */
-const beforeSave = [];
-export function onBeforeSave(hook) { beforeSave.push(hook); }
-
 export async function loadStore() {
     const all = await loadAllSettings();
     store.settings = all.settings;
@@ -17,7 +13,6 @@ export async function loadStore() {
 }
 
 export function save() {
-    for (const hook of beforeSave) { hook(); }
     const state = document.getElementById('save-state');
     state.textContent = 'Salvando…';
     clearTimeout(timer);
