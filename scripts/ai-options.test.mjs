@@ -25,6 +25,15 @@ test('a card prompt saved with the components gets the form once, after them', a
     assert.equal(normalizeAiOptions({cardPrompt: old, cardPromptVersion: 3}).cardPrompt, old, 'taken out after the migration, it stays out');
 });
 
+test('"Corrigir erros de OCR com IA" starts on, and an empty prompt is its default', async () => {
+    const {OCR_ERRORS_PROMPT} = await import('../src/lib/ai/word-card.js');
+    assert.equal(normalizeAiOptions({}).cardOcrFix, true);
+    assert.equal(normalizeAiOptions({cardOcrFix: false}).cardOcrFix, false);
+    assert.equal(normalizeAiOptions({cardOcrFix: 'no'}).cardOcrFix, true);
+    assert.equal(normalizeAiOptions({ocrErrorsPrompt: '  '}).ocrErrorsPrompt, OCR_ERRORS_PROMPT);
+    assert(!('arabicOcrPrompt' in normalizeAiOptions({arabicOcrPrompt: 'old'})));
+});
+
 test('explanation stays manual for new and existing AI settings without autoExplain', () => {
     assert.equal(defaultAiOptions().autoExplain, false);
     assert.equal(normalizeAiOptions(null).autoExplain, false);

@@ -171,12 +171,12 @@ export function fillLanguages(template, settings) {
  * tokens on it. Likewise {{readingField}} gets the reading prompt only in Chinese and Japanese,
  * {{componentsField}} the components prompt only when they are switched on, and {{formField}} the
  * form prompt, plus the transliteration prompt in a script other than Latin; their variables follow
- * the OCR language. The OCR errors note follows a prompt with these markers, on a paragraph of its
- * own, with the examples of the OCR language's script. A card prompt without a marker is sent as
+ * the OCR language. The OCR errors note follows a prompt with these markers, unless
+ * "Corrigir erros de OCR com IA" (`cardOcrFix`) is off, on a paragraph of its own, with the examples of the OCR language's script. A card prompt without a marker is sent as
  * written.
  * @param {string} template
  * @param {{showWordTranslation?: boolean, ocrLanguage?: string}} settings
- * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, ocrErrorsPrompt?: string, cardComponents?: boolean}} [ai]
+ * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, ocrErrorsPrompt?: string, cardComponents?: boolean, cardOcrFix?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
     const field = settings.showWordTranslation === false ? '' : `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}`;
@@ -189,7 +189,7 @@ export function cardPrompt(template, settings, ai = {}) {
     const form = `, "form": ${promptOr(ai.formPrompt, FORM_PROMPT)}` +
         (TRANSLITERATED.has(language) ? `, "transliteration": ${promptOr(ai.transliterationPrompt, TRANSLITERATION_PROMPT)}` : '');
     const errors = OCR_ERRORS[language] || (TRANSLITERATED.has(language) ? OTHER_SCRIPT_ERRORS : LATIN_ERRORS);
-    const note = /\{\{\w+Field\}\}/.test(template) ?
+    const note = ai.cardOcrFix !== false && /\{\{\w+Field\}\}/.test(template) ?
         `\n\n${promptOr(ai.ocrErrorsPrompt, OCR_ERRORS_PROMPT).replaceAll('{{ocrErrors}}', errors)}` : '';
     return fillLanguages(template
         .replaceAll(TRANSLATION_FIELD, field)

@@ -262,6 +262,9 @@ test('the card asks every language for the form on screen, and scripts other tha
     view.settings.ocrLanguage = 'zh-TW';
     await view.popup.runCard(new Element());
     assert(prompts[prompts.length - 1].includes('進/盡'), 'Chinese gets its lookalike characters');
+    view.ai.cardOcrFix = false;
+    await view.popup.runCard(new Element());
+    assert(!prompts[prompts.length - 1].includes('read from the screen by OCR'), 'switched off, the OCR errors note is not sent');
     view.ai.formPrompt = 'my form';
     view.ai.transliterationPrompt = 'my letters';
     view.settings.ocrLanguage = 'ru-RU';

@@ -73,6 +73,7 @@ function baseAiOptions() {
         // The card's "Componentes": the parts of the word, in any language. Off, the prompt does
         // not ask for them.
         cardComponents: true,
+        cardOcrFix: true,
         // Bumped when markers are added to the card prompt, so a saved prompt gets them once.
         cardPromptVersion: 3,
         // The context translator has its own switch.
@@ -111,7 +112,7 @@ export function normalizeAiOptions(stored) {
         return defaultAiOptions();
     }
     const out = {...base, ...stored};
-    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'cardComponents']) {
+    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'cardComponents', 'cardOcrFix']) {
         if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
     }
     // One switch used to start both the word card and the context translation: until the
