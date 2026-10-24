@@ -8,8 +8,8 @@
 //
 // Linux: a user cannot lower a nice value without root, so the lookup asks rtkit (RealtimeKit, the
 // D-Bus service PipeWire uses, allowed for the active session by polkit) for a high priority
-// thread: the lookup's own thread, and the threads that create the OCR sessions, whose worker
-// threads inherit their nice value. rtkit rate-limits its requests, so those threads keep it; they
+// thread: the lookup's own thread, and the threads that create the OCR sessions (CPU, and WebGPU
+// on the GPU, whose Dawn threads are made then), whose worker threads inherit their nice value. rtkit rate-limits its requests, so those threads keep it; they
 // only use the CPU during a lookup. Without rtkit, nothing changes.
 
 use parking_lot::Mutex;

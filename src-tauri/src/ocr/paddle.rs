@@ -756,6 +756,8 @@ fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
 fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
     use ort::ep::webgpu::DawnBackendType;
     use ort::ep::{ArbitrarilyConfigurableExecutionProvider, WebGPU};
+    // Dawn's and the session's threads take this thread's priority (platform/priority.rs).
+    crate::platform::priority::raise_this_thread();
     let b = ortx!(Session::builder());
     let b = ortx!(b.with_optimization_level(GraphOptimizationLevel::Level1));
     let mut ep = WebGPU::default().with_dawn_backend_type(DawnBackendType::Vulkan).with_device_id(0);
