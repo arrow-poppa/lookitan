@@ -133,6 +133,9 @@ pub struct LookupPayload {
     pub context: String,
     /// Where the word starts in `context`, in characters, when known.
     pub context_at: Option<usize>,
+    /// How many of the word's characters come before a line or column break it runs across
+    /// (an analyzer joined it there), for the AI's hints.
+    pub line_break: Option<usize>,
     pub candidates: Vec<String>,
     pub entries: Vec<EntryRef>,
     pub engine: String,
@@ -611,6 +614,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 sentence: pick.sentence,
                 context: pick.context,
                 context_at: Some(pick.context_at),
+                line_break: pick.line_break,
                 candidates: pick.candidates,
                 engine,
                 ocr_ms,
@@ -1618,6 +1622,7 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
         sentence: pick.sentence,
         context: pick.context,
         context_at: Some(pick.context_at),
+        line_break: pick.line_break,
         candidates: pick.candidates,
         engine,
         ocr_ms,

@@ -72,6 +72,9 @@ test('the card gets the word analyzer\'s hints with the word, after the cached i
     assert.equal(ja, `Hints for '{{target}}', which may be wrong: the word analyzer's dictionary forms: "食べる".`,
         'no run in unspaced text, and the prefixes after the word are not forms of it');
     assert.equal(cardHints({word: '更進', context: '勸君更進一杯酒', contextAt: 2, candidates: ['更進', '更']}), '', 'jieba gives no dictionary form');
+    assert.equal(cardHints({word: '盡為', context: '無故人盡為政心閑', contextAt: 3, lineBreak: 1, candidates: ['盡為', '盡']}),
+        `Hints for '{{target}}', which may be wrong: the word analyzer joined "盡" at the end of one line or column with "為" at the start of the next, so the word may end or begin at that break.`,
+        'a word joined across a column break');
     assert.equal(cardHints({word: 'run', context: 'I run, daily.', contextAt: 2, candidates: ['run']}), '', 'nothing to add');
     const {AIProvider} = await import('../src/lib/ai/ai-provider.js');
     const split = Object.create(AIProvider.prototype)._splitPrompts('حل', context, `Instructions.\nContext: '{{sentence}}'\nWord: '{{target}}'\n${cut}`, '', undefined);

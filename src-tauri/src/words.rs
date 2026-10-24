@@ -20,6 +20,10 @@ pub struct Pick {
     pub context: String,
     /// Where the word starts in `context`, in characters.
     pub context_at: usize,
+    /// For a word an analyzer joined across a line (or column) break, how many of its characters
+    /// come before the break: the cut may be wrong there, so the AI is told (word-card.js
+    /// `cardHints`).
+    pub line_break: Option<usize>,
     /// Indices of the lines the sentence spans, for the "sentence" screenshot.
     #[serde(skip)]
     pub sentence_lines: Vec<usize>,
@@ -405,6 +409,7 @@ fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: 
     let w = seg.words(&text.iter().collect::<String>()).into_iter().find(|w| w.start <= at && at < w.end)?;
     let (start, end) = piece_span(p, w.start, w.end)?;
     let word: String = text[w.start..w.end].iter().collect();
+    let line_break = pieces.iter().map(|q| q.at).find(|&b| w.start < b && b < w.end).map(|b| b - w.start);
     let mut candidates: Vec<String> = Vec::new();
     let run: Vec<char> = word.chars().take(MAX_RUN).collect();
     let shorter = run.first().is_some_and(|&c| is_unspaced_script(c));
@@ -416,7 +421,7 @@ fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: 
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, para, idx, start..end);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false, angle: 0.0 })
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break, x0, y0, x1, y1, vertical: false, angle: 0.0 })
 }
 
 /// The word under the pointer, found through `seg` when it reads that word's script.
@@ -529,7 +534,7 @@ fn pick_upright(lines: &[OcrLine], para: &[usize], line_idx: usize, px: f32, py:
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, para, line_idx, span);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, x0, y0, x1, y1, vertical: false, angle: 0.0 })
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break: None, x0, y0, x1, y1, vertical: false, angle: 0.0 })
 }
 
 fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
@@ -1113,6 +1118,7 @@ mod tests {
         assert_eq!((p.x0, p.x1), (140.0, 210.0), "the box is the word's, not the run past the pointer");
         assert_eq!(p.sentence, "日本語を勉強しています。");
         assert!(p.is_under(155.0, 110.0));
+        assert_eq!(p.line_break, None, "on one line");
         // Without an analyzer, the longest match runs from the pointer.
         assert_eq!(pick(&lines, 155.0, 110.0, None).unwrap().word, "強しています");
     }
@@ -1131,6 +1137,7 @@ mod tests {
         assert_eq!(texts, ["日本語", "を", "勉", "強しています", "。"], "a box per word, a piece on each line");
         let p = pick(&lines, 115.0, 135.0, Some(&seg)).unwrap();
         assert_eq!(p.word, "勉強しています");
+        assert_eq!(p.line_break, Some(1), "勉 ends the upper line; the AI is told the word runs across the break");
         assert_eq!((p.x0, p.x1), (100.0, 160.0), "the piece on the pointer's line");
         assert_eq!(super::word_boxes(&lines, None).len(), 3, "without an analyzer, a box per run, and the 。");
     }
