@@ -5,6 +5,10 @@ import {invoke} from '@tauri-apps/api/core';
 export const api = {
     getSettings: () => invoke('get_settings'),
     saveSettings: (settings) => invoke('save_settings', {settings}),
+    /** Settings profiles (Configurações › "Perfil"); '' is the global settings. */
+    chooseSettingsProfile: (id) => invoke('choose_settings_profile', {id}),
+    createSettingsProfile: (name) => invoke('create_settings_profile', {name}),
+    deleteSettingsProfile: (id) => invoke('delete_settings_profile', {id}),
     engineStatus: () => invoke('engine_status'),
     installSegmenter: () => invoke('install_segmenter'),
     removeSegmenter: () => invoke('remove_segmenter'),

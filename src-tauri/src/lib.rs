@@ -1273,7 +1273,57 @@ fn save_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: Se
     // Dictionary files are managed by their own commands; keep the stored list.
     let mut next = settings;
     next.dictionaries = previous.dictionaries.clone();
+    // Profiles change through their own commands; a save can only rename them.
+    let names: Vec<(String, String)> = next.settings_profiles.iter().map(|p| (p.id.clone(), p.name.clone())).collect();
+    next.settings_profiles = previous.settings_profiles.clone();
+    for p in &mut next.settings_profiles {
+        if let Some((_, name)) = names.iter().find(|(id, name)| *id == p.id && !name.trim().is_empty()) {
+            p.name = name.trim().to_string();
+        }
+    }
+    next.active_settings_profile = previous.active_settings_profile.clone();
+    next.global_settings = previous.global_settings.clone();
     apply_settings(&app, &state, previous, next)
+}
+
+/// Uses the settings profile `id` (empty: the global settings), Configurações › "Perfil".
+#[tauri::command]
+fn choose_settings_profile(app: AppHandle, state: tauri::State<'_, AppState>, id: String) -> std::result::Result<(), String> {
+    let previous = state.settings.read().clone();
+    let next = settings::choose_profile(previous.clone(), &id);
+    switch_profile(&app, &state, previous, next)
+}
+
+/// Adds a settings profile, which starts from the global settings, and uses it. Returns its id.
+#[tauri::command]
+fn create_settings_profile(app: AppHandle, state: tauri::State<'_, AppState>, name: String) -> std::result::Result<String, String> {
+    let previous = state.settings.read().clone();
+    let (next, id) = settings::create_profile(previous.clone(), &name);
+    switch_profile(&app, &state, previous, next)?;
+    Ok(id)
+}
+
+/// Deletes a settings profile; the global settings are used if it was in use.
+#[tauri::command]
+fn delete_settings_profile(app: AppHandle, state: tauri::State<'_, AppState>, id: String) -> std::result::Result<(), String> {
+    let previous = state.settings.read().clone();
+    let next = settings::delete_profile(previous.clone(), &id);
+    switch_profile(&app, &state, previous, next)
+}
+
+/// Applies the settings of another profile, its dictionaries' switches and order included.
+fn switch_profile(app: &AppHandle, state: &AppState, previous: Settings, next: Settings) -> std::result::Result<(), String> {
+    let dictionaries_changed = previous.dictionaries.iter().map(|d| (&d.id, d.enabled)).ne(next.dictionaries.iter().map(|d| (&d.id, d.enabled)));
+    apply_settings(app, state, previous, next)?;
+    if dictionaries_changed {
+        // Opening dictionaries can take a while; the switch does not wait for it.
+        let app = app.clone();
+        std::thread::spawn(move || {
+            load_dictionaries(&app.state::<AppState>());
+            let _ = app.emit("dictionaries-changed", ());
+        });
+    }
+    Ok(())
 }
 
 /// Replaces every setting with those of a settings file (see src/lib/settings-file.js, which
@@ -1950,6 +2000,9 @@ pub fn run() {
             get_settings,
             save_settings,
             import_settings,
+            choose_settings_profile,
+            create_settings_profile,
+            delete_settings_profile,
             engine_status,
             install_segmenter,
             remove_segmenter,

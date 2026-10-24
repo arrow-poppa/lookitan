@@ -12,11 +12,14 @@ export async function loadStore() {
     store.anki = all.anki;
 }
 
+let pending = null;
+
 export function save() {
     const state = document.getElementById('save-state');
     state.textContent = 'Salvando…';
     clearTimeout(timer);
-    timer = setTimeout(async () => {
+    pending = async () => {
+        pending = null;
         store.settings.ai = store.ai;
         store.settings.anki = store.anki;
         try {
@@ -26,5 +29,12 @@ export function save() {
         } catch (e) {
             state.textContent = `Erro ao salvar: ${e}`;
         }
-    }, 350);
+    };
+    timer = setTimeout(() => pending?.(), 350);
+}
+
+/** Saves a change still waiting for its timer now, before the settings are replaced (a profile switch). */
+export async function saveNow() {
+    clearTimeout(timer);
+    if (pending) { await pending(); }
 }

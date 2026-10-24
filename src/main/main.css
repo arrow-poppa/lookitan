@@ -79,6 +79,9 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .card-row .ctl .capture-size input { min-width: 110px; width: 110px; }
 .card-row.stack { flex-direction: column; align-items: stretch; }
 .card-row.stack .head { display: flex; align-items: center; gap: 16px; }
+/* Configurações › "Perfil". */
+.profile-controls { display: flex; align-items: center; gap: 8px; }
+.profile-controls select, .profile-controls input { flex: 1; min-width: 0; }
 .sub { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 2px 40px; }
 .sub label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 

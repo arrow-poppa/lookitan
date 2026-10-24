@@ -8,7 +8,7 @@ import {icon} from '../lib/icons.js';
 import {renderAnkiSection} from './anki-panel.js';
 import {renderAudioSection} from './audio-panel.js';
 import {transferRow} from './settings-transfer.js';
-import {store, save} from './store.js';
+import {store, save, saveNow} from './store.js';
 import {cardRow, collapser, el, heading, segmented, select, textInput, toggle} from './ui.js';
 
 let languages = [];
@@ -488,6 +488,53 @@ export async function refreshStatus() {
     if (row) { fillSegmenterRow(row); }
 }
 
+/** Switches to another profile (or Global) and shows its settings: every tab is drawn again from
+ * them, so the window reloads once the switch is saved. */
+async function switchProfile(change) {
+    try {
+        await saveNow();
+        await change();
+        location.reload();
+    } catch (e) {
+        const state = document.getElementById('save-state');
+        if (state) { state.textContent = `Erro no perfil: ${e?.message || e}`; }
+    }
+}
+
+/**
+ * Configurações › "Perfil": every setting but the saved words, chosen by hand. Global is the
+ * settings as before profiles; a profile keeps only what it changes from them (settings.rs,
+ * `sync_profile`), so what it leaves alone follows Global.
+ */
+function profileRows() {
+    const s = store.settings;
+    const profiles = s.settingsProfiles || [];
+    const active = profiles.find((p) => p.id === s.activeSettingsProfile) || null;
+    const choose = select([{value: '', label: 'Global'}, ...profiles.map((p) => ({value: p.id, label: p.name}))],
+        active ? active.id : '', (id) => switchProfile(() => api.chooseSettingsProfile(id)));
+    choose.id = 'settings-profile';
+    choose.setAttribute('aria-label', 'Perfil');
+    const add = el('button', {type: 'button', html: `${icon('plus', 'sm')}Novo perfil`});
+    add.addEventListener('click', () => switchProfile(() => api.createSettingsProfile(`Perfil ${profiles.length + 1}`)));
+    const changed = active ? Object.keys(active.overrides || {}).length : 0;
+    const rows = [cardRow({icon: 'settings', title: 'Perfil', wide: true,
+        desc: active
+            ? `Tudo o que você mudar no app (menos as palavras salvas) fica só neste perfil; o resto continua vindo do Global.${changed ? '' : ' Por enquanto ele está igual ao Global.'}`
+            : 'As configurações de sempre. Crie um perfil (por exemplo, um para japonês, com outro idioma, outros dicionários e outros prompts) e troque aqui quando quiser; as palavras salvas são as mesmas em todos.',
+        control: el('div', {class: 'profile-controls'}, choose, add)})];
+    if (active) {
+        const name = textInput(active.name, (v) => { if (v.trim()) { active.name = v.trim(); save(); } });
+        name.setAttribute('aria-label', 'Nome do perfil');
+        const remove = el('button', {type: 'button', html: `${icon('trash', 'sm')}Apagar`});
+        remove.addEventListener('click', async () => {
+            if (!await ask(`Apagar o perfil "${active.name}"? O app volta a usar o Global.`, {title: 'Apagar perfil', kind: 'warning', okLabel: 'Apagar', cancelLabel: 'Cancelar'})) { return; }
+            await switchProfile(() => api.deleteSettingsProfile(active.id));
+        });
+        rows.push(cardRow({icon: 'list', title: 'Nome do perfil', wide: true, control: el('div', {class: 'profile-controls'}, name, remove)}));
+    }
+    return rows;
+}
+
 function render(root) {
     const s = store.settings;
     const session = status?.session || 'windows';
@@ -504,6 +551,7 @@ function render(root) {
     });
     languageSelect.id = 'ocr-language';
     root.append(heading('Essenciais'), el('div', {class: 'group'},
+        ...profileRows(),
         cardRow({icon: 'scan', title: 'Idioma de reconhecimento', desc: 'O idioma do texto na tela', wide: true,
             control: languageSelect}),
         segmenterRow(),

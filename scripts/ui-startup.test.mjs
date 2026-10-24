@@ -101,18 +101,20 @@ async function settingsFixture(overrides = {}) {
     const gamepadCapture = {handler: null};
     const settings = {ocrLanguage: 'en-US', appMode: 'popup', profiles: [], mouseHotkey: {button: 'none'}, useGpu: true,
         ocrScope: 'screen', captureWidth: 900, captureHeight: 260, ...overrides};
-    const ui = await load('src/main/settings-tab.js', {document: view.document}, {
+    const ui = await load('src/main/settings-tab.js', {document: view.document, location: {reload: () => calls.push('reload')}}, {
         '@tauri-apps/api/app': {getVersion: async () => 'test'},
         '@tauri-apps/plugin-dialog': {ask: async () => true},
         [file('src/lib/api.js')]: {api: {ocrLanguages: () => languages.promise, engineStatus: () => later ?? status.promise,
             installSegmenter: async () => { calls.push('install'); }, removeSegmenter: async () => { calls.push('remove'); },
             gamepadStatus: async () => 'Xbox Controller', gamepadCapture: async (on) => { calls.push(`capture ${on}`); },
-            onGamepadCapture: async (handler) => { gamepadCapture.handler = handler; }}, escapeHtml: String},
+            onGamepadCapture: async (handler) => { gamepadCapture.handler = handler; },
+            chooseSettingsProfile: async (id) => { calls.push(`choose ${id}`); }, createSettingsProfile: async (name) => { calls.push(`create ${name}`); },
+            deleteSettingsProfile: async (id) => { calls.push(`delete ${id}`); }}, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/main/anki-panel.js')]: {renderAnkiSection: async () => {}},
         [file('src/main/audio-panel.js')]: {renderAudioSection: () => {}},
         [file('src/main/settings-transfer.js')]: {transferRow: () => null},
-        [file('src/main/store.js')]: {store: {settings, anki: {}}, save: () => { saves += 1; }},
+        [file('src/main/store.js')]: { saveNow: async () => {},store: {settings, anki: {}}, save: () => { saves += 1; }},
     });
     const initialization = ui.initSettingsTab(root);
     return {view, root, settings, languages, status, initialization, calls, ui, gamepadCapture,
@@ -122,6 +124,23 @@ async function settingsFixture(overrides = {}) {
         await initialization;
     }};
 }
+
+test('Configurações chooses a settings profile above the recognition language, then shows its settings', async () => {
+    const fixture = await settingsFixture({settingsProfiles: [{id: 'p1', name: 'Japonês', overrides: {ocrLanguage: 'ja-JP'}}], activeSettingsProfile: ''});
+    await fixture.finish();
+    const all = descendants(fixture.root);
+    const picker = all.find((node) => node.id === 'settings-profile');
+    assert(picker, 'the profile row is shown');
+    assert(all.indexOf(picker) < all.indexOf(all.find((node) => node.id === 'ocr-language')), 'above the recognition language');
+    assert.deepEqual(picker.children.map((o) => o.textContent), ['Global', 'Japonês']);
+    picker.value = 'p1';
+    picker.dispatch('change');
+    await new Promise((done) => setTimeout(done, 0));
+    assert.deepEqual(fixture.calls.filter((c) => c.startsWith('choose') || c === 'reload'), ['choose p1', 'reload'], 'the switch is made by the back end, then the window shows it');
+    const inProfile = await settingsFixture({settingsProfiles: [{id: 'p1', name: 'Japonês', overrides: {}}], activeSettingsProfile: 'p1'});
+    await inProfile.finish();
+    assert(descendants(inProfile.root).some((node) => node.attributes?.['aria-label'] === 'Nome do perfil'), 'a profile in use can be renamed');
+});
 
 async function dictionaryFixture(overrides = {}) {
     const view = dom();
@@ -139,7 +158,7 @@ async function dictionaryFixture(overrides = {}) {
         ]}, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => 'test answer'},
-        [file('src/main/store.js')]: {store: {settings, ai}, save: () => { saves++; }},
+        [file('src/main/store.js')]: { saveNow: async () => {},store: {settings, ai}, save: () => { saves++; }},
     });
     await ui.initDictsTab();
     const control = (path) => descendants(root).find((node) => node.attributes['data-setting'] === `ai.${path}`);
@@ -271,7 +290,7 @@ test('the pop-up order is changed by dragging a row or with Alt+arrows, without 
         }, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => ''},
-        [file('src/main/store.js')]: {store: {settings: {definitionLanguage: 'en-US', translationLanguage: 'pt-BR'}, ai: normalizeAiOptions({})}, save: () => {}},
+        [file('src/main/store.js')]: { saveNow: async () => {},store: {settings: {definitionLanguage: 'en-US', translationLanguage: 'pt-BR'}, ai: normalizeAiOptions({})}, save: () => {}},
     });
     await ui.initDictsTab();
     // Rows whose middles are at 20, 60 and 100 px.
@@ -598,7 +617,7 @@ async function mainFixture(rejectSettings = false) {
         '@tauri-apps/api/event': {listen: async (name) => { subscriptions.push(name); return () => {}; }},
         [file('src/lib/api.js')]: {api: {getSettings: async () => ({profiles: []})}},
         [file('src/lib/icons.js')]: {hydrateIcons: () => {}},
-        [file('src/main/store.js')]: {loadStore: () => settings.promise, store: {settings: {profiles: []}}},
+        [file('src/main/store.js')]: { saveNow: async () => {},loadStore: () => settings.promise, store: {settings: {profiles: []}}},
         [file('src/main/words-tab.js')]: {initWordsTab: async () => {}, refreshWords: async () => {}},
         [file('src/main/dicts-tab.js')]: {initDictsTab: async () => { throw new Error('dictionary read failed'); }, refreshDicts: async () => {}},
         [file('src/main/settings-tab.js')]: {initSettingsTab: () => initialization.promise, refreshStatus: async () => {}},
@@ -634,7 +653,7 @@ async function ankiPanelFixture(createConnection, overrides = {}) {
     const panel = await load('src/main/anki-panel.js', {document: view.document}, {
         [file('src/lib/api.js')]: {escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
-        [file('src/main/store.js')]: {store: {anki}, save: () => { saves++; }},
+        [file('src/main/store.js')]: { saveNow: async () => {},store: {anki}, save: () => { saves++; }},
         [file('src/lib/anki/notes.js')]: {createConnection, fieldValue: (field) => field.value, MARKERS: ['expression', 'glossary'],
             dictionaryMarkers: () => [], glossaryDictionaryNames: () => [],
             suggestMarker: (_name, index) => index === 0 ? '{expression}' : '{glossary}'},
@@ -726,7 +745,7 @@ test('saved word Anki errors stay visible and the add button can be retried', as
         [file('src/lib/api.js')]: {escapeHtml: String, api: {listWords: async () => { listRequests++; return [{id: 'word-1', word: 'hello', createdAt: 1}]; }}},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/cards.js')]: {noteContextFromCard: (card) => ({word: card.word}), toCsv: () => '', toQuizlet: () => ''},
-        [file('src/main/store.js')]: {store: {anki: {enable: true}}},
+        [file('src/main/store.js')]: { saveNow: async () => {},store: {anki: {enable: true}}},
         [file('src/lib/anki/notes.js')]: {isFormatReady: () => true, buildNote: async () => ({fields: {Front: 'hello'}}), glossaryDictionaryNames: () => [],
             createConnection: () => ({addNote: async () => { throw new Error('Anki unavailable'); }})},
     });
@@ -756,7 +775,7 @@ test('a saved word is edited in place, field by field, as in Lookupper', async (
         }},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/cards.js')]: {noteContextFromCard: (card) => ({word: card.word}), toCsv: () => '', toQuizlet: () => ''},
-        [file('src/main/store.js')]: {store: {anki: {enable: true}}},
+        [file('src/main/store.js')]: { saveNow: async () => {},store: {anki: {enable: true}}},
         [file('src/lib/anki/notes.js')]: {isFormatReady: () => true, buildNote: async () => ({}), glossaryDictionaryNames: () => [], createConnection: () => ({})},
     });
     await words.initWordsTab();
@@ -797,7 +816,7 @@ async function audioPanelFixture(audio) {
         '@tauri-apps/plugin-dialog': {open: async () => null},
         [file('src/lib/api.js')]: {escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
-        [file('src/main/store.js')]: {store: {settings}, save: () => { saves++; }},
+        [file('src/main/store.js')]: { saveNow: async () => {},store: {settings}, save: () => { saves++; }},
     });
     panel.renderAudioSection(root);
     const rows = (className) => descendants(root).filter((node) => node.className === className);
@@ -890,7 +909,7 @@ test('the Edge voice list also loads when voices come with Microsoft field names
         '@tauri-apps/plugin-dialog': {open: async () => null},
         [file('src/lib/api.js')]: {escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
-        [file('src/main/store.js')]: {store: {settings}, save: () => {}},
+        [file('src/main/store.js')]: { saveNow: async () => {},store: {settings}, save: () => {}},
     });
     panel.renderAudioSection(root);
     await flush();

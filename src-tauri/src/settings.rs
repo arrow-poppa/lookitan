@@ -224,6 +224,22 @@ pub struct Settings {
     /// Yomitan-style custom URLs and the system voice.
     pub audio: serde_json::Value,
     pub theme: String,
+    /// Profiles of every setting but the saved words (Configurações › "Perfil"), chosen by hand;
+    /// each keeps only what it changes from the global settings (see `sync_profile`).
+    pub settings_profiles: Vec<SettingsProfile>,
+    /// The profile in use; empty for the global settings.
+    pub active_settings_profile: String,
+    /// The global settings, as `snapshot` writes them, while a profile is in use.
+    pub global_settings: serde_json::Value,
+}
+
+/// A named set of settings: what it changes from the global settings, as `snapshot` writes them.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SettingsProfile {
+    pub id: String,
+    pub name: String,
+    pub overrides: serde_json::Value,
 }
 
 impl Settings {
@@ -276,8 +292,154 @@ impl Default for Settings {
             anki: serde_json::Value::Null,
             audio: serde_json::Value::Null,
             theme: "system".into(),
+            settings_profiles: Vec::new(),
+            active_settings_profile: String::new(),
+            global_settings: serde_json::Value::Null,
         }
     }
+}
+
+// ------------------------------------------------------------------ settings profiles
+//
+// The settings in use are always those of the profile chosen (or the global ones): the rest of
+// the app reads them as before. Before each save, `sync_profile` keeps what they change from the
+// global settings in the profile in use (or, with Global in use, keeps them as the global
+// settings). `choose_profile` lays another profile's changes on the global settings.
+
+/// What a profile never holds: the profiles themselves, and the app profiles, which Lookitan adds
+/// on its own for every app used.
+const NOT_IN_PROFILE: [&str; 4] = ["settingsProfiles", "activeSettingsProfile", "globalSettings", "profiles"];
+
+/// The settings a profile compares: every field but those, with the dictionaries as their ids
+/// and switches in order (their files are the same in every profile).
+fn snapshot(s: &Settings) -> serde_json::Value {
+    let mut value = serde_json::to_value(s).unwrap_or(serde_json::Value::Null);
+    if let serde_json::Value::Object(map) = &mut value {
+        for key in NOT_IN_PROFILE {
+            map.remove(key);
+        }
+        let dictionaries = s.dictionaries.iter().map(|d| serde_json::json!({"id": d.id, "enabled": d.enabled})).collect();
+        map.insert("dictionaries".into(), serde_json::Value::Array(dictionaries));
+    }
+    value
+}
+
+/// What `live` changes from `base`, key by key into objects.
+fn changes(live: &serde_json::Value, base: &serde_json::Value) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    if let serde_json::Value::Object(map) = live {
+        for (key, value) in map {
+            match (value, base.get(key)) {
+                (serde_json::Value::Object(_), Some(inner @ serde_json::Value::Object(_))) => {
+                    let inner = changes(value, inner);
+                    if inner.as_object().is_some_and(|m| !m.is_empty()) {
+                        out.insert(key.clone(), inner);
+                    }
+                }
+                (value, other) if other != Some(value) => {
+                    out.insert(key.clone(), value.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
+/// `base` with `over` laid on it, objects merged key by key.
+fn layered(base: &serde_json::Value, over: &serde_json::Value) -> serde_json::Value {
+    let mut out = base.clone();
+    if let (serde_json::Value::Object(target), serde_json::Value::Object(over)) = (&mut out, over) {
+        for (key, value) in over {
+            let merged = match target.get(key) {
+                Some(inner @ serde_json::Value::Object(_)) if value.is_object() => layered(inner, value),
+                _ => value.clone(),
+            };
+            target.insert(key.clone(), merged);
+        }
+    }
+    out
+}
+
+/// The installed dictionaries in the order and with the switches of `order` (`{id, enabled}`);
+/// the ones it does not name keep their place after them.
+fn arranged(installed: &[DictionaryConfig], order: Option<&serde_json::Value>) -> Vec<DictionaryConfig> {
+    let wanted = order.and_then(|v| v.as_array()).map(Vec::as_slice).unwrap_or_default();
+    let mut out: Vec<DictionaryConfig> = Vec::new();
+    for entry in wanted {
+        let (Some(id), Some(enabled)) = (entry.get("id").and_then(|v| v.as_str()), entry.get("enabled").and_then(|v| v.as_bool())) else { continue };
+        if let Some(d) = installed.iter().find(|d| d.id == id && !out.iter().any(|o| o.id == id)) {
+            out.push(DictionaryConfig { enabled, ..d.clone() });
+        }
+    }
+    for d in installed {
+        if !out.iter().any(|o| o.id == d.id) {
+            out.push(d.clone());
+        }
+    }
+    out
+}
+
+/// Keeps what the settings in use change in the profile in use, or, with Global in use, keeps
+/// them as the global settings. Runs before each save.
+pub fn sync_profile(s: &mut Settings) {
+    let live = snapshot(s);
+    match s.settings_profiles.iter().position(|p| p.id == s.active_settings_profile) {
+        Some(i) => {
+            if s.global_settings.is_null() {
+                s.global_settings = live.clone();
+            }
+            s.settings_profiles[i].overrides = changes(&live, &s.global_settings);
+        }
+        None => {
+            s.active_settings_profile.clear();
+            s.global_settings = live;
+        }
+    }
+}
+
+/// `s` switched to the profile `id` (empty or unknown: Global). What the settings in use change
+/// stays in the profile (or Global) they leave.
+pub fn choose_profile(mut s: Settings, id: &str) -> Settings {
+    sync_profile(&mut s);
+    let profile = s.settings_profiles.iter().find(|p| p.id == id && !id.is_empty());
+    let target = match profile {
+        Some(p) => layered(&s.global_settings, &p.overrides),
+        None => s.global_settings.clone(),
+    };
+    let active = profile.map(|p| p.id.clone()).unwrap_or_default();
+    let mut next = serde_json::from_value::<Settings>(target.clone()).map(migrate).unwrap_or_else(|e| {
+        log::warn!("profile settings could not be read ({e}); keeping the settings in use");
+        s.clone()
+    });
+    next.dictionaries = arranged(&s.dictionaries, target.get("dictionaries"));
+    next.profiles = s.profiles;
+    next.settings_profiles = s.settings_profiles;
+    next.global_settings = s.global_settings;
+    next.active_settings_profile = active;
+    next
+}
+
+/// `s` with a new profile named `name`, in use, that starts from the global settings.
+pub fn create_profile(s: Settings, name: &str) -> (Settings, String) {
+    let mut s = s;
+    sync_profile(&mut s);
+    let mut n = s.settings_profiles.len() + 1;
+    let id = loop {
+        let id = format!("p{n}");
+        if !s.settings_profiles.iter().any(|p| p.id == id) { break id; }
+        n += 1;
+    };
+    let name = if name.trim().is_empty() { format!("Perfil {}", s.settings_profiles.len() + 1) } else { name.trim().to_string() };
+    s.settings_profiles.push(SettingsProfile { id: id.clone(), name, overrides: serde_json::json!({}) });
+    (choose_profile(s, &id), id)
+}
+
+/// `s` without the profile `id`; Global is used if it was in use.
+pub fn delete_profile(s: Settings, id: &str) -> Settings {
+    let mut s = if s.active_settings_profile == id { choose_profile(s, "") } else { s };
+    s.settings_profiles.retain(|p| p.id != id);
+    s
 }
 
 pub fn builtin_dictionaries() -> Vec<DictionaryConfig> {
@@ -358,7 +520,10 @@ pub fn save(config_dir: &Path, settings: &Settings) -> anyhow::Result<()> {
     std::fs::create_dir_all(config_dir)?;
     let path = settings_path(config_dir);
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(settings)?)?;
+    // The profile in use (or Global) keeps what the settings in use change.
+    let mut settings = settings.clone();
+    sync_profile(&mut settings);
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&settings)?)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
 }
@@ -366,6 +531,58 @@ pub fn save(config_dir: &Path, settings: &Settings) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dictionary(id: &str, enabled: bool) -> DictionaryConfig {
+        DictionaryConfig { id: id.into(), kind: DictionaryKind::Mdict, path: format!("{id}.mdx"), name: id.into(), enabled }
+    }
+
+    #[test]
+    fn a_profile_keeps_only_what_it_changes_and_global_comes_back_as_it_was() {
+        let mut s = Settings { ocr_language: "en-US".into(), hotkey: "Alt+D".into(), ..Default::default() };
+        s.dictionaries.push(dictionary("jmdict", false));
+        s.dictionaries.push(dictionary("oxford", true));
+        s.ai = serde_json::json!({"provider": "openai", "openai": {"apiKey": "test-only-key", "model": "gpt-x"}});
+        let (mut s, id) = create_profile(s, "Japonês");
+        assert_eq!(s.active_settings_profile, id);
+        assert_eq!(s.ocr_language, "en-US", "a new profile starts from the global settings");
+        // Edited in the profile, as the front end saves it.
+        s.ocr_language = "ja-JP".into();
+        s.ai["openai"]["model"] = "gpt-ja".into();
+        s.dictionaries.iter_mut().find(|d| d.id == "jmdict").unwrap().enabled = true;
+        sync_profile(&mut s);
+        let overrides = &s.settings_profiles[0].overrides;
+        assert_eq!(overrides["ocrLanguage"], "ja-JP");
+        assert_eq!(overrides["ai"], serde_json::json!({"openai": {"model": "gpt-ja"}}), "only what changed, key by key");
+        assert!(overrides.get("hotkey").is_none());
+        let global = choose_profile(s, "");
+        assert_eq!(global.active_settings_profile, "");
+        assert_eq!(global.ocr_language, "en-US");
+        assert_eq!(global.ai["openai"]["model"], "gpt-x");
+        assert!(!global.dictionaries.iter().find(|d| d.id == "jmdict").unwrap().enabled, "the dictionaries' switches come back too");
+        // A change in Global reaches the profile where the profile leaves it alone.
+        let mut global = global;
+        global.hotkey = "Alt+Q".into();
+        let ja = choose_profile(global, &id);
+        assert_eq!((ja.ocr_language.as_str(), ja.hotkey.as_str()), ("ja-JP", "Alt+Q"));
+        assert_eq!(ja.ai["openai"]["apiKey"], "test-only-key");
+        assert!(ja.dictionaries.iter().find(|d| d.id == "jmdict").unwrap().enabled);
+        let back = delete_profile(ja, &id);
+        assert!(back.settings_profiles.is_empty() && back.active_settings_profile.is_empty());
+        assert_eq!(back.ocr_language, "en-US", "deleting the profile in use goes back to Global");
+    }
+
+    #[test]
+    fn app_profiles_and_new_dictionaries_are_the_same_in_every_profile() {
+        let (mut s, id) = create_profile(Settings::default(), "");
+        assert_eq!(s.settings_profiles[0].name, "Perfil 1");
+        s.profiles.push(AppProfile { executable: "game.exe".into(), ..Default::default() });
+        s.dictionaries.push(dictionary("new", true));
+        let global = choose_profile(s, "");
+        assert_eq!(global.profiles.len(), 1, "app profiles are not part of a profile");
+        assert!(global.dictionaries.iter().any(|d| d.id == "new"), "a dictionary installed in a profile is installed for all");
+        let again = choose_profile(global, &id);
+        assert_eq!(again.profiles.len(), 1);
+    }
 
     #[test]
     fn gamepad_actions_saved_as_one_button_read_as_a_list() {
