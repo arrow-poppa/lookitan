@@ -14,7 +14,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {nearest} from '../lib/gamepad-nav.js';
-import {cleanQuery, downloadImage, imagePrompts, searchImages, withMemeMode} from '../lib/images.js';
+import {cleanQuery, downloadImage, imagePrompts, imageWord, searchImages, withMemeMode} from '../lib/images.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -368,6 +368,9 @@ async function runCard(body, force = false) {
     const request = {};
     lookup.cardRequest = request;
     const current = () => state === lookup && lookup.cardRequest === request;
+    // The pictures wait for the card while it is made, to search the word it corrected.
+    let cardDone;
+    lookup.cardDone = new Promise((done) => { cardDone = done; });
     lookup.aiPending = true;
     void refreshAnkiButton();
     body.innerHTML = shimmer();
@@ -398,6 +401,7 @@ async function runCard(body, force = false) {
         if (current() && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
     } finally {
         if (lookup.cardRequest === request) { lookup.aiPending = false; }
+        cardDone();
         if (current()) { void refreshAnkiButton(); }
     }
 }
@@ -451,17 +455,20 @@ function highlightStars(text) {
 const imageSearches = new Map();
 const IMAGE_SEARCHES_KEPT = 40;
 
-function imagePromptKey(options) {
+/** The image query's prompts and the word searched, as `imageQuery` keys its request. */
+function imagePromptKey(options, word) {
     const {system, user} = imagePrompts(options, settings);
-    return `${system}\n\n${user}`;
+    return `${system}\n\n${user}\n\n${word}`;
 }
 
 /** The search query: the AI's (cached like the other AI answers), or the word itself. */
 async function imageQuery(lookup, options, force) {
-    const word = lookup.payload.word;
+    // The word the AI card corrected, once a card being made is done; else the OCR's.
+    if (options.imageUseCardWord !== false && lookup.aiPending && lookup.cardDone) { await lookup.cardDone; }
+    const word = imageWord(lookup.payload.word, lookup.aiCard, options);
     if (options.imageQueryUseAi === false || !isConfigured(options)) { return word; }
     const {system, user} = imagePrompts(options, settings);
-    const key = await aiKey('images', `${system}\n\n${user}`, lookup, options);
+    const key = await aiKey('images', imagePromptKey(options, word), lookup, options);
     lookup.keys.add(key);
     try {
         const text = await responses.run(key,
@@ -1252,7 +1259,7 @@ async function render(payload) {
             aiKey('card', cardRequestPrompt(ai, payload)),
             aiKey('context', contextPrompt(ai.contextPrompt, settings, ai)),
             aiKey('explain', fillLanguages(ai.customPrompt, settings)),
-            aiKey('images', imagePromptKey(optionsOf('images'))),
+            aiKey('images', imagePromptKey(optionsOf('images'), payload.word)),
         ]));
         if (sequence !== renderSequence) { return; }
         responses.cancelPendingExcept(keepRunning(keep));

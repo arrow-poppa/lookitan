@@ -67,12 +67,10 @@ test('the AI answer becomes a clean query, and an unusable one falls back to the
 test('the image query has its own system and user prompts, with the word language filled in', () => {
     const settings = {ocrLanguage: 'ja-JP', translationLanguage: 'pt-BR', definitionLanguage: 'en-US'};
     const defaults = imagePrompts(defaultAiOptions(), settings);
-    assert(defaults.system.startsWith(`${IMAGE_QUERY_SYSTEM_PROMPT}\n\n`) && defaults.system.includes('read from the screen by OCR'),
-        'the OCR note ends the system prompt while "Corrigir erros de OCR com IA" is on');
-    assert.equal(imagePrompts({...defaultAiOptions(), imageOcrFix: false}, settings).system, IMAGE_QUERY_SYSTEM_PROMPT);
+    assert.equal(defaults.system, IMAGE_QUERY_SYSTEM_PROMPT);
     assert.equal(defaults.user, IMAGE_QUERY_PROMPT.replace('{{wordLanguage}}', languageName('ja-JP')));
     assert(defaults.user.includes('{{target}}') && defaults.user.includes('{{sentence}}'), 'the provider fills the word and the sentence');
-    const own = imagePrompts({imageQuerySystemPrompt: 'Answer in {{translationLanguage}}.', imageQueryPrompt: '[{{target}}] {{wordLanguage}}', imageOcrFix: false}, settings);
+    const own = imagePrompts({imageQuerySystemPrompt: 'Answer in {{translationLanguage}}.', imageQueryPrompt: '[{{target}}] {{wordLanguage}}'}, settings);
     assert.deepEqual(own, {system: `Answer in ${languageName('pt-BR')}.`, user: `[{{target}}] ${languageName('ja-JP')}`});
 });
 

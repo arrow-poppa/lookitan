@@ -34,21 +34,24 @@ test('"Corrigir erros de OCR com IA" starts on, and an empty prompt is its defau
     assert(!('arabicOcrPrompt' in normalizeAiOptions({arabicOcrPrompt: 'old'})));
 });
 
-test('the context translator and the pictures have their own "Corrigir erros de OCR com IA"', async () => {
+test('the context translator has its own "Corrigir erros de OCR com IA", and the pictures use the card\'s word', async () => {
     const {CONTEXT_PROMPT, contextPrompt} = await import('../src/lib/ai/word-card.js');
-    const {imagePrompts} = await import('../src/lib/images.js');
-    const ai = normalizeAiOptions({});
+    const {imagePrompts, imageWord} = await import('../src/lib/images.js');
+    const ai = normalizeAiOptions({imageOcrFix: false, imageOcrPrompt: 'old'});
     assert.equal(ai.contextOcrFix, true);
-    assert.equal(ai.imageOcrFix, true);
+    assert(!('imageOcrFix' in ai) && !('imageOcrPrompt' in ai), 'the pictures\' own OCR note is gone');
+    assert.equal(ai.imageUseCardWord, true);
     const settings = {ocrLanguage: 'zh-TW', translationLanguage: 'pt-BR'};
     const on = contextPrompt(CONTEXT_PROMPT, settings, ai);
     assert(on.includes('read from the screen by OCR') && on.includes('進/盡'));
     assert(on.indexOf('read from the screen by OCR') > on.indexOf("Word: '{{target}}'"), 'a paragraph of its own after the prompt');
     assert(!contextPrompt(CONTEXT_PROMPT, settings, {...ai, contextOcrFix: false}).includes('OCR'));
-    assert(imagePrompts(ai, settings).system.includes('make the query for the word the text most likely has'));
-    assert(!imagePrompts({...ai, imageOcrFix: false}, settings).system.includes('OCR'));
-    assert(!imagePrompts(ai, settings).user.includes('OCR'), 'the note stays in the fixed system prompt');
-    assert.equal(normalizeAiOptions({contextOcrFix: false}).imageOcrFix, true, 'each section has its own switch');
+    assert(!imagePrompts(ai, settings).system.includes('OCR'), 'no OCR note in the image query');
+    const card = {ocrFix: 'تابة → لكتابة'};
+    assert.equal(imageWord('تابة', card, ai), 'لكتابة', 'the word the card corrected');
+    assert.equal(imageWord('تابة', {ocrFix: ''}, ai), 'تابة');
+    assert.equal(imageWord('تابة', null, ai), 'تابة', 'no card: the OCR word');
+    assert.equal(imageWord('تابة', card, {...ai, imageUseCardWord: false}), 'تابة', 'switched off: as the OCR read it');
 });
 
 test('the first default transliteration prompt becomes the one that asks for Latin letters only', async () => {

@@ -99,11 +99,6 @@ export const CONTEXT_OCR_PROMPT =
     'The text and the word were read from the screen by OCR, which may misread characters: {{ocrErrors}}. ' +
     'Translate what the text most likely says, and mark the translation of the word even if the word was misread.';
 
-/** Default OCR note of the pictures' search query (their "Prompt de erros do OCR"). */
-export const IMAGE_OCR_PROMPT =
-    'The word and the context were read from the screen by OCR, which may misread characters: {{ocrErrors}}. ' +
-    'If the word as given is not a real word or does not fit the context, make the query for the word the text most likely has.';
-
 /** {{ocrErrors}} for an OCR language: how OCR misreads its script. */
 export function ocrErrorsFor(tag) {
     const language = baseLanguage(tag);
