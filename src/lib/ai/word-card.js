@@ -61,6 +61,19 @@ export const TRANSLITERATION_PROMPT = 'the word exactly as written in the contex
 const TRANSLITERATED = new Set(['ar', 'fa', 'ur', 'ps', 'he', 'yi', 'ru', 'uk', 'be', 'bg', 'mk', 'sr', 'kk', 'ky', 'mn', 'tg',
     'el', 'ko', 'th', 'lo', 'km', 'my', 'hi', 'mr', 'ne', 'bn', 'pa', 'gu', 'ta', 'te', 'kn', 'ml', 'si', 'ka', 'hy', 'am']);
 
+/** Default note added to the card prompt for languages in Arabic script (the "Prompt do OCR
+ * árabe"): the recognizer drops letters there, a prefix such as لـ or a small letter like ن or ر, and
+ * the word card should describe the word the page meant. */
+export const ARABIC_OCR_PROMPT =
+    'If the word is Arabic (or another language written in Arabic script): it was read from the screen by OCR, ' +
+    'which often drops letters, such as a prefix (ال، ل، ب، ك، و، ف) or a small letter inside the word, and may garble the context too. ' +
+    'If the word as given is not a common word or does not fit the context, use the context to find the word the text most likely has ' +
+    '(e.g. "تابة" in "واجهة بسيطة تابة النص العربي" is "لكتابة"), and describe that word: its dictionary form as the headword, ' +
+    'and its form and transliteration as it is in the text.';
+
+/** Languages written in Arabic script, whose card prompt gets ARABIC_OCR_PROMPT. */
+const ARABIC_SCRIPT = new Set(['ar', 'fa', 'ur', 'ps', 'ug', 'ku', 'sd']);
+
 /** {{readingSystem}}: the languages with a reading, and how it is written. */
 const READING_SYSTEMS = {
     zh: 'pinyin with tone marks, e.g. "qīxǔ"',
@@ -143,10 +156,11 @@ export function fillLanguages(template, settings) {
  * tokens on it. Likewise {{readingField}} gets the reading prompt only in Chinese and Japanese,
  * {{componentsField}} the components prompt only when they are switched on, and {{formField}} the
  * form prompt, plus the transliteration prompt in a script other than Latin; their variables follow
- * the OCR language. A card prompt without a marker is sent as written.
+ * the OCR language. A card prompt without a marker is sent as written. In Arabic script the
+ * Arabic OCR note follows the prompt, on a paragraph of its own.
  * @param {string} template
  * @param {{showWordTranslation?: boolean, ocrLanguage?: string}} settings
- * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, cardComponents?: boolean}} [ai]
+ * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, arabicOcrPrompt?: string, cardComponents?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
     const field = settings.showWordTranslation === false ? '' : `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}`;
@@ -158,11 +172,14 @@ export function cardPrompt(template, settings, ai = {}) {
         .replaceAll('{{componentReading}}', COMPONENT_READINGS[language] || '')}`;
     const form = `, "form": ${promptOr(ai.formPrompt, FORM_PROMPT)}` +
         (TRANSLITERATED.has(language) ? `, "transliteration": ${promptOr(ai.transliterationPrompt, TRANSLITERATION_PROMPT)}` : '');
+    const note = ARABIC_SCRIPT.has(language) ? `
+
+${promptOr(ai.arabicOcrPrompt, ARABIC_OCR_PROMPT)}` : '';
     return fillLanguages(template
         .replaceAll(TRANSLATION_FIELD, field)
         .replaceAll(READING_FIELD, reading)
         .replaceAll(COMPONENTS_FIELD, components)
-        .replaceAll(FORM_FIELD, form), settings);
+        .replaceAll(FORM_FIELD, form) + note, settings);
 }
 
 /** The components of a reply: objects with a part, its reading or hanja and its meaning. */

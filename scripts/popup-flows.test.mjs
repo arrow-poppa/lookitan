@@ -256,6 +256,7 @@ test('the card asks every language for the form on screen, and scripts other tha
     await view.popup.runCard(en);
     const last = prompts[prompts.length - 1];
     assert(last.includes('"form"') && !last.includes('"transliteration"'), 'Latin script: no transliteration');
+    assert(prompts[0].includes('If the word is Arabic') && !last.includes('If the word is Arabic'), 'the Arabic OCR note goes only with Arabic script');
     view.ai.formPrompt = 'my form';
     view.ai.transliterationPrompt = 'my letters';
     view.settings.ocrLanguage = 'ru-RU';
