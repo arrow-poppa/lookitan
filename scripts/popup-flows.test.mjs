@@ -237,7 +237,7 @@ test('synonyms are asked in every language, the reading only in Chinese and Japa
 
 test('the card asks every language for the form on screen, and scripts other than Latin for its transliteration', async () => {
     const answer = '{"headword":"باض","ipa":"baːdˤa","transliteration":"fa-bāḍat","form":["3rd person singular","feminine","past tense"],' +
-        '"partOfSpeech":["verb"],"definition":"to lay eggs"}';
+        '"partOfSpeech":["verb"],"definition":"to lay eggs","ocrFix":"فاضت → فباضت"}';
     const prompts = [];
     const view = await fixture({explain: async (_options, _word, _sentence, request) => { prompts.push(request.prompt); return answer; }});
     view.ai.cardPrompt = CARD_PROMPT;
@@ -247,6 +247,7 @@ test('the card asks every language for the form on screen, and scripts other tha
     assert(prompts[0].includes('"form"') && prompts[0].includes('"transliteration"'));
     assert(!/\{\{\w+Field\}\}/.test(prompts[0]), 'every marker is filled');
     assert(body.innerHTML.includes('<span class="translit">fa-bāḍat</span>'));
+    assert(body.innerHTML.includes('OCR: فاضت → فباضت'), 'what the AI corrected from the OCR is shown');
     const chips = body.innerHTML.indexOf('3rd person singular');
     assert(chips > 0 && chips < body.innerHTML.indexOf('>verb<'), 'the features come before the part of speech');
     assert(body.innerHTML.includes('<div class="hw" dir="rtl">') && body.innerHTML.includes('<div class="chips" dir="rtl">'),
@@ -256,7 +257,11 @@ test('the card asks every language for the form on screen, and scripts other tha
     await view.popup.runCard(en);
     const last = prompts[prompts.length - 1];
     assert(last.includes('"form"') && !last.includes('"transliteration"'), 'Latin script: no transliteration');
-    assert(prompts[0].includes('If the word is Arabic') && !last.includes('If the word is Arabic'), 'the Arabic OCR note goes only with Arabic script');
+    assert(prompts[0].includes('read from the screen by OCR') && last.includes('read from the screen by OCR'), 'the OCR errors note goes in every language');
+    assert(prompts[0].includes('"لكتابة"') && !last.includes('"لكتابة"') && last.includes('rn/m'), 'with the examples of its script');
+    view.settings.ocrLanguage = 'zh-TW';
+    await view.popup.runCard(new Element());
+    assert(prompts[prompts.length - 1].includes('進/盡'), 'Chinese gets its lookalike characters');
     view.ai.formPrompt = 'my form';
     view.ai.transliterationPrompt = 'my letters';
     view.settings.ocrLanguage = 'ru-RU';

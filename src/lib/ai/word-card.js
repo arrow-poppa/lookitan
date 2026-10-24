@@ -61,18 +61,33 @@ export const TRANSLITERATION_PROMPT = 'the word exactly as written in the contex
 const TRANSLITERATED = new Set(['ar', 'fa', 'ur', 'ps', 'he', 'yi', 'ru', 'uk', 'be', 'bg', 'mk', 'sr', 'kk', 'ky', 'mn', 'tg',
     'el', 'ko', 'th', 'lo', 'km', 'my', 'hi', 'mr', 'ne', 'bn', 'pa', 'gu', 'ta', 'te', 'kn', 'ml', 'si', 'ka', 'hy', 'am']);
 
-/** Default note added to the card prompt for languages in Arabic script (the "Prompt do OCR
- * árabe"): the recognizer drops letters there, a prefix such as لـ or a small letter like ن or ر, and
- * the word card should describe the word the page meant. */
-export const ARABIC_OCR_PROMPT =
-    'If the word is Arabic (or another language written in Arabic script): it was read from the screen by OCR, ' +
-    'which often drops letters, such as a prefix (ال، ل، ب، ك، و، ف) or a small letter inside the word, and may garble the context too. ' +
-    'If the word as given is not a common word or does not fit the context, use the context to find the word the text most likely has ' +
-    '(e.g. "تابة" in "واجهة بسيطة تابة النص العربي" is "لكتابة"), and describe that word: its dictionary form as the headword, ' +
-    'and its form and transliteration as it is in the text.';
+/** Default note that ends the card prompt (the "Prompt de erros do OCR"): the word and its context
+ * come from OCR, which misreads characters in ways typical of each script ({{ocrErrors}}), so the
+ * card describes the word the page meant and says what it corrected in "ocrFix". */
+export const OCR_ERRORS_PROMPT =
+    'The word and the context were read from the screen by OCR, which may misread characters: {{ocrErrors}}. ' +
+    'If the word as given is not a real word or does not fit the context, use the context to find the word the text most likely has, ' +
+    'describe that word (its dictionary form as the headword, and its form as it is in the text), ' +
+    'and add the key "ocrFix": "<the word as given> → <the word you described>". ' +
+    'Do not correct a word that fits the context, such as a rare word, slang or a name; then leave "ocrFix" out.';
 
-/** Languages written in Arabic script, whose card prompt gets ARABIC_OCR_PROMPT. */
-const ARABIC_SCRIPT = new Set(['ar', 'fa', 'ur', 'ps', 'ug', 'ku', 'sd']);
+/** {{ocrErrors}}: how OCR misreads each script. */
+const ARABIC_ERRORS = 'in Arabic script it often drops letters, such as a prefix (ال، ل، ب، ك، و، ف) or a small letter inside the word ' +
+    '(e.g. "تابة" in "واجهة بسيطة تابة النص العربي" is "لكتابة")';
+const CYRILLIC_ERRORS = 'it confuses similar Cyrillic letters, or Cyrillic and Latin ones (e.g. и/н, ш/щ, е/ё, р/p), and may drop or add a letter';
+const OCR_ERRORS = {
+    ar: ARABIC_ERRORS, fa: ARABIC_ERRORS, ur: ARABIC_ERRORS, ps: ARABIC_ERRORS, ug: ARABIC_ERRORS, sd: ARABIC_ERRORS,
+    zh: 'it confuses similar characters (e.g. 進/盡, 己/已, 未/末, 人/入), mixes simplified and traditional forms, ' +
+        'and may cut the word in the wrong place (e.g. 進 alone where the text has 更進)',
+    ja: 'it confuses similar characters (e.g. 己/已, 未/末, シ/ツ, ソ/ン, カ/力, ロ/口, ー/一) and may cut the word in the wrong place',
+    ko: 'it confuses similar syllables (e.g. 을/올, 는/눈, 이/어) and may drop or misplace spaces',
+    ru: CYRILLIC_ERRORS, uk: CYRILLIC_ERRORS, be: CYRILLIC_ERRORS, bg: CYRILLIC_ERRORS, mk: CYRILLIC_ERRORS, sr: CYRILLIC_ERRORS, kk: CYRILLIC_ERRORS,
+    el: 'it confuses Greek letters with similar Latin ones (e.g. ν/v, ρ/p, η/n) and drops accents',
+};
+/** For a script other than Latin without examples of its own. */
+const OTHER_SCRIPT_ERRORS = 'it confuses similar letters and drops or misplaces marks';
+/** For the Latin script. */
+const LATIN_ERRORS = 'it confuses similar letters (e.g. rn/m, cl/d, l/I/1, O/0) and drops or changes accents (e.g. "nao" for "não")';
 
 /** {{readingSystem}}: the languages with a reading, and how it is written. */
 const READING_SYSTEMS = {
@@ -156,11 +171,12 @@ export function fillLanguages(template, settings) {
  * tokens on it. Likewise {{readingField}} gets the reading prompt only in Chinese and Japanese,
  * {{componentsField}} the components prompt only when they are switched on, and {{formField}} the
  * form prompt, plus the transliteration prompt in a script other than Latin; their variables follow
- * the OCR language. A card prompt without a marker is sent as written. In Arabic script the
- * Arabic OCR note follows the prompt, on a paragraph of its own.
+ * the OCR language. The OCR errors note follows a prompt with these markers, on a paragraph of its
+ * own, with the examples of the OCR language's script. A card prompt without a marker is sent as
+ * written.
  * @param {string} template
  * @param {{showWordTranslation?: boolean, ocrLanguage?: string}} settings
- * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, arabicOcrPrompt?: string, cardComponents?: boolean}} [ai]
+ * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, ocrErrorsPrompt?: string, cardComponents?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
     const field = settings.showWordTranslation === false ? '' : `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}`;
@@ -172,9 +188,9 @@ export function cardPrompt(template, settings, ai = {}) {
         .replaceAll('{{componentReading}}', COMPONENT_READINGS[language] || '')}`;
     const form = `, "form": ${promptOr(ai.formPrompt, FORM_PROMPT)}` +
         (TRANSLITERATED.has(language) ? `, "transliteration": ${promptOr(ai.transliterationPrompt, TRANSLITERATION_PROMPT)}` : '');
-    const note = ARABIC_SCRIPT.has(language) ? `
-
-${promptOr(ai.arabicOcrPrompt, ARABIC_OCR_PROMPT)}` : '';
+    const errors = OCR_ERRORS[language] || (TRANSLITERATED.has(language) ? OTHER_SCRIPT_ERRORS : LATIN_ERRORS);
+    const note = /\{\{\w+Field\}\}/.test(template) ?
+        `\n\n${promptOr(ai.ocrErrorsPrompt, OCR_ERRORS_PROMPT).replaceAll('{{ocrErrors}}', errors)}` : '';
     return fillLanguages(template
         .replaceAll(TRANSLATION_FIELD, field)
         .replaceAll(READING_FIELD, reading)
@@ -213,6 +229,7 @@ export function parseCard(text) {
             reading: String(obj.reading || ''),
             transliteration: String(obj.transliteration || ''),
             form: list(obj.form),
+            ocrFix: String(obj.ocrFix || ''),
             synonyms: list(obj.synonyms),
             components: componentList(obj.components),
         };

@@ -266,6 +266,11 @@ function translitHtml(transliteration) {
     return transliteration ? `<span class="translit">${escapeHtml(transliteration)}</span>` : '';
 }
 
+/** What the AI corrected in the word the OCR read ("進 → 盡"). */
+function ocrFixHtml(fix) {
+    return fix ? `<span class="chip ocr-fix" title="O OCR leu a palavra de outro jeito; o card explica a palavra corrigida pelo contexto">OCR: ${escapeHtml(fix)}</span>` : '';
+}
+
 /** The card's synonyms and components, as the pop-up and the saved cards show them. */
 function cardExtrasHtml(card, components) {
     const synonyms = card.synonyms || [];
@@ -279,6 +284,7 @@ function renderCard(body, card, pending = false) {
     const p = state.payload;
     const headword = card.headword || p.word;
     const chips = [];
+    if (card.ocrFix) { chips.push(ocrFixHtml(card.ocrFix)); }
     if (card.cefr && /^[ABC][12]$/.test(card.cefr)) { chips.push(`<span class="cefr ${card.cefr.toLowerCase()}">${card.cefr}</span>`); }
     if (card.reading) { chips.push(`<span class="reading">${escapeHtml(card.reading)}</span>`); }
     if (card.transliteration) { chips.push(translitHtml(card.transliteration)); }
@@ -1043,6 +1049,7 @@ ${savedCardHtml(c, c.id === lookup.savedId)}
  */
 function savedCardHtml(c, current) {
     const chips = [
+        ocrFixHtml(c.ocrFix),
         c.reading ? `<span class="reading">${escapeHtml(c.reading)}</span>` : '',
         translitHtml(c.transliteration),
         c.ipa ? `<span class="ipa">/${escapeHtml(c.ipa)}/</span>` : '',

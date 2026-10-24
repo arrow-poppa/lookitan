@@ -26,6 +26,7 @@ export function cardFromLookup(lookup, settings) {
         reading: ai.reading || '',
         transliteration: ai.transliteration || '',
         form: ai.form || [],
+        ocrFix: ai.ocrFix || '',
         synonyms: ai.synonyms || [],
         components: ai.components || [],
         language: settings.ocrLanguage,
