@@ -344,6 +344,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-24 (Claude, `tests`): Configurações › Perfil is one row again: the name and "Apagar" of the profile in use fold under it with the usual chevron (`collapser('settingsProfile', …)`, folded by default; `collapser` got a `startCollapsed` argument).
+
 - 2026-10-24 (Claude, `tests`): at the user's request, a word an analyzer joined across a line or column break (`Pick.line_break` in words.rs, from the paragraph's `Piece`s, carried as `LookupPayload.line_break`) adds a card hint: which characters end one line and which start the next, so the AI can move the cut (classical Chinese with no punctuation: jieba joined 盡 at a column's end with 為 at the next column's start, where 為政 is meant). It applies wherever lines are joined without a space before analysis: Chinese and Japanese, rarely Korean.
 
 - 2026-10-24 (Claude, `tests`): at the user's request, to save tokens, the pictures' own OCR note (`imageOcrFix`, `imageOcrPrompt`, dropped from saved options) gave way to "Usar a palavra corrigida pelo card" (`imageUseCardWord`): the pictures search the word the AI card corrected, with no extra request; off, the word as the OCR read it.

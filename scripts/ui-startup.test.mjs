@@ -139,7 +139,10 @@ test('Configurações chooses a settings profile above the recognition language,
     assert.deepEqual(fixture.calls.filter((c) => c.startsWith('choose') || c === 'reload'), ['choose p1', 'reload'], 'the switch is made by the back end, then the window shows it');
     const inProfile = await settingsFixture({settingsProfiles: [{id: 'p1', name: 'Japonês', overrides: {}}], activeSettingsProfile: 'p1'});
     await inProfile.finish();
-    assert(descendants(inProfile.root).some((node) => node.attributes?.['aria-label'] === 'Nome do perfil'), 'a profile in use can be renamed');
+    const rename = descendants(inProfile.root).find((node) => node.attributes?.['aria-label'] === 'Nome do perfil');
+    assert(rename, 'a profile in use can be renamed');
+    const nameRow = inProfile.root.children[1].children.find((row) => descendants(row).includes(rename));
+    assert.equal(nameRow?.hidden, true, 'the name row starts folded under "Perfil"');
 });
 
 async function dictionaryFixture(overrides = {}) {

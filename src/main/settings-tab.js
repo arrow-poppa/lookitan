@@ -517,22 +517,26 @@ function profileRows() {
     const add = el('button', {type: 'button', html: `${icon('plus', 'sm')}Novo perfil`});
     add.addEventListener('click', () => switchProfile(() => api.createSettingsProfile(`Perfil ${profiles.length + 1}`)));
     const changed = active ? Object.keys(active.overrides || {}).length : 0;
-    const rows = [cardRow({icon: 'settings', title: 'Perfil', wide: true,
+    const controls = el('div', {class: 'profile-controls'}, choose, add);
+    const head = cardRow({icon: 'settings', title: 'Perfil', wide: true,
         desc: active
             ? `Tudo o que você mudar no app (menos as palavras salvas) fica só neste perfil; o resto continua vindo do Global.${changed ? '' : ' Por enquanto ele está igual ao Global.'}`
             : 'As configurações de sempre. Crie um perfil (por exemplo, um para japonês, com outro idioma, outros dicionários e outros prompts) e troque aqui quando quiser; as palavras salvas são as mesmas em todos.',
-        control: el('div', {class: 'profile-controls'}, choose, add)})];
-    if (active) {
-        const name = textInput(active.name, (v) => { if (v.trim()) { active.name = v.trim(); save(); } });
-        name.setAttribute('aria-label', 'Nome do perfil');
-        const remove = el('button', {type: 'button', html: `${icon('trash', 'sm')}Apagar`});
-        remove.addEventListener('click', async () => {
-            if (!await ask(`Apagar o perfil "${active.name}"? O app volta a usar o Global.`, {title: 'Apagar perfil', kind: 'warning', okLabel: 'Apagar', cancelLabel: 'Cancelar'})) { return; }
-            await switchProfile(() => api.deleteSettingsProfile(active.id));
-        });
-        rows.push(cardRow({icon: 'list', title: 'Nome do perfil', wide: true, control: el('div', {class: 'profile-controls'}, name, remove)}));
-    }
-    return rows;
+        control: controls});
+    if (!active) { return [head]; }
+    // The name and "Apagar" of the profile in use fold under the "Perfil" row.
+    const name = textInput(active.name, (v) => { if (v.trim()) { active.name = v.trim(); save(); } });
+    name.setAttribute('aria-label', 'Nome do perfil');
+    const remove = el('button', {type: 'button', html: `${icon('trash', 'sm')}Apagar`});
+    remove.addEventListener('click', async () => {
+        if (!await ask(`Apagar o perfil "${active.name}"? O app volta a usar o Global.`, {title: 'Apagar perfil', kind: 'warning', okLabel: 'Apagar', cancelLabel: 'Cancelar'})) { return; }
+        await switchProfile(() => api.deleteSettingsProfile(active.id));
+    });
+    const body = cardRow({icon: 'list', title: 'Nome do perfil', wide: true, control: el('div', {class: 'profile-controls'}, name, remove)});
+    const collapse = collapser('settingsProfile', () => [body], () => {}, true);
+    controls.append(collapse.button);
+    collapse.apply();
+    return [head, body];
 }
 
 function render(root) {

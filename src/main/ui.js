@@ -27,12 +27,15 @@ export function cardRow({icon: iconName, title, desc, control, wide = false}) {
 /**
  * A chevron button that collapses a section, like Lookupper's settings groups. `body()` returns
  * the elements to hide; `onChange(collapsed)` can restyle the header. The state is remembered per
- * `key` in this window only.
+ * `key` in this window only; until then the section starts as `startCollapsed` says.
  */
-export function collapser(key, body, onChange = () => {}) {
+export function collapser(key, body, onChange = () => {}, startCollapsed = false) {
     const storageKey = `lookitan.collapsed.${key}`;
-    let collapsed = false;
-    try { collapsed = localStorage.getItem(storageKey) === '1'; } catch (_e) { /* storage unavailable */ }
+    let collapsed = startCollapsed;
+    try {
+        const stored = localStorage.getItem(storageKey);
+        if (stored !== null) { collapsed = stored === '1'; }
+    } catch (_e) { /* storage unavailable */ }
     const button = el('button', {class: 'ghost icon collapse', type: 'button'});
     const apply = () => {
         for (const node of body()) { if (node) { node.hidden = collapsed; } }
