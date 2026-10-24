@@ -7,7 +7,7 @@ import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {cardPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
+import {cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {invoke} from '@tauri-apps/api/core';
@@ -398,7 +398,7 @@ async function runContext(body, force = false) {
     if (!p.sentence) { body.innerHTML = '<p class="hint">Sem frase de contexto nesta consulta.</p>'; return; }
     body.innerHTML = '<div class="shimmer w80"></div><div class="shimmer w60"></div>';
     try {
-        const prompt = fillLanguages(options.contextPrompt, settings);
+        const prompt = contextPrompt(options.contextPrompt, settings, options);
         const key = await aiKey('context', prompt, lookup, options);
         if (state !== lookup) { return; }
         lookup.keys.add(key);
@@ -1239,7 +1239,7 @@ async function render(payload) {
         // that do not cancel; drop the others.
         const keep = new Set(await Promise.all([
             aiKey('card', cardPrompt(ai.cardPrompt, settings, ai)),
-            aiKey('context', fillLanguages(ai.contextPrompt, settings)),
+            aiKey('context', contextPrompt(ai.contextPrompt, settings, ai)),
             aiKey('explain', fillLanguages(ai.customPrompt, settings)),
             aiKey('images', imagePromptKey(optionsOf('images'))),
         ]));

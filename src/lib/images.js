@@ -7,7 +7,7 @@
 // (`turl`), its title (`t`) and the page it is on (`purl`). Migaku keeps only `murl`; the pop-up
 // shows `turl`, which is small and always served, and the viewer and Anki get `murl`.
 
-import {fillLanguages, languageName} from './ai/word-card.js';
+import {IMAGE_OCR_PROMPT, fillLanguages, languageName, ocrNote} from './ai/word-card.js';
 
 /** Pictures shown per lookup, as in Migaku's pop-up. */
 export const IMAGE_COUNT = 10;
@@ -29,15 +29,17 @@ export const IMAGE_QUERY_PROMPT = 'Word: {{target}} ({{wordLanguage}})\nContext:
 
 /**
  * The image query prompts as sent. {{target}} and {{sentence}} are filled by the AI provider, in
- * both prompts.
- * @param {{imageQuerySystemPrompt?: string, imageQueryPrompt?: string}} ai
+ * both prompts. Unless the pictures' "Corrigir erros de OCR com IA" (`imageOcrFix`) is off, their
+ * OCR note ends the system prompt.
+ * @param {{imageQuerySystemPrompt?: string, imageQueryPrompt?: string, imageOcrFix?: boolean, imageOcrPrompt?: string}} ai
  * @param {{ocrLanguage?: string, definitionLanguage?: string, translationLanguage?: string}} settings
  */
 export function imagePrompts(ai, settings) {
     const fill = (text, fallback) => fillLanguages(typeof text === 'string' && text.trim() ? text : fallback, settings)
         .replaceAll('{{wordLanguage}}', languageName(settings.ocrLanguage || 'en-US'));
     return {
-        system: fill(ai.imageQuerySystemPrompt, IMAGE_QUERY_SYSTEM_PROMPT),
+        system: fill(ai.imageQuerySystemPrompt, IMAGE_QUERY_SYSTEM_PROMPT) +
+            (ai.imageOcrFix !== false ? `\n\n${ocrNote(ai.imageOcrPrompt, IMAGE_OCR_PROMPT, settings)}` : ''),
         user: fill(ai.imageQueryPrompt, IMAGE_QUERY_PROMPT),
     };
 }

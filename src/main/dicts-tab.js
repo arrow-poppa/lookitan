@@ -5,7 +5,7 @@ import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
-import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_PROMPT, FORM_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
+import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, FORM_PROMPT, IMAGE_OCR_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
@@ -359,7 +359,10 @@ function renderAiContext(root) {
                 control: aiControl('autoTranslateContext', 'Traduzir automaticamente ao abrir o popup', toggle(ai.autoTranslateContext, (v) => { ai.autoTranslateContext = v; save(); }))}),
             cardRow({icon: 'eyeOff', title: 'Ocultar a tradução', desc: 'A tradução da frase só aparece quando você clica nela.',
                 control: aiControl('hideContextTranslation', 'Ocultar a tradução', toggle(ai.hideContextTranslation === true, (v) => { ai.hideContextTranslation = v; save(); }))}),
+            cardRow({icon: 'sparkle', title: 'Corrigir erros de OCR com IA', desc: 'A IA sabe que a frase e a palavra vieram do OCR: traduz o que o texto quis dizer e destaca a palavra mesmo que ela tenha sido lida errado. Desligado, ela traduz exatamente o que o OCR leu, e o pedido fica menor.',
+                control: aiControl('contextOcrFix', 'Corrigir erros de OCR com IA', toggle(ai.contextOcrFix !== false, (v) => { ai.contextOcrFix = v; save(); renderDetail(); }))}),
             promptCard('Prompt da tradução', `A tradução da palavra deve vir entre **asteriscos duplos** para ser destacada. Variáveis: ${vars}.`, () => ai.contextPrompt, (v) => { ai.contextPrompt = v; }, CONTEXT_PROMPT, 'contextPrompt'),
+            ai.contextOcrFix === false ? null : promptCard('Prompt de erros do OCR', `O aviso que vai no fim do prompt da tradução, com o interruptor acima ligado. ${escapeHtml('{{ocrErrors}}')} vira os erros típicos da escrita do idioma do OCR, como no card da palavra.`, () => ai.contextOcrPrompt, (v) => { ai.contextOcrPrompt = v; }, CONTEXT_OCR_PROMPT, 'contextOcrPrompt'),
             el('div', {class: 'card-row stack'},
                 el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado na tradução da frase. Opcional.'))),
                 aiControl('sectionProviders.ai-context.systemPrompt', 'System prompt', textArea(own.systemPrompt, (v) => { own.systemPrompt = v; save(); }, 3)))),
@@ -408,13 +411,16 @@ function renderAiImages(root) {
             cardRow({icon: 'image', title: 'Mostrar imagens automaticamente', desc: 'Desligado: as imagens só aparecem quando você clica em "Mostrar imagens" no popup, como o botão Explicar.',
                 control: aiControl('autoShowImages', 'Mostrar imagens automaticamente', toggle(ai.autoShowImages === true, (v) => { ai.autoShowImages = v; save(); }))}),
             cardRow({icon: 'sparkle', title: 'Criar o termo de busca com a IA', desc: 'Desligado: busca a palavra como ela aparece na tela, sem gastar tokens.',
-                control: aiControl('imageQueryUseAi', 'Criar o termo de busca com a IA', toggle(ai.imageQueryUseAi !== false, (v) => { ai.imageQueryUseAi = v; save(); }))})),
+                control: aiControl('imageQueryUseAi', 'Criar o termo de busca com a IA', toggle(ai.imageQueryUseAi !== false, (v) => { ai.imageQueryUseAi = v; save(); }))}),
+            cardRow({icon: 'sparkle', title: 'Corrigir erros de OCR com IA', desc: 'A IA sabe que a palavra veio do OCR: se ela não fizer sentido no contexto (um caractere trocado, uma letra perdida), o termo de busca é feito para a palavra que o texto tem. Desligado, a busca usa exatamente o que o OCR leu, e o pedido fica menor.',
+                control: aiControl('imageOcrFix', 'Corrigir erros de OCR com IA', toggle(ai.imageOcrFix !== false, (v) => { ai.imageOcrFix = v; save(); renderDetail(); }))})),
         el('h3', {}, 'Image query (termo de busca)'),
         el('div', {class: 'group'},
             promptCard('System prompt', `As regras do termo de busca. Substitui o system prompt geral só neste pedido. Variáveis: ${vars}.`,
                 () => ai.imageQuerySystemPrompt, (v) => { ai.imageQuerySystemPrompt = v; }, IMAGE_QUERY_SYSTEM_PROMPT, 'imageQuerySystemPrompt'),
             promptCard('User prompt', `A mensagem com a palavra. A primeira linha da resposta vira a busca. Variáveis: ${vars}.`,
-                () => ai.imageQueryPrompt, (v) => { ai.imageQueryPrompt = v; }, IMAGE_QUERY_PROMPT, 'imageQueryPrompt')),
+                () => ai.imageQueryPrompt, (v) => { ai.imageQueryPrompt = v; }, IMAGE_QUERY_PROMPT, 'imageQueryPrompt'),
+            ai.imageOcrFix === false ? null : promptCard('Prompt de erros do OCR', `O aviso que vai no fim do system prompt do termo de busca, com o interruptor acima ligado. ${escapeHtml('{{ocrErrors}}')} vira os erros típicos da escrita do idioma do OCR, como no card da palavra.`, () => ai.imageOcrPrompt, (v) => { ai.imageOcrPrompt = v; }, IMAGE_OCR_PROMPT, 'imageOcrPrompt')),
         el('h3', {}, 'Provedor de IA (sua chave, seu modelo)'),
         el('p', {class: 'muted'}, 'Só para o termo de busca das imagens. Começa como uma cópia do provedor de "IA — palavra no contexto".'),
         providerSection(ai.sectionProviders['ai-images'], 'sectionProviders.ai-images.'),

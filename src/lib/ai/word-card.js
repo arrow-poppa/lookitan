@@ -89,6 +89,27 @@ const OTHER_SCRIPT_ERRORS = 'it confuses similar letters and drops or misplaces 
 /** For the Latin script. */
 const LATIN_ERRORS = 'it confuses similar letters (e.g. rn/m, cl/d, l/I/1, O/0) and drops or changes accents (e.g. "nao" for "não")';
 
+/** Default OCR note of the context translator (its "Prompt de erros do OCR"). */
+export const CONTEXT_OCR_PROMPT =
+    'The text and the word were read from the screen by OCR, which may misread characters: {{ocrErrors}}. ' +
+    'Translate what the text most likely says, and mark the translation of the word even if the word was misread.';
+
+/** Default OCR note of the pictures' search query (their "Prompt de erros do OCR"). */
+export const IMAGE_OCR_PROMPT =
+    'The word and the context were read from the screen by OCR, which may misread characters: {{ocrErrors}}. ' +
+    'If the word as given is not a real word or does not fit the context, make the query for the word the text most likely has.';
+
+/** {{ocrErrors}} for an OCR language: how OCR misreads its script. */
+export function ocrErrorsFor(tag) {
+    const language = baseLanguage(tag);
+    return OCR_ERRORS[language] || (TRANSLITERATED.has(language) ? OTHER_SCRIPT_ERRORS : LATIN_ERRORS);
+}
+
+/** `prompt` (an OCR note) with {{ocrErrors}} filled for the OCR language, or `fallback` when empty. */
+export function ocrNote(prompt, fallback, settings) {
+    return promptOr(prompt, fallback).replaceAll('{{ocrErrors}}', ocrErrorsFor(settings.ocrLanguage));
+}
+
 /** {{readingSystem}}: the languages with a reading, and how it is written. */
 const READING_SYSTEMS = {
     zh: 'pinyin with tone marks, e.g. "qīxǔ"',
@@ -157,6 +178,19 @@ export function languageName(tag) {
     }
 }
 
+/**
+ * The context translator's prompt as sent: its languages filled and, unless its "Corrigir erros de
+ * OCR com IA" (`contextOcrFix`) is off, its OCR note after it, on a paragraph of its own (fixed
+ * text, so it stays in the cached system message).
+ * @param {string} template
+ * @param {{ocrLanguage?: string, translationLanguage?: string}} settings
+ * @param {{contextOcrFix?: boolean, contextOcrPrompt?: string}} [ai]
+ */
+export function contextPrompt(template, settings, ai = {}) {
+    const note = ai.contextOcrFix !== false ? `\n\n${ocrNote(ai.contextOcrPrompt, CONTEXT_OCR_PROMPT, settings)}` : '';
+    return fillLanguages(template + note, settings);
+}
+
 /** Fills the language placeholders; {{target}} and {{sentence}} are filled by the provider. */
 export function fillLanguages(template, settings) {
     return template
@@ -188,9 +222,8 @@ export function cardPrompt(template, settings, ai = {}) {
         .replaceAll('{{componentReading}}', COMPONENT_READINGS[language] || '')}`;
     const form = `, "form": ${promptOr(ai.formPrompt, FORM_PROMPT)}` +
         (TRANSLITERATED.has(language) ? `, "transliteration": ${promptOr(ai.transliterationPrompt, TRANSLITERATION_PROMPT)}` : '');
-    const errors = OCR_ERRORS[language] || (TRANSLITERATED.has(language) ? OTHER_SCRIPT_ERRORS : LATIN_ERRORS);
     const note = ai.cardOcrFix !== false && /\{\{\w+Field\}\}/.test(template) ?
-        `\n\n${promptOr(ai.ocrErrorsPrompt, OCR_ERRORS_PROMPT).replaceAll('{{ocrErrors}}', errors)}` : '';
+        `\n\n${ocrNote(ai.ocrErrorsPrompt, OCR_ERRORS_PROMPT, settings)}` : '';
     return fillLanguages(template
         .replaceAll(TRANSLATION_FIELD, field)
         .replaceAll(READING_FIELD, reading)

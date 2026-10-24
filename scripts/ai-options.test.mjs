@@ -34,6 +34,23 @@ test('"Corrigir erros de OCR com IA" starts on, and an empty prompt is its defau
     assert(!('arabicOcrPrompt' in normalizeAiOptions({arabicOcrPrompt: 'old'})));
 });
 
+test('the context translator and the pictures have their own "Corrigir erros de OCR com IA"', async () => {
+    const {CONTEXT_PROMPT, contextPrompt} = await import('../src/lib/ai/word-card.js');
+    const {imagePrompts} = await import('../src/lib/images.js');
+    const ai = normalizeAiOptions({});
+    assert.equal(ai.contextOcrFix, true);
+    assert.equal(ai.imageOcrFix, true);
+    const settings = {ocrLanguage: 'zh-TW', translationLanguage: 'pt-BR'};
+    const on = contextPrompt(CONTEXT_PROMPT, settings, ai);
+    assert(on.includes('read from the screen by OCR') && on.includes('進/盡'));
+    assert(on.indexOf('read from the screen by OCR') > on.indexOf("Word: '{{target}}'"), 'a paragraph of its own after the prompt');
+    assert(!contextPrompt(CONTEXT_PROMPT, settings, {...ai, contextOcrFix: false}).includes('OCR'));
+    assert(imagePrompts(ai, settings).system.includes('make the query for the word the text most likely has'));
+    assert(!imagePrompts({...ai, imageOcrFix: false}, settings).system.includes('OCR'));
+    assert(!imagePrompts(ai, settings).user.includes('OCR'), 'the note stays in the fixed system prompt');
+    assert.equal(normalizeAiOptions({contextOcrFix: false}).imageOcrFix, true, 'each section has its own switch');
+});
+
 test('explanation stays manual for new and existing AI settings without autoExplain', () => {
     assert.equal(defaultAiOptions().autoExplain, false);
     assert.equal(normalizeAiOptions(null).autoExplain, false);
