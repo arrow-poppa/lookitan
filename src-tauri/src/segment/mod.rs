@@ -12,6 +12,7 @@
 //! language's dictionary is loaded; Sudachi's and lindera's are memory-mapped. How morphemes form
 //! words (japanese.rs, korean.rs) is Lookitan's own code, written to match what Lookupper shows.
 
+mod arabic;
 mod chinese;
 mod japanese;
 mod kiwi;
@@ -327,10 +328,14 @@ pub fn set_root(dir: PathBuf) {
     let _ = ROOT.set(dir);
 }
 
-/// The analyzer for the recognition language, once it is loaded.
-pub fn current(tag: &str) -> Option<Arc<Analyzer>> {
+/// The analyzer for the recognition language, once it is loaded. For Arabic, the splitter of
+/// words the recognizer ran together (arabic.rs), from the bundled word list.
+pub fn current(tag: &str) -> Option<Arc<dyn Segment>> {
+    if arabic::is_arabic(tag) {
+        return arabic::get().map(|a| a as Arc<dyn Segment>);
+    }
     let lang = Lang::of(tag)?;
-    LOADED.read().as_ref().filter(|(l, _)| *l == lang).map(|(_, a)| a.clone())
+    LOADED.read().as_ref().filter(|(l, _)| *l == lang).map(|(_, a)| a.clone() as Arc<dyn Segment>)
 }
 
 /// The analyzer's state for Settings › OCR, for languages that have one.
@@ -401,6 +406,9 @@ fn set_status(lang: Lang, text: String, changed: &dyn Fn()) {
 /// Downloads the recognition language's dictionary if needed and loads it, dropping the previous
 /// language's. Blocks; `changed` runs whenever the status changes.
 pub fn warm(tag: &str, changed: &dyn Fn()) {
+    if arabic::is_arabic(tag) {
+        arabic::get();
+    }
     let Some(lang) = Lang::of(tag) else {
         *WANTED.write() = None;
         *LOADED.write() = None;

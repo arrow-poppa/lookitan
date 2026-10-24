@@ -59,7 +59,7 @@ src-tauri/src/
   ocr/paddle.rs  PP-OCRv6 det+rec through ONNX Runtime (DirectML on Windows, WebGPU on Linux, CPU fallback)
   ocr/lens.rs    optional Google Lens cloud OCR (protobuf to lensfrontend-pa.googleapis.com/v1/crupload)
   ocr/cache.rs   per-frame cache of boxes and recognized lines
-  segment/       words of Japanese, Chinese and Korean text (Sudachi, jieba-rs, Kiwi; downloaded on first use); words.rs picks with it
+  segment/       words of Japanese, Chinese and Korean text (Sudachi, jieba-rs, Kiwi; downloaded on first use), and Arabic runs cut in two (arabic.rs); words.rs picks with it
   layout.rs      paragraphs as Lookupper's layout analyzer finds them, with the ink and frames measured on the capture
   platform/      cursor, capture and foreground app; kwin.rs is the KDE Wayland relay and ScreenShot2
   protocol.rs    `lkt:` URI scheme (/e entry HTML, /d dictionary resource, /c capture frame, /m saved media)
@@ -95,7 +95,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   deletes only `.unpacking-*` folders and copies marked `.lookitan-removed`, never unmarked ones.
   Morphology uses the OCR language. Order of forms: on-screen spelling, then Hunspell stems
   (Lookupper's de/en/es/fr/pt/ru plus every other recognition language with a wooorm/dictionaries
-  package: bg cs da el hr hu it la nb nl pl ro sk sl sr sr-latn sv tr uk; Bosnian uses hr; fi, id and ar have none;
+  package: bg cs da el hr hu it la nb nl pl ro sk sl sr sr-latn sv tr uk; Bosnian uses hr; ar is AyaSpell from LibreOffice's dictionaries; fi and id have none;
   `dictionaries/hunspell.rs`; files in `resources/hunspell/` from
   `fetch-assets.py`, one language loaded at a time), then Yomitan rules for ja, en, es, ar, uk
   and de (zu-infinitive only; `data/*-yomitan.json` from yomidevs/yomitan d3c54c1, Arabic and
@@ -129,9 +129,10 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
   - Right-to-left: a line with more RTL characters (U+0590–08FF, FB1D–FDFF, FE70–FEFF) than other letters is reversed into reading order, a character at a time. The Arabic recognizer gives the exact reverse of the text, each mark before its letter ("ًاشطع" for "عطشاً", checked on the model's output 2026-10-24). Lookupper turns it a grapheme at a time (`0x14094cc60`), which put each mark on the letter before it and moved a word's last mark onto the next word, stretching that word's box over its neighbour; Lookitan did the same until 2026-10-24. Unlike Lookupper, which reverses all of it, runs of digits and LTR words keep their order, as in PaddleOCR's `pred_reverse`, and brackets are mirrored.
   - The word trim (`trimmed` in words.rs) drops combining marks at a word's ends, as Lookupper's L*/Nd test does: Rust's `is_alphanumeric` counts Arabic harakat as letters.
   - The pop-up's headword, context, saved-card word and quote, and the Palavras fields have `dir="auto"` (or `<bdi>`), so Arabic shows right to left.
+  - Arabic words run together (`segment/arabic.rs`, the `Segment` that `segment::current` returns for ar, so `pick`, `word_boxes` and `manual_candidates` use it; Lookupper has nothing like it): the recognizer misses narrow spaces ("جماعةالضفادع"). A whitespace run, trimmed as words.rs trims, that is not a word is cut into two words of at least two letters, the cut with the highest product of counts winning (counts under 500 count as 0). A word is a form seen at least 50 times in the CAMeL Arabic Frequency Lists (MSA + dialectal, counts added; `resources/hunspell/ar.words.tsv.gz`, made by `fetch-assets.py`, about 1.49 million forms, 6.3 MB, counts written only from 500) or one AyaSpell accepts (`hunspell::check`). Marks and tatweel are left out when comparing and stay with their letter. Chosen on 2026-10-24 by measuring in the scratchpad (spylls + the lists): the top-200k lists alone cut 668 of 1500 rarer real words, the 1.5M forms none of 3000; the 9 runs on the user's page are cut right, and 49 slang words stay whole. The bundled-file test in arabic.rs checks those cases in CI. The munzirtaha/ayaspell `.aff` is broken (a PFX block runs into REP), so the LibreOffice copy is used.
     - PaddleOCR (`paddle.rs` `decode_line`) reads RTL text as drawn. Lens gives words in reading order, so `lens.rs` lays them out as drawn for the ink snapping, then reverses once.
     - Characters of an RTL line run right to left on screen, so boxes take the min/max of their characters (`span_x`), and the pieces of a row in an RTL paragraph read right to left.
-  - Lemmas: Lookupper has Hunspell only for de/en/es/fr/pt/ru, and uses one stem only when the word as written finds nothing (`StemAsync` `0x140243a40`, lookup `0x1402a5bb0`). Lookitan tries more forms, and has Hunspell for uk, bg, el and the other languages listed under Morphology; ar has no lemmas in either.
+  - Lemmas: Lookupper has Hunspell only for de/en/es/fr/pt/ru, and uses one stem only when the word as written finds nothing (`StemAsync` `0x140243a40`, lookup `0x1402a5bb0`). Lookitan tries more forms, and has Hunspell for uk, bg, el, ar and the other languages listed under Morphology.
 - **Vertical text (`OcrLine.flow`: `Across`, `Down`, `Up`):** as in Lookupper (REA on 2026-10-21), plus bottom-to-top text, which Lookupper does not read (it ships no orientation model):
   - A detected box with height ≥ 1.5 × width is read on its side: XpressOCR's test is at `0x140949830`; PaddleOCR rotates it the same way.
   - Lookupper sorts a paragraph as columns when most of its lines are taller than 1.2 × their width (`SortParagraphLines` `0x14015ed00`, with the lambda `0x14015f6c0`).
@@ -342,6 +343,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-24 (Claude, `tests`): at the user's request, Arabic words the recognizer ran together are cut in two (`segment/arabic.rs`), with AyaSpell (LibreOffice copy, now also Hunspell lemmas for ar) and the CAMeL MSA + dialectal frequency lists, both fetched and checked by `fetch-assets.py` into `resources/hunspell/`. The whole CAMeL lists (24–35 MB with counts) were measured and not used for ranking: they cut fewer runs right (8/9).
 
 - 2026-10-24 (Claude, `tests`): at the user's request, Arabic lines are reversed a character at a time (marks stay on their letter and in their word, so word boxes no longer cover two words), stray marks are trimmed from word ends, and the pop-up and Palavras show source text with `dir="auto"`. Tested against the real rec_arabic output in a scratch Python harness; the medyas arabic_PP-OCRv6_small_rec model was compared and rejected (fewer spaces, no harakat).
 

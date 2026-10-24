@@ -12,11 +12,14 @@ The character list of each recognition model is extracted from its inference.yml
     against pinned SHA-256s. de, en, es, fr, pt and ru are the releases Lookupper ships; the other
     recognition languages with a package are Lookitan's own addition.
     Each language's license file is kept beside its .aff/.dic.
+  * Arabic: AyaSpell from LibreOffice's dictionaries (pinned commit, SHA-256 per file), and
+    ar.words.tsv.gz made from the CAMeL Arabic Frequency Lists (pinned release, SHA-256 per zip).
 
 Usage: python scripts/fetch-assets.py --platform windows|linux
 """
 
 import argparse
+import gzip
 import hashlib
 import io
 import json
@@ -80,6 +83,38 @@ HUNSPELL = {
     "tr": ("dictionary-tr", "2.0.0", "b6d5a806dccccad937f7373809deef117ca8594a1f95eab4fe5be6c37b5d6ef1"),
     "uk": ("dictionary-uk", "4.0.0", "f499681a55b1b0e6c046a902964c1044b28d519bc243bd69ff21d548cfa95e79"),
 }
+
+# Arabic Hunspell: AyaSpell (GPL 2+/LGPL 2.1+/MPL 1.1), as LibreOffice ships it. The copy in
+# munzirtaha/ayaspell has a broken .aff (a PFX block runs into the REP table).
+AYASPELL_COMMIT = "951bb429a4d846699b02e7adb4fc6fca128c6bae"
+AYASPELL_FILES = {
+    "ar.aff": "cec30b8621001e49618feb05aec1984c5fcfbf7d2ec309901d5cbf66585217a3",
+    "ar.dic": "2a3e5367f61c1583734db9d66734f5603e6be5c2d227cf5c5cd7e4ca586e34fe",
+    "COPYING.txt": "73480d918cd78d655508e80aa88c022cbd53634524a0f714b5f2519f2cf19124",
+    "AUTHORS.txt": "bade1d2d0d47dff5956c08732cdb9c02432d9b0b8016a56e27f58b8d7e842462",
+    "README_ar.txt": "5ead684ae5211ccf615686959e24bd21ef6eebbb6195997529fda08b993f615e",
+}
+# CAMeL Arabic Frequency Lists (CC BY-SA 4.0): Modern Standard and dialectal Arabic.
+CAMEL_RELEASE = "v1.0"
+CAMEL_LISTS = {
+    "MSA_freq_lists.tsv.zip": "99a6792501af8f1a8ed5209bfada961ae4fc076823e62b16883ef2e4c39b39a4",
+    "DA_freq_lists.tsv.zip": "7684ad364cae59f23a917424b96377a188e5db8ced1d1a71bac1f3049ff7e0e5",
+}
+ARABIC_WORDS = "ar.words.tsv.gz"
+ARABIC_MIN_COUNT = 50
+# Counts under this are left out of the file: arabic.rs only ranks cuts by the forms above it.
+ARABIC_RANKED = 500
+CAMEL_NOTICE = """ar.words.tsv.gz is adapted from the CAMeL Arabic Frequency Lists v1.0
+(https://github.com/CAMeL-Lab/Camel_Arabic_Frequency_Lists): the Modern Standard Arabic and the
+Dialectal Arabic lists, counts added together, keeping forms seen at least 50 times. Licensed under
+the Creative Commons Attribution-ShareAlike 4.0 International License
+(https://creativecommons.org/licenses/by-sa/4.0/), as the original lists are.
+
+Go Inoue, Bashar Alhafni, Nurpeiis Baimukan, Houda Bouamor, and Nizar Habash. 2021. The Interplay of
+Variant, Size, and Task Type in Arabic Pre-trained Language Models. In Proceedings of the Sixth
+Arabic Natural Language Processing Workshop, pages 92-104, Kyiv, Ukraine (Online). Association for
+Computational Linguistics.
+"""
 
 ORT_VERSION = "1.24.4"
 DIRECTML_VERSION = "1.15.4"
@@ -162,6 +197,57 @@ def fetch_hunspell() -> None:
         print(f"Hunspell {lang}: {package}@{version}")
 
 
+def fetch_arabic() -> None:
+    """AyaSpell as LibreOffice ships it, and the word list segment/arabic.rs cuts runs with."""
+    HUNSPELL_DIR.mkdir(parents=True, exist_ok=True)
+    targets = ["ar.aff", "ar.dic", "ar.license.txt", ARABIC_WORDS, "ar.words.license.txt"]
+    if all(have(HUNSPELL_DIR / n) for n in targets):
+        print("Arabic: cached")
+        return
+    files = {}
+    for name, want in AYASPELL_FILES.items():
+        data = get(f"https://raw.githubusercontent.com/LibreOffice/dictionaries/{AYASPELL_COMMIT}/ar/{name}")
+        if sha256(data) != want:
+            sys.exit(f"checksum mismatch for LibreOffice dictionaries ar/{name}")
+        files[name] = data
+    (HUNSPELL_DIR / "ar.aff").write_bytes(files["ar.aff"])
+    (HUNSPELL_DIR / "ar.dic").write_bytes(files["ar.dic"])
+    (HUNSPELL_DIR / "ar.license.txt").write_bytes(
+        b"AyaSpell Arabic dictionary, from LibreOffice dictionaries " + AYASPELL_COMMIT.encode() + b" (ar/).\n\n"
+        + files["COPYING.txt"] + b"\n" + files["AUTHORS.txt"] + b"\n" + files["README_ar.txt"])
+    # Every form seen at least ARABIC_MIN_COUNT times in the Modern Standard and the dialectal
+    # lists together, sorted by code point (UTF-8 byte order, which arabic.rs searches in), with
+    # its count when that is at least ARABIC_RANKED. Each
+    # list runs from the most frequent form down; it is read while its counts are at least half
+    # the minimum, so a form reaching it across both lists is seen on one side at least, and the
+    # tens of millions of rare forms are never held.
+    counts: dict[str, int] = {}
+    for name, want in CAMEL_LISTS.items():
+        data = get(f"https://github.com/CAMeL-Lab/Camel_Arabic_Frequency_Lists/releases/download/{CAMEL_RELEASE}/{name}")
+        if sha256(data) != want:
+            sys.exit(f"checksum mismatch for CAMeL {name}")
+        with zipfile.ZipFile(io.BytesIO(data)) as z, z.open(z.namelist()[0]) as f:
+            for line in io.TextIOWrapper(f, encoding="utf-8"):
+                word, _, count = line.rstrip("\n").partition("\t")
+                word, count = word.strip(), count.strip()
+                if not count.isdigit():
+                    continue
+                if int(count) < ARABIC_MIN_COUNT // 2:
+                    break
+                if word:
+                    counts[word] = counts.get(word, 0) + int(count)
+        del data
+    kept = 0
+    with gzip.GzipFile(HUNSPELL_DIR / ARABIC_WORDS, "wb", compresslevel=9, mtime=0) as out:
+        for w in sorted(counts):
+            if counts[w] >= ARABIC_MIN_COUNT and "\t" not in w and "\n" not in w:
+                n = counts[w]
+                out.write((f"{w}\t{n}\n" if n >= ARABIC_RANKED else f"{w}\n").encode("utf-8"))
+                kept += 1
+    (HUNSPELL_DIR / "ar.words.license.txt").write_text(CAMEL_NOTICE, encoding="utf-8")
+    print(f"Arabic: AyaSpell {AYASPELL_COMMIT[:7]}, CAMeL {CAMEL_RELEASE} ({kept} forms)")
+
+
 def fetch_ort_windows() -> None:
     ORT_DIR.mkdir(parents=True, exist_ok=True)
     if have(ORT_DIR / "onnxruntime.dll") and have(ORT_DIR / "DirectML.dll"):
@@ -204,6 +290,7 @@ def main() -> None:
     args = ap.parse_args()
     fetch_models()
     fetch_hunspell()
+    fetch_arabic()
     if args.platform == "windows":
         fetch_ort_windows()
     else:

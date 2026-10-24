@@ -2,7 +2,9 @@
 //! Spanish, French, Portuguese and Russian; Lookitan adds every other recognition language with a
 //! wooorm/dictionaries package. The affix and word files (for those six, the same releases
 //! Lookupper ships) are fetched at build time by scripts/fetch-assets.py into
-//! `resources/hunspell/<lang>.aff` and `<lang>.dic`. Finnish, Indonesian and Arabic have none.
+//! `resources/hunspell/<lang>.aff` and `<lang>.dic`. Arabic is AyaSpell, as LibreOffice ships it
+//! (GPL/LGPL/MPL), which also tells segment/arabic.rs what is a word. Finnish and Indonesian have
+//! none.
 //!
 //! Only one language is kept in memory: the recognition language. Loading the Portuguese files
 //! takes a few tenths of a second, so `warm` runs where the dictionaries load.
@@ -13,9 +15,9 @@ use std::sync::OnceLock;
 use parking_lot::Mutex;
 
 /// Languages with a bundled Hunspell dictionary.
-pub const LANGUAGES: [&str; 25] = [
+pub const LANGUAGES: [&str; 26] = [
     "de", "en", "es", "fr", "pt", "ru",
-    "bg", "cs", "da", "el", "hr", "hu", "it", "la", "nb", "nl", "pl", "ro", "sk", "sl", "sr", "sr-latn", "sv", "tr", "uk",
+    "ar", "bg", "cs", "da", "el", "hr", "hu", "it", "la", "nb", "nl", "pl", "ro", "sk", "sl", "sr", "sr-latn", "sv", "tr", "uk",
 ];
 const MAX_WORD_BYTES: usize = 256;
 const MAX_STEMS: usize = 16;
@@ -54,6 +56,13 @@ impl Stemmer {
             }
         }
         out
+    }
+
+    /// Whether the dictionary accepts `word`.
+    pub fn check(&self, word: &str) -> bool {
+        let word = word.trim();
+        !word.is_empty() && word.len() <= MAX_WORD_BYTES && !word.contains('\0')
+            && matches!(self.0.check(word), hunspell_rs::CheckResult::FoundInDictionary)
     }
 }
 
@@ -100,6 +109,16 @@ pub fn stems(word: &str, tag: &str) -> Vec<String> {
     with_stemmer(tag, |s| s.stems(word)).unwrap_or_default()
 }
 
+/// Whether the language's dictionary accepts `word`; false without one.
+pub fn check(word: &str, tag: &str) -> bool {
+    with_stemmer(tag, |s| s.check(word)).unwrap_or(false)
+}
+
+/// A bundled file beside the dictionaries, when it is there.
+pub fn bundled(name: &str) -> Option<PathBuf> {
+    ROOT.get().map(|root| root.join(name)).filter(|p| p.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +136,7 @@ mod tests {
         assert_eq!(stemmer.stems("houses"), vec!["house"]);
         assert!(stemmer.stems("house").is_empty(), "the word itself is not repeated");
         assert!(stemmer.stems("xyzzy").is_empty());
+        assert!(stemmer.check("walking") && stemmer.check("house") && !stemmer.check("xyzzy") && !stemmer.check(""));
         assert!(stemmer.stems("a\0b").is_empty());
         assert!(Stemmer::open(&dir.join("missing.aff"), &dic).is_none());
         assert_eq!(language("pt-BR"), Some("pt"));
@@ -126,6 +146,7 @@ mod tests {
         assert_eq!(language("bs-Latn-BA"), Some("hr"));
         assert_eq!(language("nb-NO"), Some("nb"));
         assert_eq!(language("fi-FI"), None);
+        assert_eq!(language("ar-SA"), Some("ar"));
         drop(stemmer);
         std::fs::remove_dir_all(&dir).unwrap();
     }
