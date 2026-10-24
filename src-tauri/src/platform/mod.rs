@@ -1,10 +1,12 @@
-// Pointer position, screen capture, the foreground app and process freezing for each desktop.
+// Pointer position, screen capture, the foreground app, process freezing and the lookup's priority
+// for each desktop.
 
 #[cfg(target_os = "linux")]
 pub mod kwin;
 #[cfg(windows)]
 pub mod win;
 pub mod geometry;
+pub mod priority;
 
 use anyhow::{anyhow, Result};
 use image::RgbaImage;

@@ -344,6 +344,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-24 (Claude, `tests`): at the user's request a lookup runs ahead of a game for the CPU, as in Lookupper (REA: `0x140190ae0` raises, `0x140190b90` restores, called from the lookup `0x1402582e0`): `platform/priority.rs`. `run_scan` holds `priority::lookup()`; on Windows the first running lookup sets HIGH_PRIORITY_CLASS and `ProcessPowerThrottling` ControlMask 5 / StateMask 0 (EcoQoS and timer throttling off), the last gives the saved class back and ControlMask 0. On Linux (no unprivileged negative nice) rtkit's `MakeThreadHighPriority` (nice -10) is asked for the lookup thread and for the thread creating each CPU ORT session (`cpu_session`), whose workers inherit it; rtkit is rate-limited, so those keep it. No rtkit: nothing changes. Same work, so no extra heat. `main` was fast-forwarded to f67bdf9 before it and a backup pushed to `lookitan-old` as `backup/tests-2026-10-24-2`.
+
 - 2026-10-24 (Claude, `tests`): the default transliteration prompt asks for Latin letters only (the model sometimes copied the Arabic word); a saved old default (`LEGACY_TRANSLITERATION_PROMPT`) is replaced.
 
 - 2026-10-24 (Claude, `tests`): at the user's request the context translator and the pictures got their own "Corrigir erros de OCR com IA" switch and OCR note, in their own tabs.

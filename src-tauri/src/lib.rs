@@ -460,6 +460,8 @@ fn profile_for(app: &AppHandle, fg: &ForegroundApp) -> AppProfile {
 }
 
 fn run_scan(app: &AppHandle) -> Result<()> {
+    // Ahead of a game for the CPU until the lookup is read, as in Lookupper.
+    let _priority = platform::priority::lookup();
     let state = app.state::<AppState>();
     #[cfg(target_os = "linux")]
     if platform::session_kind() == SessionKind::KdeWayland {

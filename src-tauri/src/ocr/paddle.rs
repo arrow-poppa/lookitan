@@ -718,6 +718,8 @@ fn threads() -> usize {
 }
 
 fn cpu_session(path: &Path) -> Result<Session> {
+    // On Linux the session's worker threads take this thread's priority (platform/priority.rs).
+    crate::platform::priority::raise_this_thread();
     let b = ortx!(Session::builder());
     let b = ortx!(b.with_optimization_level(GraphOptimizationLevel::Level3));
     let mut b = ortx!(b.with_intra_threads(threads()));
