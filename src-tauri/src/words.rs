@@ -277,12 +277,15 @@ fn scanned_spans(line: &OcrLine) -> Vec<(usize, usize)> {
     out
 }
 
-/// Characters `start..end` without what is not a letter or digit at their ends.
+/// Characters `start..end` without what is not a letter or digit at their ends. A combining mark
+/// is not a letter there, as in Lookupper's trim (L* or Nd), though Rust counts Arabic harakat as
+/// alphabetic: a mark left alone at an edge would stretch the word's box over its neighbour.
 fn trimmed(chars: &[OcrChar], mut start: usize, mut end: usize) -> Option<(usize, usize)> {
-    while start < end && !chars[start].ch.is_alphanumeric() {
+    let letter = |c: char| c.is_alphanumeric() && !unicode_normalization::char::is_combining_mark(c);
+    while start < end && !letter(chars[start].ch) {
         start += 1;
     }
-    while end > start && !chars[end - 1].ch.is_alphanumeric() {
+    while end > start && !letter(chars[end - 1].ch) {
         end -= 1;
     }
     (start < end).then_some((start, end))
@@ -912,6 +915,18 @@ mod tests {
         assert_eq!(p.word, "بالعالم");
         assert_eq!(p.sentence, "مرحبا بالعالم");
         assert_eq!(p.sentence_lines, [1, 0]);
+    }
+
+    #[test]
+    fn a_stray_mark_at_a_word_edge_is_left_out_of_the_word() {
+        // "عطش ًشديدا": a tanween that slipped from the end of one word to the start of the next.
+        let l = rtl_line("\u{639}\u{637}\u{634} \u{64B}\u{634}\u{62F}\u{64A}\u{62F}\u{627}", 200.0, 100.0);
+        let boxes = super::word_boxes(std::slice::from_ref(&l), None);
+        let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["\u{634}\u{62F}\u{64A}\u{62F}\u{627}", "\u{639}\u{637}\u{634}"]);
+        // A mark inside a word stays.
+        let l = rtl_line("\u{643}\u{64E}\u{62A}\u{64E}\u{628}", 200.0, 100.0);
+        assert_eq!(pick(std::slice::from_ref(&l), 175.0, 110.0, None).unwrap().word, "\u{643}\u{64E}\u{62A}\u{64E}\u{628}");
     }
 
     /// A vertical line 20 wide at `x0`, its characters 20 tall from `y0` down.

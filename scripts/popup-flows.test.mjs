@@ -798,7 +798,7 @@ test('a saved card opens whole in the pop-up, as the Palavras tab shows it', asy
     await view.popup.openSavedCards();
     const html = view.nodes.get('card').children.at(-1).innerHTML;
     for (const part of ['ˈɑptɪmaɪz', 'C1', '>verb<', '>technical<', 'otimizar', 'To make as effective as possible.', 'Used for **software**.',
-        'A new model. It is <mark>optimized</mark> for speed. It supports text.', '<mark>otimizado</mark>', 'Na tela: optimized',
+        'A new model. It is <mark>optimized</mark> for speed. It supports text.', '<mark>otimizado</mark>', 'Na tela: <bdi>optimized</bdi>',
         '<summary>Oxford</summary>', 'clean(<b>optimize</b> v.)']) {
         assert(html.includes(part), `the saved card shows ${part}`);
     }

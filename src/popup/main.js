@@ -275,13 +275,13 @@ function renderCard(body, card, pending = false) {
     for (const l of card.labels) { chips.push(`<span class="chip">${escapeHtml(l)}</span>`); }
     const hide = settings.hideWordTranslation;
     body.innerHTML = `
-        <div class="hw"><span class="word">${escapeHtml(headword)}</span><button class="ghost icon speak" title="${audioOthers() === 'menu' ? 'Ouvir (clique direito: escolher o áudio)' : 'Ouvir'}">${icon('speaker')}</button><span class="audio-buttons"></span></div>
+        <div class="hw"><span class="word" dir="auto">${escapeHtml(headword)}</span><button class="ghost icon speak" title="${audioOthers() === 'menu' ? 'Ouvir (clique direito: escolher o áudio)' : 'Ouvir'}">${icon('speaker')}</button><span class="audio-buttons"></span></div>
         ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${cardExtrasHtml(card, ai.cardComponents !== false)}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn explain-word">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
-        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div>${markContext(p)}</div></div></details>` : ''}`;
+        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div dir="auto">${markContext(p)}</div></div></details>` : ''}`;
     bindSentence(body, p.context || p.sentence);
     const speaker = body.querySelector('.speak');
     speaker?.addEventListener('click', () => void playWord(state, headword));
@@ -978,7 +978,7 @@ async function drawSavedCards() {
     const date = (ms) => (ms ? new Date(ms).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'}) : '');
     box.innerHTML = `
         <div class="saved-bar">
-            <strong>${escapeHtml(word)}</strong><span class="muted">${cards.length === 1 ? '1 card salvo' : `${cards.length} cards salvos`}</span>
+            <strong dir="auto">${escapeHtml(word)}</strong><span class="muted">${cards.length === 1 ? '1 card salvo' : `${cards.length} cards salvos`}</span>
             <span class="spacer"></span>
             <button class="ghost icon saved-close" title="Fechar (Esc)" aria-label="Fechar">${icon('close')}</button>
         </div>
@@ -1038,13 +1038,13 @@ function savedCardHtml(c, current) {
     const glossaries = (c.glossaries || []).filter((g) => g?.html).map((g) => `
         <details class="saved-gloss"><summary>${escapeHtml(g.name || 'Dicionário')}</summary><div class="gloss">${cleanGlossaryHtml(g.html)}</div></details>`).join('');
     return `
-        <div class="saved-head"><span class="word">${escapeHtml(c.dictionaryForm || c.word)}</span>${chips}</div>
-        ${c.dictionaryForm && c.word && c.dictionaryForm.toLowerCase() !== c.word.toLowerCase() ? `<div class="muted saved-form">Na tela: ${escapeHtml(c.word)}</div>` : ''}
+        <div class="saved-head"><span class="word" dir="auto">${escapeHtml(c.dictionaryForm || c.word)}</span>${chips}</div>
+        ${c.dictionaryForm && c.word && c.dictionaryForm.toLowerCase() !== c.word.toLowerCase() ? `<div class="muted saved-form">Na tela: <bdi>${escapeHtml(c.word)}</bdi></div>` : ''}
         ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
         ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
         ${cardExtrasHtml(c, true)}
         ${c.explanation ? `<div class="explanation ai-text">${renderMarkdown(c.explanation)}</div>` : ''}
-        ${text ? `<blockquote>${markWord(text, c.word)}</blockquote>` : ''}
+        ${text ? `<blockquote dir="auto">${markWord(text, c.word)}</blockquote>` : ''}
         ${c.contextTranslation ? `<p class="ctx-tr">${highlightStars(c.contextTranslation)}</p>` : ''}
         <div class="saved-shot" hidden></div>
         ${glossaries}`;

@@ -74,7 +74,7 @@ function renderList() {
     if (!items.some((w) => w.id === selectedId)) { selectedId = items[0]?.id || null; }
     for (const w of items) {
         const item = el('div', {class: `word-item${w.id === selectedId ? ' sel' : ''}`},
-            el('div', {class: 'w'}, w.word,
+            el('div', {class: 'w'}, el('bdi', {}, w.word),
                 w.cefr ? el('span', {class: 'cefr-badge'}, w.cefr) : null,
                 w.ankiNoteId ? el('span', {class: 'faint', style: 'margin-left:8px', html: icon('cards', 'sm'), title: 'No Anki'}) : null),
             el('div', {class: 'tr'}, w.translation || w.definition || ''));
@@ -104,7 +104,7 @@ function fieldControl(w, key, kind, label, status) {
     if (kind === 'cefr') {
         control = el('select', {'aria-label': label}, ...CEFR_LEVELS.map((level) => el('option', {value: level}, level || '—')));
     } else {
-        control = el(kind === 'area' ? 'textarea' : 'input', {'aria-label': label, rows: kind === 'area' ? 3 : null, type: kind === 'area' ? null : 'text'});
+        control = el(kind === 'area' ? 'textarea' : 'input', {'aria-label': label, rows: kind === 'area' ? 3 : null, type: kind === 'area' ? null : 'text', dir: 'auto'});
     }
     control.value = kind === 'cefr' ? String(w[key] || '') : fieldText(w, key, kind);
     control.setAttribute('data-field', key);
@@ -123,7 +123,7 @@ async function renderDetail() {
     shown = {id: w?.id ?? null, updatedAt: w?.updatedAt ?? null};
     if (!w) { return; }
     const status = el('p', {class: 'note'});
-    const title = el('input', {class: 'word-title', type: 'text', 'aria-label': 'Palavra'});
+    const title = el('input', {class: 'word-title', type: 'text', dir: 'auto', 'aria-label': 'Palavra'});
     title.value = w.word || '';
     title.setAttribute('data-field', 'word');
     title.addEventListener('change', () => {

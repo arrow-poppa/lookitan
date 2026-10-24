@@ -202,12 +202,14 @@ pub fn is_rtl_text(text: impl IntoIterator<Item = char>) -> bool {
 }
 
 /// Turns a right-to-left line from the order it is drawn in, left to right, to the order it is
-/// read in; the same turn takes it back. The recognizer reads Arabic as drawn, and Lookupper
-/// reverses such a line a letter at a time, each letter with its marks. Here, as in PaddleOCR,
-/// digits and left-to-right words also keep their own order ("سنة 2024", not "سنة 4202"), and
-/// brackets turn with the text.
+/// read in; the same turn takes it back. The recognizer reads Arabic as drawn, the exact reverse
+/// of the text, so a letter's marks come before it ("ًاشطع" for "عطشاً"). Lookupper turns the line
+/// a grapheme at a time, which leaves each mark on the letter before it as drawn; here the line is
+/// turned a character at a time, so each mark goes back on its letter and stays in its word. As
+/// in PaddleOCR, digits and left-to-right words keep their own order ("سنة 2024", not "سنة 4202"),
+/// and brackets turn with the text.
 pub fn reverse_rtl(chars: &[OcrChar]) -> Vec<OcrChar> {
-    // Each letter with the marks drawn on it.
+    // Each character with the marks after it, so a left-to-right run keeps its accents.
     let mut clusters: Vec<std::ops::Range<usize>> = Vec::new();
     for (i, c) in chars.iter().enumerate() {
         match clusters.last_mut() {
@@ -244,19 +246,22 @@ pub fn reverse_rtl(chars: &[OcrChar]) -> Vec<OcrChar> {
     }
     let mut out = Vec::with_capacity(chars.len());
     for (range, run) in segments.into_iter().rev() {
-        for (j, c) in chars[range].iter().enumerate() {
+        if run {
+            out.extend_from_slice(&chars[range]);
+            continue;
+        }
+        // A letter is turned with its marks, which the recognizer gives before it as drawn.
+        for c in chars[range].iter().rev() {
             let mut c = c.clone();
-            if !run && j == 0 {
-                c.ch = mirrored(c.ch);
-            }
+            c.ch = mirrored(c.ch);
             out.push(c);
         }
     }
     out
 }
 
-/// Characters drawn on the letter before them: combining marks (Arabic harakat, Hebrew points),
-/// the zero-width joiners and variation selectors.
+/// Characters drawn on a letter: combining marks (Arabic harakat, Hebrew points), the zero-width
+/// joiners and variation selectors. In left-to-right text they follow their letter.
 fn attaches(c: char) -> bool {
     unicode_normalization::char::is_combining_mark(c)
         || matches!(c, '\u{200C}' | '\u{200D}' | '\u{FE00}'..='\u{FE0F}')
@@ -299,9 +304,14 @@ mod tests {
         assert_eq!(text(&read), "سنة 2024");
         assert_eq!((read[0].x0, read[7].x1), (70.0, 40.0), "each character keeps its place on screen");
         assert_eq!(text(&reverse_rtl(&read)), "2024 ةنس", "the same turn takes it back");
-        // كَتَبَ drawn: each letter followed by its fatha, from the last letter.
-        let marked = drawn("\u{628}\u{64E}\u{62A}\u{64E}\u{643}\u{64E}");
+        // كَتَبَ as the recognizer gives it: the text reversed, each fatha before its letter.
+        let marked = drawn("\u{64E}\u{628}\u{64E}\u{62A}\u{64E}\u{643}");
         assert_eq!(text(&reverse_rtl(&marked)), "\u{643}\u{64E}\u{62A}\u{64E}\u{628}\u{64E}");
+        assert_eq!(text(&reverse_rtl(&reverse_rtl(&marked))), text(&marked));
+        // A mark at the end of a word stays in it, not on the next word ("ًشديدا").
+        let read = reverse_rtl(&drawn("\u{64B}\u{627}\u{62F}\u{64A}\u{62F}\u{634} \u{64B}\u{627}\u{634}\u{637}\u{639}"));
+        assert_eq!(text(&read), "\u{639}\u{637}\u{634}\u{627}\u{64B} \u{634}\u{62F}\u{64A}\u{62F}\u{627}\u{64B}");
+        assert_eq!((read[4].ch, read[4].x0), ('\u{64B}', 70.0), "a mark keeps its place on screen");
         assert_eq!(text(&reverse_rtl(&drawn("(ةملك)"))), "(كلمة)", "brackets turn with the text");
         assert_eq!(text(&reverse_rtl(&drawn("ةحفص 3.14 ىلإ"))), "إلى 3.14 صفحة");
     }
