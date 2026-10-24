@@ -188,6 +188,19 @@ test('the AI card carries the reading, synonyms and components, which also have 
     assert.equal(plain.E, '');
 });
 
+test('the form on screen and its transliteration go in the AI card, the tags and markers of their own', async () => {
+    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); }, {DOMParser: FakeDOMParser});
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
+        A: {value: '{ai-card}'}, B: {value: '{ai-card-plain}'}, C: {value: '{ai-form}'}, D: {value: '{ai-transliteration}'}, E: {value: '{tags}'}}}];
+    const aiCard = {definition: 'to lay eggs', ipa: 'baːdˤa', transliteration: 'fa-bāḍat', form: ['past tense', 'feminine'], partOfSpeech: ['verb'], labels: ['formal']};
+    const f = (await notes.buildNote({word: 'فباضت', headword: 'باض', sentence: 's', aiCard}, options, null)).fields;
+    assert(f.A.includes('<b>باض</b> <i>fa-bāḍat</i> /baːdˤa/') && f.A.includes('<i>past tense, feminine, verb, formal</i>'));
+    assert(f.B.startsWith('باض fa-bāḍat /baːdˤa/<br>(past tense, feminine, verb, formal)'));
+    assert.equal(f.C, 'past tense, feminine');
+    assert.equal(f.D, 'fa-bāḍat');
+    assert.equal(f.E, 'past tense, feminine, formal');
+});
+
 test('{ai-card} is the AI part alone by default, and also carries the dictionaries when chosen', async () => {
     const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); }, {DOMParser: FakeDOMParser});
     options.cardFormats = [{deck: 'D', model: 'Basic', fields: {Back: {value: '{ai-card}'}, Plain: {value: '{ai-card-plain}'}}}];

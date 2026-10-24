@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, FORM_FIELD, FORM_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -55,6 +55,8 @@ function baseAiOptions() {
         wordTranslationPrompt: WORD_TRANSLATION_PROMPT,
         readingPrompt: READING_PROMPT,
         componentsPrompt: COMPONENTS_PROMPT,
+        formPrompt: FORM_PROMPT,
+        transliterationPrompt: TRANSLITERATION_PROMPT,
         contextPrompt: CONTEXT_PROMPT,
         // The "Imagens" dictionary: its own system and user prompts for the search query (as
         // Migaku's "Image query"), shown on click unless autoShowImages is on.
@@ -71,7 +73,7 @@ function baseAiOptions() {
         // not ask for them.
         cardComponents: true,
         // Bumped when markers are added to the card prompt, so a saved prompt gets them once.
-        cardPromptVersion: 2,
+        cardPromptVersion: 3,
         // The context translator has its own switch.
         autoTranslateContext: true,
         // Blurs the context translation until it is clicked, like hideWordTranslation.
@@ -121,7 +123,7 @@ export function normalizeAiOptions(stored) {
     // one, they start from a copy of the word card's, so they keep working as they did.
     const own = isObject(stored.sectionProviders) ? stored.sectionProviders : {};
     out.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(isObject(own[id]) ? own[id] : out, base)]));
-    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'readingPrompt', 'componentsPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
+    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'readingPrompt', 'componentsPrompt', 'formPrompt', 'transliterationPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
         if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
     }
     // The old default explanation and context prompts mixed the word into their instructions; the
@@ -137,11 +139,14 @@ export function normalizeAiOptions(stored) {
     }
     // Card prompts saved before the synonyms, reading and components: they go right after the
     // translation's marker, once, so a user who later takes them out keeps them out.
-    if (stored.cardPromptVersion !== 2) {
-        if (!out.cardPrompt.includes(COMPONENTS_FIELD) && out.cardPrompt.includes(TRANSLATION_FIELD)) {
-            out.cardPrompt = out.cardPrompt.replace(TRANSLATION_FIELD, TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS);
-        }
-        out.cardPromptVersion = 2;
+    const version = Number(stored.cardPromptVersion) || 1;
+    if (version < 2 && !out.cardPrompt.includes(COMPONENTS_FIELD) && out.cardPrompt.includes(TRANSLATION_FIELD)) {
+        out.cardPrompt = out.cardPrompt.replace(TRANSLATION_FIELD, TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS);
     }
+    // Then the form on screen (its grammatical features and transliteration), after the components.
+    if (version < 3 && !out.cardPrompt.includes(FORM_FIELD) && out.cardPrompt.includes(COMPONENTS_FIELD)) {
+        out.cardPrompt = out.cardPrompt.replace(COMPONENTS_FIELD, COMPONENTS_FIELD + FORM_FIELD);
+    }
+    out.cardPromptVersion = 3;
     return out;
 }

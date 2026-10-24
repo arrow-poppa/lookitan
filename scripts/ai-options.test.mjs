@@ -4,16 +4,25 @@ import {defaultAiOptions, normalizeAiOptions} from '../src/lib/ai/defaults.js';
 
 test('a saved card prompt gets the synonyms, reading and components once, and components start on', async () => {
     const {CARD_PROMPT, COMPONENTS_FIELD, READING_FIELD, TRANSLATION_FIELD} = await import('../src/lib/ai/word-card.js');
-    const old = CARD_PROMPT.replace(/, "synonyms".*\{\{componentsField\}\}/, '');
+    const old = CARD_PROMPT.replace(/, "synonyms".*\{\{formField\}\}/, '');
     assert(!old.includes(COMPONENTS_FIELD) && old.includes(TRANSLATION_FIELD));
     const migrated = normalizeAiOptions({cardPrompt: old});
     assert.equal(migrated.cardPrompt, CARD_PROMPT);
-    assert.equal(migrated.cardPromptVersion, 2);
+    assert.equal(migrated.cardPromptVersion, 3);
     assert.equal(migrated.cardComponents, true);
-    const taken = normalizeAiOptions({cardPrompt: old, cardPromptVersion: 2, cardComponents: false});
+    const taken = normalizeAiOptions({cardPrompt: old, cardPromptVersion: 3, cardComponents: false});
     assert.equal(taken.cardPrompt, old, 'a prompt the user changed after the migration stays as it is');
     assert.equal(taken.cardComponents, false);
     assert(defaultAiOptions().cardPrompt.includes(READING_FIELD));
+});
+
+test('a card prompt saved with the components gets the form once, after them', async () => {
+    const {CARD_PROMPT, COMPONENTS_FIELD, FORM_FIELD} = await import('../src/lib/ai/word-card.js');
+    const old = CARD_PROMPT.replace(FORM_FIELD, '');
+    assert.equal(normalizeAiOptions({cardPrompt: old, cardPromptVersion: 2}).cardPrompt, CARD_PROMPT);
+    const edited = `My card. ${COMPONENTS_FIELD} and more`;
+    assert.equal(normalizeAiOptions({cardPrompt: edited, cardPromptVersion: 2}).cardPrompt, `My card. ${COMPONENTS_FIELD}${FORM_FIELD} and more`);
+    assert.equal(normalizeAiOptions({cardPrompt: old, cardPromptVersion: 3}).cardPrompt, old, 'taken out after the migration, it stays out');
 });
 
 test('explanation stays manual for new and existing AI settings without autoExplain', () => {

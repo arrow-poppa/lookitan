@@ -5,7 +5,7 @@ import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
-import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_PROMPT, READING_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
+import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_PROMPT, FORM_PROMPT, READING_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
@@ -310,7 +310,7 @@ function renderAiWord(root) {
     const vars = escapeHtml('{{target}} (palavra), {{sentence}} (o parágrafo em volta da palavra), {{definitionLanguage}}, {{translationLanguage}}, {{explanationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-word']),
-        el('p', {class: 'lead'}, 'Explica a palavra no sentido exato em que aparece na tela, com forma de dicionário, IPA, nível CEFR, classe gramatical, definição, tradução e sinônimos, a leitura em pinyin ou kana no chinês e no japonês e, se quiser, os componentes da palavra. Usa o seu provedor e o seu modelo (BYOK); nada passa por servidores do Lookitan.'),
+        el('p', {class: 'lead'}, 'Explica a palavra no sentido exato em que aparece na tela, com forma de dicionário, IPA, nível CEFR, classe gramatical, os traços da forma na tela (pessoa, gênero, tempo verbal…), definição, tradução e sinônimos, a leitura em pinyin ou kana no chinês e no japonês, a transliteração nas escritas não latinas (árabe, russo, grego, coreano…) e, se quiser, os componentes da palavra. Usa o seu provedor e o seu modelo (BYOK); nada passa por servidores do Lookitan.'),
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             ...languageRows(),
@@ -328,9 +328,11 @@ function renderAiWord(root) {
         providerSection(),
         el('h3', {}, 'Prompts'),
         el('div', {class: 'group'},
-            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada; ${escapeHtml('{{readingField}}')} pede a leitura só no chinês (pinyin) e no japonês (kana); ${escapeHtml('{{componentsField}}')} pede os componentes só com a opção Componentes ligada.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
+            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada; ${escapeHtml('{{readingField}}')} pede a leitura só no chinês (pinyin) e no japonês (kana); ${escapeHtml('{{componentsField}}')} pede os componentes só com a opção Componentes ligada; ${escapeHtml('{{formField}}')} pede os traços da forma e, nas escritas não latinas, a transliteração.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
             promptCard('Prompt da tradução da palavra', `O que a IA põe no campo "translation" do card. Só é enviado com a tradução da palavra ligada. Variáveis: ${vars}.`, () => ai.wordTranslationPrompt, (v) => { ai.wordTranslationPrompt = v; }, WORD_TRANSLATION_PROMPT, 'wordTranslationPrompt'),
             promptCard('Prompt da leitura', `O que a IA põe no campo "reading" do card. Só é enviado no chinês e no japonês. ${escapeHtml('{{readingSystem}}')} vira "pinyin with tone marks" no chinês e "hiragana" no japonês.`, () => ai.readingPrompt, (v) => { ai.readingPrompt = v; }, READING_PROMPT, 'readingPrompt'),
+            promptCard('Prompt da forma', `O que a IA põe no campo "form" do card: os traços gramaticais da palavra como está na tela (pessoa, número, gênero, tempo verbal…), que aparecem como etiquetas antes da classe gramatical e vão para o Anki em {ai-form} e {tags}. Variáveis: ${vars}.`, () => ai.formPrompt, (v) => { ai.formPrompt = v; }, FORM_PROMPT, 'formPrompt'),
+            promptCard('Prompt da transliteração', 'O que a IA põe no campo "transliteration" do card: a palavra como está na tela, em letras latinas (como o "fa-bāḍat" do Lookupper). Só é enviado nos idiomas de escrita não latina, menos o chinês e o japonês, que têm a leitura. Vai para o Anki em {ai-transliteration}.', () => ai.transliterationPrompt, (v) => { ai.transliterationPrompt = v; }, TRANSLITERATION_PROMPT, 'transliterationPrompt'),
             promptCard('Prompt dos componentes', `O que a IA põe no campo "components" do card. Só é enviado com Componentes ligado. ${escapeHtml('{{componentParts}}')} vira o que são as partes no idioma (caracteres no chinês e no japonês, sílabas com hanja no coreano, raízes e afixos nos outros) e ${escapeHtml('{{componentReading}}')} o campo de leitura de cada parte (pinyin, kana ou hanja; vazio nos outros idiomas). Variáveis: ${vars}.`, () => ai.componentsPrompt, (v) => { ai.componentsPrompt = v; }, COMPONENTS_PROMPT, 'componentsPrompt'),
             promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT, 'customPrompt'),
             el('div', {class: 'card-row stack'},

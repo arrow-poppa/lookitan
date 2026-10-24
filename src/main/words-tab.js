@@ -23,7 +23,8 @@ const FIELDS = [
     ['dictionaryForm', 'Forma de dicionário', 'text'], ['translation', 'Tradução', 'text'],
     ['definition', 'Definição', 'area'], ['sentence', 'Frase', 'area'],
     ['contextTranslation', 'Tradução da frase', 'area'], ['reading', 'Leitura', 'text'],
-    ['ipa', 'IPA', 'text'], ['cefr', 'CEFR', 'cefr'], ['partOfSpeech', 'Classe gramatical', 'list'],
+    ['transliteration', 'Transliteração', 'text'], ['ipa', 'IPA', 'text'], ['cefr', 'CEFR', 'cefr'],
+    ['form', 'Forma na tela', 'list'], ['partOfSpeech', 'Classe gramatical', 'list'],
     ['synonyms', 'Sinônimos', 'list'], ['explanation', 'Explicação', 'area'],
 ];
 const CEFR_LEVELS = ['', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'];

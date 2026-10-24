@@ -47,7 +47,7 @@ export const MARKERS = [
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
     'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
-    'translation', 'context-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
+    'translation', 'context-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-transliteration', 'ai-form', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
 ];
 
 /** Name of the AI word card when it is listed as a dictionary in glossary markers. */
@@ -184,14 +184,15 @@ function glossaryPlain(defs, {noDictionary = false} = {}) {
 
 /**
  * The definitions of a lookup, one per dictionary, in the user's dictionary order. The AI card
- * counts as the dictionary AI_GLOSSARY_NAME, with its part of speech and labels as tags.
+ * counts as the dictionary AI_GLOSSARY_NAME, with its grammatical features, part of speech and
+ * labels as tags.
  */
 function definitions(clean, ai, order) {
     const defs = clean.map((g) => ({dictionary: g.name, tags: [], html: g.html, text: htmlToText(g.html)}));
     if (ai.definition) {
         defs.push({
             dictionary: AI_GLOSSARY_NAME,
-            tags: [...(ai.partOfSpeech || []), ...(ai.labels || [])],
+            tags: [...(ai.form || []), ...(ai.partOfSpeech || []), ...(ai.labels || [])],
             html: escapeHtml(ai.definition),
             text: ai.definition,
         });
@@ -216,8 +217,8 @@ function componentsPlain(ai) {
 }
 
 /**
- * The AI word card: headword with its reading (pinyin, kana) and IPA, CEFR, part of speech and
- * labels, translation, definition, synonyms, components and the explanation if it was generated. With `dictionaries` (aiCardMode 'dictionaries') the
+ * The AI word card: headword with its reading (pinyin, kana), the transliteration of the word on
+ * screen and IPA, CEFR, grammatical features, part of speech and labels, translation, definition, synonyms, components and the explanation if it was generated. With `dictionaries` (aiCardMode 'dictionaries') the
  * dictionaries' entries follow it. The context is left out: it goes in {sentence}.
  */
 function aiCardHtml(headword, ai, explanation, dictionaries = []) {
@@ -225,8 +226,9 @@ function aiCardHtml(headword, ai, explanation, dictionaries = []) {
     if (!ai.definition && !ai.translation && !explanation) { return glossary; }
     const head = [`<b>${escapeHtml(headword)}</b>`];
     if (ai.reading) { head.push(escapeHtml(ai.reading)); }
+    if (ai.transliteration) { head.push(`<i>${escapeHtml(ai.transliteration)}</i>`); }
     if (ai.ipa) { head.push(`/${escapeHtml(ai.ipa)}/`); }
-    const tags = [ai.cefr, ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
+    const tags = [ai.cefr, ...(ai.form || []), ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
     const parts = [`<div>${head.join(' ')}</div>`];
     if (tags.length) { parts.push(`<div><i>${tags.map(escapeHtml).join(', ')}</i></div>`); }
     if (ai.translation) { parts.push(`<div>${escapeHtml(ai.translation)}</div>`); }
@@ -241,8 +243,8 @@ function aiCardHtml(headword, ai, explanation, dictionaries = []) {
 function aiCardPlain(headword, ai, explanation, dictionaries = []) {
     const glossary = glossaryPlain(dictionaries);
     if (!ai.definition && !ai.translation && !explanation) { return glossary; }
-    const tags = [ai.cefr, ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
-    const lines = [`${headword}${ai.reading ? ` ${ai.reading}` : ''}${ai.ipa ? ` /${ai.ipa}/` : ''}`];
+    const tags = [ai.cefr, ...(ai.form || []), ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
+    const lines = [[headword, ai.reading, ai.transliteration, ai.ipa && `/${ai.ipa}/`].filter(Boolean).join(' ')];
     if (tags.length) { lines.push(`(${tags.join(', ')})`); }
     if (ai.translation) { lines.push(ai.translation); }
     if (ai.definition) { lines.push(ai.definition); }
@@ -267,7 +269,7 @@ function cloze(sentence, word) {
  * @property {string} [sentence]
  * @property {string} [context] The paragraph around the word, used when contextMode is 'paragraph'.
  * @property {{name: string, html: string}[]} [glossaries]
- * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string, reading?: string, synonyms?: string[], components?: {part: string, reading: string, meaning: string}[]}} [aiCard]
+ * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string, reading?: string, transliteration?: string, form?: string[], synonyms?: string[], components?: {part: string, reading: string, meaning: string}[]}} [aiCard]
  * @property {string} [aiExplanation]
  * @property {string} [contextTranslation]
  * @property {() => Promise<string|null>} [screenshot] Base64 PNG of the capture.
@@ -328,10 +330,12 @@ export async function buildNote(ctx, anki, conn) {
         'cefr': escapeHtml(ai.cefr || ''),
         'part-of-speech': escapeHtml((ai.partOfSpeech || []).join(', ')),
         'ai-reading': escapeHtml(ai.reading || ''),
+        'ai-transliteration': escapeHtml(ai.transliteration || ''),
+        'ai-form': escapeHtml((ai.form || []).join(', ')),
         'ai-synonyms': escapeHtml((ai.synonyms || []).join(', ')),
         'ai-components': componentsHtml(ai),
         'ai-components-plain': componentsPlain(ai).map(escapeHtml).join('<br>'),
-        'tags': escapeHtml([...(ai.labels || [])].join(', ')),
+        'tags': escapeHtml([...(ai.form || []), ...(ai.labels || [])].join(', ')),
         'document-title': escapeHtml(ctx.title || ''),
         'search-query': escapeHtml(ctx.query || ctx.word),
         'screenshot': '',

@@ -58,6 +58,10 @@ html, body { height: 100%; overflow: hidden; background: transparent; }
 .chip { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--surface-3); color: var(--text); }
 .ipa { color: var(--muted); font-size: 16px; }
 .reading { color: var(--text); font-size: 14px; }
+/* The word on screen in Latin letters (Lookupper's "fa-bāḍat"). */
+.translit { color: var(--text); font-size: 14px; font-style: italic; }
+/* A right-to-left title row keeps each chip's own text in its own direction. */
+.chips[dir="rtl"] > *, .saved-head[dir="rtl"] > * { unicode-bidi: isolate; }
 .synonyms { margin: 0 0 8px; font-size: 13.5px; }
 .synonyms .muted { color: var(--muted); }
 .components { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }

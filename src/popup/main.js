@@ -255,6 +255,17 @@ async function audioForAnki(lookup, term) {
 
 // ------------------------------------------------------------------ AI word card
 
+/** "rtl" when `text` starts with a right-to-left letter (Arabic, Hebrew…), else "ltr": the card's
+ * title row then runs as Lookupper's, the word at the right and its buttons and chips after it. */
+function headDir(text) {
+    return /^[^\p{L}]*[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}]/u.test(text || '') ? 'rtl' : 'ltr';
+}
+
+/** The word as written on screen in Latin letters, for a script other than Latin. */
+function translitHtml(transliteration) {
+    return transliteration ? `<span class="translit">${escapeHtml(transliteration)}</span>` : '';
+}
+
 /** The card's synonyms and components, as the pop-up and the saved cards show them. */
 function cardExtrasHtml(card, components) {
     const synonyms = card.synonyms || [];
@@ -270,13 +281,16 @@ function renderCard(body, card, pending = false) {
     const chips = [];
     if (card.cefr && /^[ABC][12]$/.test(card.cefr)) { chips.push(`<span class="cefr ${card.cefr.toLowerCase()}">${card.cefr}</span>`); }
     if (card.reading) { chips.push(`<span class="reading">${escapeHtml(card.reading)}</span>`); }
+    if (card.transliteration) { chips.push(translitHtml(card.transliteration)); }
     if (card.ipa) { chips.push(`<span class="ipa">/${escapeHtml(card.ipa)}/</span>`); }
+    for (const f of card.form || []) { chips.push(`<span class="chip">${escapeHtml(f)}</span>`); }
     for (const pos of card.partOfSpeech) { chips.push(`<span class="chip">${escapeHtml(pos)}</span>`); }
     for (const l of card.labels) { chips.push(`<span class="chip">${escapeHtml(l)}</span>`); }
     const hide = settings.hideWordTranslation;
+    const dir = headDir(headword);
     body.innerHTML = `
-        <div class="hw"><span class="word" dir="auto">${escapeHtml(headword)}</span><button class="ghost icon speak" title="${audioOthers() === 'menu' ? 'Ouvir (clique direito: escolher o áudio)' : 'Ouvir'}">${icon('speaker')}</button><span class="audio-buttons"></span></div>
-        ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
+        <div class="hw" dir="${dir}"><span class="word" dir="auto">${escapeHtml(headword)}</span><button class="ghost icon speak" title="${audioOthers() === 'menu' ? 'Ouvir (clique direito: escolher o áudio)' : 'Ouvir'}">${icon('speaker')}</button><span class="audio-buttons"></span></div>
+        ${chips.length ? `<div class="chips" dir="${dir}">${chips.join('')}</div>` : ''}
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${cardExtrasHtml(card, ai.cardComponents !== false)}
@@ -1022,23 +1036,25 @@ ${savedCardHtml(c, c.id === lookup.savedId)}
 }
 
 /**
- * The whole saved card, as the Palavras tab shows it: the word with IPA, CEFR, part of speech and
- * labels, the translation, definition and explanation, the paragraph (or sentence) with its
- * translation, the screenshot and the dictionaries' entries, folded.
+ * The whole saved card, as the Palavras tab shows it: the word with its transliteration, IPA, CEFR,
+ * grammatical features, part of speech and labels, the translation, definition and explanation,
+ * the paragraph (or sentence) with its translation, the screenshot and the dictionaries' entries,
+ * folded.
  */
 function savedCardHtml(c, current) {
     const chips = [
         c.reading ? `<span class="reading">${escapeHtml(c.reading)}</span>` : '',
+        translitHtml(c.transliteration),
         c.ipa ? `<span class="ipa">/${escapeHtml(c.ipa)}/</span>` : '',
         c.cefr && /^[ABC][12]$/.test(c.cefr) ? `<span class="cefr ${c.cefr.toLowerCase()}">${c.cefr}</span>` : '',
-        ...[...(c.partOfSpeech || []), ...(c.labels || [])].map((t) => `<span class="chip">${escapeHtml(t)}</span>`),
+        ...[...(c.form || []), ...(c.partOfSpeech || []), ...(c.labels || [])].map((t) => `<span class="chip">${escapeHtml(t)}</span>`),
         current ? '<span class="chip">esta consulta</span>' : '',
     ].join('');
     const text = c.context && c.context.includes(c.sentence || '') ? c.context : c.sentence;
     const glossaries = (c.glossaries || []).filter((g) => g?.html).map((g) => `
         <details class="saved-gloss"><summary>${escapeHtml(g.name || 'Dicionário')}</summary><div class="gloss">${cleanGlossaryHtml(g.html)}</div></details>`).join('');
     return `
-        <div class="saved-head"><span class="word" dir="auto">${escapeHtml(c.dictionaryForm || c.word)}</span>${chips}</div>
+        <div class="saved-head" dir="${headDir(c.dictionaryForm || c.word)}"><span class="word" dir="auto">${escapeHtml(c.dictionaryForm || c.word)}</span>${chips}</div>
         ${c.dictionaryForm && c.word && c.dictionaryForm.toLowerCase() !== c.word.toLowerCase() ? `<div class="muted saved-form">Na tela: <bdi>${escapeHtml(c.word)}</bdi></div>` : ''}
         ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
         ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}

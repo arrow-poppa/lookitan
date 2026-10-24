@@ -1,6 +1,7 @@
 // Prompts and parsing for the two built-in AI "dictionaries": the word card (word in context, with
-// IPA, CEFR level, part of speech, definition, translation and synonyms; for Chinese and Japanese the
-// reading, and, when switched on, the word's components) and the context translator.
+// IPA, CEFR level, part of speech, the grammatical features of the form on screen, definition,
+// translation and synonyms; for Chinese and Japanese the reading, in other scripts than Latin the
+// transliteration, and, when switched on, the word's components) and the context translator.
 
 /** Default instruction for the card's "translation" key (the "Prompt da tradução da palavra"). */
 export const WORD_TRANSLATION_PROMPT = 'the translation of the word in this context into {{translationLanguage}}';
@@ -13,6 +14,10 @@ export const READING_FIELD = '{{readingField}}';
 
 /** Where the card prompt receives the components; empty when they are switched off. */
 export const COMPONENTS_FIELD = '{{componentsField}}';
+
+/** Where the card prompt receives the form on screen (its grammatical features and, in a script
+ * other than Latin, its transliteration). */
+export const FORM_FIELD = '{{formField}}';
 
 /** The synonyms key of the card prompt, for every language. */
 export const SYNONYMS_KEY = ', "synonyms": [up to three synonyms of the word in this sense, in the same language, or []]';
@@ -33,7 +38,7 @@ export const CARD_PROMPT =
     '"partOfSpeech": ["noun", ...], ' +
     '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
     '"definition": a one or two sentence definition in {{definitionLanguage}}' +
-    TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + '}';
+    TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + FORM_FIELD + '}';
 
 /** Default instruction for the card's "reading" key (the "Prompt da leitura"). */
 export const READING_PROMPT = 'the reading of the headword in {{readingSystem}}';
@@ -42,6 +47,19 @@ export const READING_PROMPT = 'the reading of the headword in {{readingSystem}}'
 export const COMPONENTS_PROMPT =
     '[the parts the word is built from, in order: {{componentParts}}; [] for a word of one part. ' +
     'Each is {"part": the part as written, {{componentReading}}"meaning": its short meaning in {{definitionLanguage}}}]';
+
+/** Default instruction for the card's "form" key (the "Prompt da forma"). */
+export const FORM_PROMPT =
+    '[the grammatical features of the word as written in the context, in {{definitionLanguage}}, e.g. person, number, gender, ' +
+    'tense, mood, case or definiteness; [] when it is the dictionary form]';
+
+/** Default instruction for the card's "transliteration" key (the "Prompt da transliteração"). */
+export const TRANSLITERATION_PROMPT = 'the word exactly as written in the context, transliterated into Latin letters';
+
+/** Languages written in a script other than Latin, whose card gets a transliteration. Chinese and
+ * Japanese have their reading instead. */
+const TRANSLITERATED = new Set(['ar', 'fa', 'ur', 'ps', 'he', 'yi', 'ru', 'uk', 'be', 'bg', 'mk', 'sr', 'kk', 'ky', 'mn', 'tg',
+    'el', 'ko', 'th', 'lo', 'km', 'my', 'hi', 'mr', 'ne', 'bn', 'pa', 'gu', 'ta', 'te', 'kn', 'ml', 'si', 'ka', 'hy', 'am']);
 
 /** {{readingSystem}}: the languages with a reading, and how it is written. */
 const READING_SYSTEMS = {
@@ -122,12 +140,13 @@ export function fillLanguages(template, settings) {
 /**
  * The word-card prompt as sent. {{translationField}} becomes the "translation" key with the word
  * translation prompt, or nothing when the word translation is turned off, so the model spends no
- * tokens on it. Likewise {{readingField}} gets the reading prompt only in Chinese and Japanese, and
- * {{componentsField}} the components prompt only when they are switched on; their variables follow
+ * tokens on it. Likewise {{readingField}} gets the reading prompt only in Chinese and Japanese,
+ * {{componentsField}} the components prompt only when they are switched on, and {{formField}} the
+ * form prompt, plus the transliteration prompt in a script other than Latin; their variables follow
  * the OCR language. A card prompt without a marker is sent as written.
  * @param {string} template
  * @param {{showWordTranslation?: boolean, ocrLanguage?: string}} settings
- * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, cardComponents?: boolean}} [ai]
+ * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, cardComponents?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
     const field = settings.showWordTranslation === false ? '' : `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}`;
@@ -137,10 +156,13 @@ export function cardPrompt(template, settings, ai = {}) {
     const components = ai.cardComponents === false ? '' : `, "components": ${promptOr(ai.componentsPrompt, COMPONENTS_PROMPT)
         .replaceAll('{{componentParts}}', COMPONENT_PARTS[language] || OTHER_PARTS)
         .replaceAll('{{componentReading}}', COMPONENT_READINGS[language] || '')}`;
+    const form = `, "form": ${promptOr(ai.formPrompt, FORM_PROMPT)}` +
+        (TRANSLITERATED.has(language) ? `, "transliteration": ${promptOr(ai.transliterationPrompt, TRANSLITERATION_PROMPT)}` : '');
     return fillLanguages(template
         .replaceAll(TRANSLATION_FIELD, field)
         .replaceAll(READING_FIELD, reading)
-        .replaceAll(COMPONENTS_FIELD, components), settings);
+        .replaceAll(COMPONENTS_FIELD, components)
+        .replaceAll(FORM_FIELD, form), settings);
 }
 
 /** The components of a reply: objects with a part, its reading or hanja and its meaning. */
@@ -172,6 +194,8 @@ export function parseCard(text) {
             definition: String(obj.definition || ''),
             translation: String(obj.translation || ''),
             reading: String(obj.reading || ''),
+            transliteration: String(obj.transliteration || ''),
+            form: list(obj.form),
             synonyms: list(obj.synonyms),
             components: componentList(obj.components),
         };
@@ -220,7 +244,7 @@ export function parseCardProgress(text) {
     for (const filler of ['', 'null', ':null']) {
         const card = parseCard(prefix + filler + suffix);
         if (card && (card.headword || card.ipa || card.cefr || card.definition || card.translation || card.reading ||
-            card.partOfSpeech.length || card.labels.length || card.synonyms.length || card.components.length)) { return card; }
+            card.transliteration || card.form.length || card.partOfSpeech.length || card.labels.length || card.synonyms.length || card.components.length)) { return card; }
     }
     return null;
 }

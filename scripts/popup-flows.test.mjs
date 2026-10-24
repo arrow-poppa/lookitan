@@ -235,6 +235,34 @@ test('synonyms are asked in every language, the reading only in Chinese and Japa
     assert(prompts[4].includes(', "reading": my reading in pinyin with tone marks'), 'the reading prompt is the user\'s');
 });
 
+test('the card asks every language for the form on screen, and scripts other than Latin for its transliteration', async () => {
+    const answer = '{"headword":"باض","ipa":"baːdˤa","transliteration":"fa-bāḍat","form":["3rd person singular","feminine","past tense"],' +
+        '"partOfSpeech":["verb"],"definition":"to lay eggs"}';
+    const prompts = [];
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => { prompts.push(request.prompt); return answer; }});
+    view.ai.cardPrompt = CARD_PROMPT;
+    view.settings.ocrLanguage = 'ar-SA';
+    const body = new Element();
+    await view.popup.runCard(body);
+    assert(prompts[0].includes('"form"') && prompts[0].includes('"transliteration"'));
+    assert(!/\{\{\w+Field\}\}/.test(prompts[0]), 'every marker is filled');
+    assert(body.innerHTML.includes('<span class="translit">fa-bāḍat</span>'));
+    const chips = body.innerHTML.indexOf('3rd person singular');
+    assert(chips > 0 && chips < body.innerHTML.indexOf('>verb<'), 'the features come before the part of speech');
+    assert(body.innerHTML.includes('<div class="hw" dir="rtl">') && body.innerHTML.includes('<div class="chips" dir="rtl">'),
+        'an Arabic word heads a right-to-left row, as in Lookupper');
+    view.settings.ocrLanguage = 'en-US';
+    const en = new Element();
+    await view.popup.runCard(en);
+    const last = prompts[prompts.length - 1];
+    assert(last.includes('"form"') && !last.includes('"transliteration"'), 'Latin script: no transliteration');
+    view.ai.formPrompt = 'my form';
+    view.ai.transliterationPrompt = 'my letters';
+    view.settings.ocrLanguage = 'ru-RU';
+    await view.popup.runCard(new Element());
+    assert(prompts[prompts.length - 1].includes(', "form": my form, "transliteration": my letters'), "the user's prompts are sent");
+});
+
 test('the popup grows from the word like a TeachingTip and a new lookup cancels a pending close', async () => {
     const view = await fixture({explain: async () => '{}'});
     const card = view.document.getElementById('card');
