@@ -108,6 +108,20 @@ impl Arabic {
             .map(|(i, _)| i)
     }
 
+    /// A piece of a word between spaces or punctuation, trimmed as words.rs trims a word (no
+    /// punctuation or stray mark at its ends), then cut if it is two words.
+    fn piece(&self, chars: &[char], mut start: usize, mut end: usize, out: &mut Vec<Word>) {
+        while start < end && !is_letter(chars[start]) {
+            start += 1;
+        }
+        while end > start && !is_letter(chars[end - 1]) {
+            end -= 1;
+        }
+        if start < end {
+            self.split(chars, start, end, out);
+        }
+    }
+
     /// The words of the run `chars[start..end]` (trimmed already): one, or two when it is cut.
     fn split(&self, chars: &[char], start: usize, end: usize, out: &mut Vec<Word>) {
         let word = |start, end| Word { start, end, kind: Kind::Word, lemmas: Vec::new() };
@@ -143,18 +157,18 @@ impl Segment for Arabic {
             while i < chars.len() && !chars[i].is_whitespace() {
                 i += 1;
             }
-            // Trimmed as words.rs trims a word: no punctuation or stray mark at its ends.
-            let (mut a, mut b) = (start, i);
-            while a < b && !is_letter(chars[a]) {
-                a += 1;
-            }
-            while b > a && !is_letter(chars[b - 1]) {
-                b -= 1;
-            }
-            if a == b {
+            if !(start..i).any(|k| is_letter(chars[k])) {
                 out.push(Word { start, end: i, kind: Kind::Punct, lemmas: Vec::new() });
-            } else {
-                self.split(&chars, a, b, &mut out);
+                continue;
+            }
+            // A comma or full stop the recognizer read without the space after it ("الطيور،فلبت")
+            // ends a word too, as in words.rs's pieces.
+            let mut from = start;
+            for k in start..=i {
+                if k == i || breaks(chars[k]) {
+                    self.piece(&chars, from, k, &mut out);
+                    from = k + 1;
+                }
             }
         }
         out
@@ -163,6 +177,11 @@ impl Segment for Arabic {
     fn handles(&self, c: char) -> bool {
         is_arabic_letter(c)
     }
+}
+
+/// Punctuation that ends a word even with no space after it.
+fn breaks(c: char) -> bool {
+    matches!(c, '،' | '؛' | '؟' | '.' | ',' | ';' | ':' | '!' | '?' | '«' | '»' | '(' | ')' | '"' | '۔')
 }
 
 fn is_mark(c: char) -> bool {
@@ -226,6 +245,7 @@ mod tests {
         let s = splitter();
         assert_eq!(texts(&s, "جماعةالضفادع"), ["جماعة", "الضفادع"]);
         assert_eq!(texts(&s, "داسالعش، الفيل"), ["داس", "العش", "الفيل"], "punctuation is left out");
+        assert_eq!(texts(&s, "الفيل،جماعة ، داس"), ["الفيل", "جماعة", "،", "داس"], "a comma with no space after it ends a word");
         // The most frequent halves win; a form seen under 500 times counts as unseen there.
         assert_eq!(texts(&s, "فيلايقترب"), ["فيلا", "يقترب"]);
     }
@@ -264,6 +284,8 @@ mod tests {
             ("وتوسلتإليه", ["وتوسلت", "إليه"]), ("داسالعش", ["داس", "العش"]), ("أمرهاالى", ["أمرها", "الى"]),
             ("جماعةالضفادع", ["جماعة", "الضفادع"]), ("اليهاأن", ["اليها", "أن"]), ("وادعميق", ["واد", "عميق"]),
             ("فيلايقترب", ["فيلا", "يقترب"]), ("نقيقاعاليا", ["نقيقا", "عاليا"]), ("القبرةوالفيل", ["القبرة", "والفيل"]),
+            // Read at the screen's own size (2026-10-24).
+            ("فيهوفي", ["فيه", "وفي"]),
         ] {
             assert_eq!(texts(&s, run), cut, "{run}");
         }
