@@ -145,6 +145,22 @@ test('Configurações chooses a settings profile above the recognition language,
     assert.equal(nameRow?.hidden, true, 'the name row starts folded under "Perfil"');
 });
 
+test('"Novo perfil" asks for the name and makes one profile, however often Criar is clicked', async () => {
+    const fixture = await settingsFixture({settingsProfiles: [], activeSettingsProfile: ''});
+    await fixture.finish();
+    const all = descendants(fixture.root);
+    const button = (label) => all.find((node) => node.tagName === 'button' && (node.attributes.html || node.innerHTML || node.textContent || '').includes(label));
+    button('Novo perfil').dispatch('click');
+    assert.deepEqual(fixture.calls.filter((c) => c.startsWith('create')), [], 'nothing is made before the name');
+    const field = all.find((node) => node.attributes?.['aria-label'] === 'Nome do novo perfil');
+    assert.equal(field.parentNode?.hidden ?? false, false, 'the name field is shown');
+    field.value = 'Japonês';
+    button('Criar').dispatch('click');
+    button('Criar').dispatch('click');
+    await new Promise((done) => setTimeout(done, 0));
+    assert.deepEqual(fixture.calls.filter((c) => c.startsWith('create') || c === 'reload'), ['create Japonês', 'reload']);
+});
+
 async function dictionaryFixture(overrides = {}) {
     const view = dom();
     view.add('add-dict');

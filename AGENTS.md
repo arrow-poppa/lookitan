@@ -344,6 +344,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-24 (Claude, `tests`): Configurações › Perfil: "Novo perfil" no longer makes a profile at once; it shows a name field with "Criar" (or Enter) and "Cancelar" (or Esc), and "Criar" is disabled while the profile is made, so a second click cannot make another before the window reloads. The profile in use is renamed when its field is left or Enter is pressed (not on every key), and the picker shows the new name at once.
+
 - 2026-10-24 (Claude, `tests`): at the user's request the detector runs in one pass over the whole capture, as Lookupper, instead of 512 px bands (`detect_image`; `merge_band_boxes` and `quad::merged` are gone). With bands, vertical Chinese 430 px long was cut at a seam: the band above saw only the first character of each column, four in a row read as a horizontal line (卷風秋晚 → 春卧秋). The peak memory of one detection is higher (one 1952 × 1120 tensor at most on the GPU, 1280 on the CPU).
 
 - 2026-10-24 (Claude, `tests`): Configurações › Perfil is one row again: the name and "Apagar" of the profile in use fold under it with the usual chevron (`collapser('settingsProfile', …)`, folded by default; `collapser` got a `startCollapsed` argument).

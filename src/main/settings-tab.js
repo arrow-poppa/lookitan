@@ -515,9 +515,38 @@ function profileRows() {
     choose.id = 'settings-profile';
     choose.setAttribute('aria-label', 'Perfil');
     const add = el('button', {type: 'button', html: `${icon('plus', 'sm')}Novo perfil`});
-    add.addEventListener('click', () => switchProfile(() => api.createSettingsProfile(`Perfil ${profiles.length + 1}`)));
+    // "Novo perfil" asks for the name first; the profile is made only with "Criar" (or Enter).
+    const newName = textInput('', () => {}, {placeholder: 'Nome do novo perfil'});
+    newName.setAttribute('aria-label', 'Nome do novo perfil');
+    const create = el('button', {type: 'button', html: `${icon('plus', 'sm')}Criar`});
+    const cancel = el('button', {type: 'button', class: 'ghost'}, 'Cancelar');
+    const creating = el('div', {class: 'profile-controls', hidden: true}, newName, create, cancel);
+    const showCreating = (on) => {
+        creating.hidden = !on;
+        choose.hidden = on;
+        add.hidden = on;
+        if (on) { newName.value = ''; newName.focus?.(); }
+    };
+    add.addEventListener('click', () => showCreating(true));
+    cancel.addEventListener('click', () => showCreating(false));
+    const createProfile = () => {
+        if (create.disabled) { return; }
+        // One profile per click: the window reloads once it is made.
+        create.disabled = true;
+        cancel.disabled = true;
+        const name = newName.value.trim() || `Perfil ${profiles.length + 1}`;
+        void switchProfile(() => api.createSettingsProfile(name)).finally(() => {
+            create.disabled = false;
+            cancel.disabled = false;
+        });
+    };
+    create.addEventListener('click', createProfile);
+    newName.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { createProfile(); }
+        if (e.key === 'Escape') { showCreating(false); }
+    });
     const changed = active ? Object.keys(active.overrides || {}).length : 0;
-    const controls = el('div', {class: 'profile-controls'}, choose, add);
+    const controls = el('div', {class: 'profile-controls'}, choose, add, creating);
     const head = cardRow({icon: 'settings', title: 'Perfil', wide: true,
         desc: active
             ? `Tudo o que você mudar no app (menos as palavras salvas) fica só neste perfil; o resto continua vindo do Global.${changed ? '' : ' Por enquanto ele está igual ao Global.'}`
@@ -525,8 +554,20 @@ function profileRows() {
         control: controls});
     if (!active) { return [head]; }
     // The name and "Apagar" of the profile in use fold under the "Perfil" row.
-    const name = textInput(active.name, (v) => { if (v.trim()) { active.name = v.trim(); save(); } });
+    // Renamed when the field is left or Enter is pressed, not on every key.
+    const name = textInput(active.name, () => {});
     name.setAttribute('aria-label', 'Nome do perfil');
+    const rename = () => {
+        const v = name.value.trim();
+        if (!v) { name.value = active.name; return; }
+        if (v === active.name) { return; }
+        active.name = v;
+        const option = [...(choose.options || choose.children || [])].find((o) => o.value === active.id);
+        if (option) { option.textContent = v; }
+        save();
+    };
+    name.addEventListener('change', rename);
+    name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { name.blur(); } });
     const remove = el('button', {type: 'button', html: `${icon('trash', 'sm')}Apagar`});
     remove.addEventListener('click', async () => {
         if (!await ask(`Apagar o perfil "${active.name}"? O app volta a usar o Global.`, {title: 'Apagar perfil', kind: 'warning', okLabel: 'Apagar', cancelLabel: 'Cancelar'})) { return; }
