@@ -266,9 +266,12 @@ function translitHtml(transliteration) {
     return transliteration ? `<span class="translit">${escapeHtml(transliteration)}</span>` : '';
 }
 
-/** What the AI corrected in the word the OCR read ("進 → 盡"). */
+/** What the AI corrected in the word the OCR read ("進 → 盡"), read left to right: each word is
+ * isolated, so an Arabic pair keeps its order around the arrow. */
 function ocrFixHtml(fix) {
-    return fix ? `<span class="chip ocr-fix" title="O OCR leu a palavra de outro jeito; o card explica a palavra corrigida pelo contexto">OCR: ${escapeHtml(fix)}</span>` : '';
+    if (!fix) { return ''; }
+    const words = String(fix).split('→').map((w) => `<bdi>${escapeHtml(w.trim())}</bdi>`).join(' → ');
+    return `<span class="chip ocr-fix" dir="ltr" title="O OCR leu a palavra de outro jeito; o card explica a palavra corrigida pelo contexto">OCR: ${words}</span>`;
 }
 
 /** The card's synonyms and components, as the pop-up and the saved cards show them. */

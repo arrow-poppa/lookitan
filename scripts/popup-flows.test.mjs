@@ -247,7 +247,8 @@ test('the card asks every language for the form on screen, and scripts other tha
     assert(prompts[0].includes('"form"') && prompts[0].includes('"transliteration"'));
     assert(!/\{\{\w+Field\}\}/.test(prompts[0]), 'every marker is filled');
     assert(body.innerHTML.includes('<span class="translit">fa-bāḍat</span>'));
-    assert(body.innerHTML.includes('OCR: فاضت → فباضت'), 'what the AI corrected from the OCR is shown');
+    assert(body.innerHTML.includes('dir="ltr"') && body.innerHTML.includes('OCR: <bdi>فاضت</bdi> → <bdi>فباضت</bdi>'),
+        'what the AI corrected from the OCR is shown, read left to right');
     const chips = body.innerHTML.indexOf('3rd person singular');
     assert(chips > 0 && chips < body.innerHTML.indexOf('>verb<'), 'the features come before the part of speech');
     assert(body.innerHTML.includes('<div class="hw" dir="rtl">') && body.innerHTML.includes('<div class="chips" dir="rtl">'),

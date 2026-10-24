@@ -47,7 +47,7 @@ export const MARKERS = [
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
     'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
-    'translation', 'context-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-transliteration', 'ai-form', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
+    'translation', 'context-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-transliteration', 'ai-form', 'ai-ocr-fix', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
 ];
 
 /** Name of the AI word card when it is listed as a dictionary in glossary markers. */
@@ -216,10 +216,24 @@ function componentsPlain(ai) {
     return (ai.components || []).map((c) => `${c.part}${c.reading ? ` (${c.reading})` : ''}: ${c.meaning}`);
 }
 
+/** Right-to-left letters (Hebrew, Arabic and their presentation forms). */
+const RTL_LETTER = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+
+/**
+ * What the AI corrected in the word the OCR read ("حل → حلي"), as HTML: each word isolated, so an
+ * Arabic pair keeps its order around the arrow, read left to right.
+ */
+function ocrFixHtml(fix) {
+    return String(fix || '').split('→').map((w) => `<bdi>${escapeHtml(w.trim())}</bdi>`).join(' → ');
+}
+
 /**
  * The AI word card: headword with its reading (pinyin, kana), the transliteration of the word on
- * screen and IPA, CEFR, grammatical features, part of speech and labels, translation, definition, synonyms, components and the explanation if it was generated. With `dictionaries` (aiCardMode 'dictionaries') the
- * dictionaries' entries follow it. The context is left out: it goes in {sentence}.
+ * screen and IPA, what the AI corrected from the OCR, CEFR, grammatical features, part of speech
+ * and labels, translation, definition, synonyms, components and the explanation if it was
+ * generated. With `dictionaries` (aiCardMode 'dictionaries') the dictionaries' entries follow it.
+ * The context is left out: it goes in {sentence}. Each block takes the direction of its own text,
+ * so an Arabic headword does not turn an English definition right to left.
  */
 function aiCardHtml(headword, ai, explanation, dictionaries = []) {
     const glossary = glossaryHtml(dictionaries);
@@ -229,15 +243,17 @@ function aiCardHtml(headword, ai, explanation, dictionaries = []) {
     if (ai.transliteration) { head.push(`<i>${escapeHtml(ai.transliteration)}</i>`); }
     if (ai.ipa) { head.push(`/${escapeHtml(ai.ipa)}/`); }
     const tags = [ai.cefr, ...(ai.form || []), ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
-    const parts = [`<div>${head.join(' ')}</div>`];
-    if (tags.length) { parts.push(`<div><i>${tags.map(escapeHtml).join(', ')}</i></div>`); }
-    if (ai.translation) { parts.push(`<div>${escapeHtml(ai.translation)}</div>`); }
-    if (ai.definition) { parts.push(`<div>${escapeHtml(ai.definition)}</div>`); }
-    if (ai.synonyms?.length) { parts.push(`<div><i>${ai.synonyms.map(escapeHtml).join(', ')}</i></div>`); }
-    if (ai.components?.length) { parts.push(`<div>${componentsHtml(ai)}</div>`); }
-    if (explanation) { parts.push(`<div>${renderMarkdown(explanation)}</div>`); }
+    const block = (html) => `<div dir="auto">${html}</div>`;
+    const parts = [block(head.join(' '))];
+    if (ai.ocrFix) { parts.push(`<div dir="ltr"><i>OCR: ${ocrFixHtml(ai.ocrFix)}</i></div>`); }
+    if (tags.length) { parts.push(block(`<i>${tags.map(escapeHtml).join(', ')}</i>`)); }
+    if (ai.translation) { parts.push(block(escapeHtml(ai.translation))); }
+    if (ai.definition) { parts.push(block(escapeHtml(ai.definition))); }
+    if (ai.synonyms?.length) { parts.push(block(`<i>${ai.synonyms.map(escapeHtml).join(', ')}</i>`)); }
+    if (ai.components?.length) { parts.push(block(componentsHtml(ai))); }
+    if (explanation) { parts.push(block(renderMarkdown(explanation))); }
     if (glossary) { parts.push(`<hr>${glossary}`); }
-    return `<div style="text-align: left;">${parts.join('')}</div>`;
+    return `<div style="text-align: start;">${parts.join('')}</div>`;
 }
 
 function aiCardPlain(headword, ai, explanation, dictionaries = []) {
@@ -245,13 +261,18 @@ function aiCardPlain(headword, ai, explanation, dictionaries = []) {
     if (!ai.definition && !ai.translation && !explanation) { return glossary; }
     const tags = [ai.cefr, ...(ai.form || []), ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
     const lines = [[headword, ai.reading, ai.transliteration, ai.ipa && `/${ai.ipa}/`].filter(Boolean).join(' ')];
+    if (ai.ocrFix) { lines.push(`OCR: ${ai.ocrFix}`); }
     if (tags.length) { lines.push(`(${tags.join(', ')})`); }
     if (ai.translation) { lines.push(ai.translation); }
     if (ai.definition) { lines.push(ai.definition); }
     if (ai.synonyms?.length) { lines.push(ai.synonyms.join(', ')); }
     lines.push(...componentsPlain(ai));
     if (explanation) { lines.push(markdownToText(explanation)); }
-    const text = escapeHtml(lines.join('\n')).replace(/\n/g, '<br>');
+    // With right-to-left text each line is isolated, so it keeps the direction of its own text.
+    const rtl = lines.some((l) => RTL_LETTER.test(l));
+    const html = (line) => (line.startsWith('OCR: ') ? `<bdi>OCR: ${ocrFixHtml(line.slice(5))}</bdi>` : escapeHtml(line));
+    const text = rtl ? lines.map((l) => `<bdi>${html(l)}</bdi>`.replace(/\n/g, '<br>')).join('<br>')
+        : escapeHtml(lines.join('\n')).replace(/\n/g, '<br>');
     return glossary ? `${text}<br>${glossary}` : text;
 }
 
@@ -269,7 +290,7 @@ function cloze(sentence, word) {
  * @property {string} [sentence]
  * @property {string} [context] The paragraph around the word, used when contextMode is 'paragraph'.
  * @property {{name: string, html: string}[]} [glossaries]
- * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string, reading?: string, transliteration?: string, form?: string[], synonyms?: string[], components?: {part: string, reading: string, meaning: string}[]}} [aiCard]
+ * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string, reading?: string, transliteration?: string, form?: string[], ocrFix?: string, synonyms?: string[], components?: {part: string, reading: string, meaning: string}[]}} [aiCard]
  * @property {string} [aiExplanation]
  * @property {string} [contextTranslation]
  * @property {() => Promise<string|null>} [screenshot] Base64 PNG of the capture.
@@ -332,6 +353,7 @@ export async function buildNote(ctx, anki, conn) {
         'ai-reading': escapeHtml(ai.reading || ''),
         'ai-transliteration': escapeHtml(ai.transliteration || ''),
         'ai-form': escapeHtml((ai.form || []).join(', ')),
+        'ai-ocr-fix': ai.ocrFix ? ocrFixHtml(ai.ocrFix) : '',
         'ai-synonyms': escapeHtml((ai.synonyms || []).join(', ')),
         'ai-components': componentsHtml(ai),
         'ai-components-plain': componentsPlain(ai).map(escapeHtml).join('<br>'),

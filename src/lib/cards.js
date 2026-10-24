@@ -60,6 +60,7 @@ export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
             reading: card.reading,
             transliteration: card.transliteration,
             form: card.form,
+            ocrFix: card.ocrFix,
             synonyms: card.synonyms,
             components: card.components,
         },

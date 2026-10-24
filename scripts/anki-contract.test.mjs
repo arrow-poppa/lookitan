@@ -191,11 +191,17 @@ test('the AI card carries the reading, synonyms and components, which also have 
 test('the form on screen and its transliteration go in the AI card, the tags and markers of their own', async () => {
     const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); }, {DOMParser: FakeDOMParser});
     options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
-        A: {value: '{ai-card}'}, B: {value: '{ai-card-plain}'}, C: {value: '{ai-form}'}, D: {value: '{ai-transliteration}'}, E: {value: '{tags}'}}}];
-    const aiCard = {definition: 'to lay eggs', ipa: 'baːdˤa', transliteration: 'fa-bāḍat', form: ['past tense', 'feminine'], partOfSpeech: ['verb'], labels: ['formal']};
+        A: {value: '{ai-card}'}, B: {value: '{ai-card-plain}'}, C: {value: '{ai-form}'}, D: {value: '{ai-transliteration}'}, E: {value: '{tags}'},
+        F: {value: '{ai-ocr-fix}'}}}];
+    const aiCard = {definition: 'to lay eggs', ipa: 'baːdˤa', transliteration: 'fa-bāḍat', form: ['past tense', 'feminine'], partOfSpeech: ['verb'], labels: ['formal'],
+        ocrFix: 'فاضت → فباضت'};
     const f = (await notes.buildNote({word: 'فباضت', headword: 'باض', sentence: 's', aiCard}, options, null)).fields;
-    assert(f.A.includes('<b>باض</b> <i>fa-bāḍat</i> /baːdˤa/') && f.A.includes('<i>past tense, feminine, verb, formal</i>'));
-    assert(f.B.startsWith('باض fa-bāḍat /baːdˤa/<br>(past tense, feminine, verb, formal)'));
+    assert(f.A.includes('<div dir="auto"><b>باض</b> <i>fa-bāḍat</i> /baːdˤa/</div>') && f.A.includes('<div dir="auto"><i>past tense, feminine, verb, formal</i></div>'));
+    assert(f.A.includes('<div dir="auto">to lay eggs</div>'), 'the English definition keeps its own direction under an Arabic headword');
+    assert(f.A.includes('<div dir="ltr"><i>OCR: <bdi>فاضت</bdi> → <bdi>فباضت</bdi></i></div>'), 'the OCR fix is exported, read left to right');
+    assert(f.B.startsWith('<bdi>باض fa-bāḍat /baːdˤa/</bdi><br><bdi><bdi>OCR: <bdi>فاضت</bdi> → <bdi>فباضت</bdi></bdi></bdi><br><bdi>(past tense, feminine, verb, formal)</bdi>'));
+    assert(f.B.includes('<bdi>to lay eggs</bdi>'));
+    assert.equal(f.F, '<bdi>فاضت</bdi> → <bdi>فباضت</bdi>');
     assert.equal(f.C, 'past tense, feminine');
     assert.equal(f.D, 'fa-bāḍat');
     assert.equal(f.E, 'past tense, feminine, formal');
@@ -212,7 +218,7 @@ test('{ai-card} is the AI part alone by default, and also carries the dictionari
     assert(!built.fields.Back.includes('to move') && !built.fields.Plain.includes('to move'), 'only the AI part by default');
     options.aiCardMode = 'dictionaries';
     built = await notes.buildNote(ctx, options, null);
-    assert(built.fields.Back.includes('<div>move fast</div><hr><div style="text-align: left;"><i>(Oxford)</i> <b>to move</b></div>'), built.fields.Back);
+    assert(built.fields.Back.includes('<div dir="auto">move fast</div><hr><div style="text-align: left;"><i>(Oxford)</i> <b>to move</b></div>'), built.fields.Back);
     assert(built.fields.Plain.endsWith('<br>(Oxford) to move'), built.fields.Plain);
     assert(!built.fields.Back.includes('train') && !built.fields.Back.includes('daily'), 'the context stays out either way');
     built = await notes.buildNote({...ctx, aiCard: {}}, options, null);
@@ -258,7 +264,7 @@ test('Yomitan glossary markers: per dictionary, first, no-dictionary, popup sele
     assert.equal(f.G, '<div style="text-align: left;"><ol><li><i>(verb, informal)</i> move fast</li><li><b>to move</b></li><li>correr</li></ol></div>');
     assert.equal(f.H, 'Run means to move fast.<br>• one example');
     assert.equal(f.I, '(IA) move fast');
-    assert(f.J.startsWith('<div style="text-align: left;"><div><b>run</b> /rʌn/</div><div><i>A1, verb, informal</i></div><div>correr</div><div>move fast</div>'), 'the whole AI card');
+    assert(f.J.startsWith('<div style="text-align: start;"><div dir="auto"><b>run</b> /rʌn/</div><div dir="auto"><i>A1, verb, informal</i></div><div dir="auto">correr</div><div dir="auto">move fast</div>'), 'the whole AI card');
     assert(f.J.includes('<strong>Run</strong>'), 'the AI card carries the explanation when it exists');
     assert(!f.J.includes('every day') && !f.K.includes('every day'), 'the context stays out of the AI card; it goes in {sentence}');
     assert.equal(f.K, 'run /rʌn/<br>(A1, verb, informal)<br>correr<br>move fast<br>Run means to move fast.<br>• one example');
