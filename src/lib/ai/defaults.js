@@ -80,6 +80,10 @@ function baseAiOptions() {
         imageOcrFix: true,
         // Bumped when markers are added to the card prompt, so a saved prompt gets them once.
         cardPromptVersion: 3,
+        // Profiles ("Perfil de IA"): each keeps only what it changes from these options. The one
+        // chosen by hand is used for lookups; '' is the global options themselves.
+        aiProfiles: [],
+        activeAiProfile: '',
         // The context translator has its own switch.
         autoTranslateContext: true,
         // Blurs the context translation until it is clicked, like hideWordTranslation.
@@ -158,5 +162,88 @@ export function normalizeAiOptions(stored) {
     out.cardPromptVersion = 3;
     // The Arabic-only OCR note of 2026-10-24 became the OCR errors note of every language.
     delete out.arabicOcrPrompt;
+    out.aiProfiles = (Array.isArray(stored.aiProfiles) ? stored.aiProfiles : [])
+        .filter((p) => isObject(p) && typeof p.id === 'string' && p.id)
+        .map((p) => ({id: p.id, name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : 'Perfil', overrides: isObject(p.overrides) ? p.overrides : {}}));
+    if (!out.aiProfiles.some((p) => p.id === out.activeAiProfile)) { out.activeAiProfile = ''; }
     return out;
+}
+
+/** What a profile does not keep: the profiles themselves, the prompt migration's version and the
+ * pop-up's own switch (meme mode, saved from the pop-up into the global options). */
+const NOT_IN_PROFILE = new Set(['aiProfiles', 'activeAiProfile', 'cardPromptVersion', 'imageMemeMode']);
+
+/** The profile chosen by hand, or null for the global options. */
+export function activeAiProfile(ai) {
+    return (ai?.aiProfiles || []).find((p) => p.id === ai.activeAiProfile) || null;
+}
+
+/** A copy of plain option values (they are JSON). */
+const copy = (value) => (value === undefined ? value : JSON.parse(JSON.stringify(value)));
+
+/** `base` with `over` laid on it, objects merged key by key; neither is changed. */
+function layered(base, over) {
+    const out = copy(base);
+    for (const [key, value] of Object.entries(over || {})) {
+        if (NOT_IN_PROFILE.has(key)) { continue; }
+        out[key] = isObject(value) && isObject(out[key]) ? layered(out[key], value) : copy(value);
+    }
+    return out;
+}
+
+/**
+ * The AI options lookups use: the global options, or, with a profile chosen, the global options
+ * with that profile's changes laid on them. A field the profile leaves alone follows the global
+ * one. With no profile (Global) the options are returned as they are.
+ */
+export function effectiveAi(ai) {
+    const profile = activeAiProfile(ai);
+    if (!profile) { return ai; }
+    const out = normalizeAiOptions(layered(ai, profile.overrides));
+    out.aiProfiles = ai.aiProfiles;
+    out.activeAiProfile = ai.activeAiProfile;
+    return out;
+}
+
+/** What `view` (a profile's options as edited) changes from `base` (the global options), key by
+ * key into objects: the profile's overrides. */
+export function profileOverrides(view, base) {
+    const out = {};
+    for (const [key, value] of Object.entries(view || {})) {
+        if (NOT_IN_PROFILE.has(key)) { continue; }
+        if (isObject(value) && isObject(base?.[key])) {
+            const inner = profileOverrides(value, base[key]);
+            if (Object.keys(inner).length) { out[key] = inner; }
+        } else if (JSON.stringify(value) !== JSON.stringify(base?.[key])) {
+            out[key] = copy(value);
+        }
+    }
+    return out;
+}
+
+/** Whether a profile changes the option at `path` ("openai.model", "sectionProviders.ai-context.systemPrompt"). */
+export function overridesPath(profile, path) {
+    let node = profile?.overrides;
+    for (const key of path.split('.')) {
+        if (!isObject(node) || !(key in node)) { return false; }
+        node = node[key];
+    }
+    return true;
+}
+
+/** Takes the option at `path` out of a profile, so it follows the global options again. */
+export function dropOverride(profile, path) {
+    const keys = path.split('.');
+    const chain = [profile.overrides];
+    for (const key of keys.slice(0, -1)) {
+        const next = chain[chain.length - 1]?.[key];
+        if (!isObject(next)) { return; }
+        chain.push(next);
+    }
+    delete chain[chain.length - 1][keys[keys.length - 1]];
+    // Objects left empty go too.
+    for (let i = chain.length - 1; i > 0; i--) {
+        if (Object.keys(chain[i]).length) { break; }
+        delete chain[i - 1][keys[i - 1]];
+    }
 }

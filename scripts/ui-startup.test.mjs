@@ -131,6 +131,7 @@ async function dictionaryFixture(overrides = {}) {
     const ai = normalizeAiOptions(overrides);
     const settings = {definitionLanguage: 'en-US', translationLanguage: 'pt-BR', hideWordTranslation: false};
     let saves = 0;
+    const hooks = [];
     const ui = await load('src/main/dicts-tab.js', {document: view.document}, {
         '@tauri-apps/plugin-dialog': {open: async () => null, ask: async () => true},
         [file('src/lib/api.js')]: {api: {listDictionaries: async () => [
@@ -139,7 +140,8 @@ async function dictionaryFixture(overrides = {}) {
         ]}, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => 'test answer'},
-        [file('src/main/store.js')]: {store: {settings, ai}, save: () => { saves++; }},
+        [file('src/main/store.js')]: {store: {settings, ai}, onBeforeSave: (hook) => hooks.push(hook),
+            save: () => { for (const hook of hooks) { hook(); } saves++; }},
     });
     await ui.initDictsTab();
     const control = (path) => descendants(root).find((node) => node.attributes['data-setting'] === `ai.${path}`);
@@ -151,6 +153,27 @@ async function dictionaryFixture(overrides = {}) {
     };
     return {view, root, list, ai, settings, control, change, saves: () => saves};
 }
+
+test('an AI profile chosen by hand edits only itself, and Global edits the options as before', async () => {
+    const fixture = await dictionaryFixture({aiProfiles: [{id: 'ja', name: 'Japonês', overrides: {}}], activeAiProfile: 'ja'});
+    const {ai, change, control, root} = fixture;
+    const picker = descendants(root).find((node) => node.attributes['aria-label'] === 'Perfil de IA');
+    assert(picker, 'the profile bar is shown');
+    assert(descendants(root).some((node) => node.textContent === 'do Global'), 'untouched options say they come from Global');
+    const before = ai.cardPrompt;
+    change('cardPrompt', 'Japanese card {{target}}', 'input');
+    assert.equal(ai.cardPrompt, before, 'the global card prompt is left alone');
+    assert.equal(ai.aiProfiles[0].overrides.cardPrompt, 'Japanese card {{target}}');
+    assert.equal(control('cardPrompt').value, 'Japanese card {{target}}');
+    picker.value = '';
+    picker.dispatch('change');
+    assert.equal(ai.activeAiProfile, '');
+    assert.equal(control('cardPrompt').value, before, 'Global shows the global options');
+    change('cardPrompt', 'Global card {{target}}', 'input');
+    assert.equal(ai.cardPrompt, 'Global card {{target}}', 'in Global an edit changes the options, as before profiles');
+    assert.equal(ai.aiProfiles[0].overrides.cardPrompt, 'Japanese card {{target}}');
+    assert(!descendants(root).some((node) => node.textContent === 'do Global'), 'no marks in Global');
+});
 
 test('every BYOK provider option remains reachable when switching AI providers', async () => {
     const fixture = await dictionaryFixture();
@@ -271,7 +294,7 @@ test('the pop-up order is changed by dragging a row or with Alt+arrows, without 
         }, escapeHtml: String},
         [file('src/lib/icons.js')]: {icon: () => ''},
         [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => ''},
-        [file('src/main/store.js')]: {store: {settings: {definitionLanguage: 'en-US', translationLanguage: 'pt-BR'}, ai: normalizeAiOptions({})}, save: () => {}},
+        [file('src/main/store.js')]: {store: {settings: {definitionLanguage: 'en-US', translationLanguage: 'pt-BR'}, ai: normalizeAiOptions({})}, save: () => {}, onBeforeSave: () => {}},
     });
     await ui.initDictsTab();
     // Rows whose middles are at 20, 60 and 100 px.

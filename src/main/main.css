@@ -79,6 +79,13 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .card-row .ctl .capture-size input { min-width: 110px; width: 110px; }
 .card-row.stack { flex-direction: column; align-items: stretch; }
 .card-row.stack .head { display: flex; align-items: center; gap: 16px; }
+/* "Perfil de IA": the profile chosen by hand, and each option's origin in it. */
+.profile-bar { margin-bottom: 12px; }
+.profile-controls { display: flex; align-items: center; gap: 8px; }
+.profile-controls select, .profile-controls input { flex: 1; min-width: 0; }
+.profile-mark { font-size: 11.5px; padding: 1px 8px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+.profile-mark.inherited { color: var(--muted); border: 1px solid var(--border); }
+button.profile-mark { color: var(--accent, var(--text)); border: 1px solid currentColor; min-height: 0; }
 .sub { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 2px 40px; }
 .sub label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 

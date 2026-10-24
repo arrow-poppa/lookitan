@@ -3,12 +3,12 @@
 
 import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
-import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
+import {DEFAULT_PROMPT, activeAiProfile, aiOptionsFor, dropOverride, effectiveAi, overridesPath, profileOverrides} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
 import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, FORM_PROMPT, IMAGE_OCR_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
 import {icon} from '../lib/icons.js';
-import {store, save} from './store.js';
+import {onBeforeSave, store, save} from './store.js';
 import {cardRow, dropIndex, el, languageOptions, select, sortableRow, textArea, textInput, toggle} from './ui.js';
 
 let dicts = [];
@@ -125,9 +125,12 @@ function renderDetail() {
         root.append(el('div', {class: 'empty', html: `${icon('book', 'lg')}<strong>Nenhum dicionário</strong>Adicione um dicionário local ou um arquivo ZIP.`}));
         return;
     }
-    if (d.id === 'ai-word') { renderAiWord(root); return; }
-    if (d.id === 'ai-context') { renderAiContext(root); return; }
-    if (d.id === 'ai-images') { renderAiImages(root); return; }
+    const ai = {'ai-word': renderAiWord, 'ai-context': renderAiContext, 'ai-images': renderAiImages}[d.id];
+    if (ai) {
+        ai(root);
+        markProfileFields(root);
+        return;
+    }
     renderMdict(root, d);
 }
 
@@ -178,12 +181,110 @@ function aiControl(path, label, control) {
     return control;
 }
 
+// ------------------------------------------------------------------ AI profiles
+
+/** With a profile chosen, the AI tabs edit a copy of its options (the global ones with its
+ * changes); before each save, what the copy changes from the global options becomes the profile's
+ * changes. With Global chosen they edit the global options, as before profiles. */
+let profileView = null;
+
+/** The AI options the AI tabs show and change. */
+function aiEdit() {
+    const profile = activeAiProfile(store.ai);
+    if (!profile) { profileView = null; return store.ai; }
+    if (profileView?.activeAiProfile !== profile.id) { profileView = effectiveAi(store.ai); }
+    return profileView;
+}
+
+onBeforeSave(() => {
+    const profile = activeAiProfile(store.ai);
+    if (profile && profileView?.activeAiProfile === profile.id) {
+        profile.overrides = profileOverrides(profileView, store.ai);
+    }
+});
+
+/** Chooses a profile (or Global, '') for the lookups and the AI tabs. */
+function chooseProfile(id) {
+    store.ai.activeAiProfile = id;
+    profileView = null;
+    save();
+    renderDetail();
+}
+
+/** "Perfil de IA": which options the lookups use and these tabs change, chosen by hand. */
+function profileBar() {
+    const profiles = store.ai.aiProfiles;
+    const profile = activeAiProfile(store.ai);
+    const choose = select([{value: '', label: 'Global'}, ...profiles.map((p) => ({value: p.id, label: p.name}))],
+        store.ai.activeAiProfile, chooseProfile);
+    choose.setAttribute('aria-label', 'Perfil de IA');
+    const add = el('button', {html: `${icon('plus', 'sm')}Novo perfil`});
+    add.addEventListener('click', () => {
+        const id = `p${Date.now().toString(36)}`;
+        profiles.push({id, name: `Perfil ${profiles.length + 1}`, overrides: {}});
+        chooseProfile(id);
+    });
+    const rows = [cardRow({icon: 'settings', title: 'Perfil de IA', wide: true,
+        desc: profile
+            ? 'As consultas usam este perfil. O que você mudar nestas abas de IA fica só nele; o resto continua vindo do Global, marcado "do Global".'
+            : 'As consultas usam as configurações globais, como sempre. Num perfil (por exemplo, um para japonês com prompts próprios), o que você mudar fica só nele e o resto vem do Global.',
+        control: el('div', {class: 'profile-controls'}, choose, add)})];
+    if (profile) {
+        const name = textInput(profile.name, (v) => { profile.name = v.trim() || profile.name; save(); });
+        name.setAttribute('aria-label', 'Nome do perfil');
+        name.addEventListener('change', () => renderDetail());
+        const remove = el('button', {html: `${icon('trash', 'sm')}Apagar perfil`});
+        remove.addEventListener('click', async () => {
+            if (!await ask(`Apagar o perfil "${profile.name}"? As consultas voltam a usar o Global.`, {title: 'Apagar perfil', kind: 'warning', okLabel: 'Apagar', cancelLabel: 'Cancelar'})) { return; }
+            store.ai.aiProfiles = profiles.filter((p) => p !== profile);
+            chooseProfile('');
+        });
+        rows.push(cardRow({icon: 'list', title: 'Nome do perfil', wide: true, control: el('div', {class: 'profile-controls'}, name, remove)}));
+    }
+    return el('div', {class: 'group profile-bar'}, ...rows);
+}
+
+/** In a profile, marks each AI option of `root` as following the global options ("do Global") or
+ * changed in the profile, with a button that makes it follow the global options again. */
+function markProfileFields(root) {
+    const profile = activeAiProfile(store.ai);
+    if (!profile) { return; }
+    const mark = (row, path) => {
+        const title = row.querySelector('.t');
+        if (!title) { return; }
+        if (overridesPath(profile, path)) {
+            const back = el('button', {class: 'ghost profile-mark', type: 'button', title: 'Voltar a usar o valor do Global'}, 'Deste perfil · usar do Global');
+            back.addEventListener('click', () => {
+                dropOverride(profile, path);
+                profileView = null;
+                save();
+                renderDetail();
+            });
+            title.append(back);
+        } else {
+            title.append(el('span', {class: 'profile-mark inherited'}, 'do Global'));
+        }
+    };
+    // The first AI option of each row marks the row.
+    const marked = new Set();
+    const visit = (node, row) => {
+        const here = String(node.className || '').split(' ').includes('card-row') ? node : row;
+        const setting = typeof node.getAttribute === 'function' ? node.getAttribute('data-setting') : node.attributes?.['data-setting'];
+        if (here && typeof setting === 'string' && setting.startsWith('ai.') && !marked.has(here)) {
+            marked.add(here);
+            mark(here, setting.slice(3));
+        }
+        for (const child of Array.from(node.children || [])) { visit(child, here); }
+    };
+    visit(root, null);
+}
+
 /**
  * The AI provider fields of one AI dictionary. "IA — palavra no contexto" keeps its own at the top
  * of the AI options; the context translator and the pictures keep theirs in
  * `ai.sectionProviders[<id>]` (see aiOptionsFor), so each tab changes only its own section.
  */
-function providerSection(ai = store.ai, prefix = '') {
+function providerSection(ai = aiEdit(), prefix = '') {
     const ctl = (path, label, control) => aiControl(`${prefix}${path}`, label, control);
     const cfg = () => ai[ai.provider];
     const wrap = el('div', {class: 'group'});
@@ -289,9 +390,9 @@ function testButton(dictId = 'ai-word', promptKey = 'customPrompt') {
         out.className = 'muted';
         out.textContent = 'Testando…';
         try {
-            const text = await explain(aiOptionsFor(store.ai, dictId), 'serendipity', 'Finding that old book in the attic was pure serendipity.', {
+            const text = await explain(aiOptionsFor(aiEdit(), dictId), 'serendipity', 'Finding that old book in the attic was pure serendipity.', {
                 signal: new AbortController().signal,
-                prompt: fillLanguages(store.ai[promptKey], store.settings),
+                prompt: fillLanguages(aiEdit()[promptKey], store.settings),
                 onChunk: (_d, full) => { out.textContent = full.slice(0, 200); },
             });
             out.className = 'ok';
@@ -305,12 +406,13 @@ function testButton(dictId = 'ai-word', promptKey = 'customPrompt') {
 }
 
 function renderAiWord(root) {
-    const ai = store.ai;
+    const ai = aiEdit();
     const s = store.settings;
     const vars = escapeHtml('{{target}} (palavra), {{sentence}} (o parágrafo em volta da palavra), {{definitionLanguage}}, {{translationLanguage}}, {{explanationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-word']),
         el('p', {class: 'lead'}, 'Explica a palavra no sentido exato em que aparece na tela, com forma de dicionário, IPA, nível CEFR, classe gramatical, os traços da forma na tela (pessoa, gênero, tempo verbal…), definição, tradução e sinônimos, a leitura em pinyin ou kana no chinês e no japonês, a transliteração nas escritas não latinas (árabe, russo, grego, coreano…) e, se quiser, os componentes da palavra. Usa o seu provedor e o seu modelo (BYOK); nada passa por servidores do Lookitan.'),
+        profileBar(),
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             ...languageRows(),
@@ -346,12 +448,13 @@ function renderAiWord(root) {
 }
 
 function renderAiContext(root) {
-    const ai = store.ai;
+    const ai = aiEdit();
     const own = ai.sectionProviders['ai-context'];
     const vars = escapeHtml('{{target}}, {{sentence}} (só a frase da palavra), {{translationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-context']),
         el('p', {class: 'lead'}, 'Traduz a frase em volta da palavra e destaca a tradução da palavra.'),
+        profileBar(),
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             languageRows()[1],
@@ -383,9 +486,9 @@ function imageTestButton() {
         const word = 'serendipity';
         try {
             let query = word;
-            if (store.ai.imageQueryUseAi !== false) {
-                const {system, user} = imagePrompts(store.ai, store.settings);
-                query = cleanQuery(await explain(aiOptionsFor(store.ai, 'ai-images'), word, 'Finding that old book in the attic was pure serendipity.', {
+            if (aiEdit().imageQueryUseAi !== false) {
+                const {system, user} = imagePrompts(aiEdit(), store.settings);
+                query = cleanQuery(await explain(aiOptionsFor(aiEdit(), 'ai-images'), word, 'Finding that old book in the attic was pure serendipity.', {
                     signal: new AbortController().signal, prompt: user, system,
                 }), word);
             }
@@ -401,11 +504,12 @@ function imageTestButton() {
 }
 
 function renderAiImages(root) {
-    const ai = store.ai;
+    const ai = aiEdit();
     const vars = escapeHtml('{{target}} (palavra), {{sentence}} (a frase da palavra), {{wordLanguage}} (idioma do OCR), {{definitionLanguage}}, {{translationLanguage}}, {{explanationLanguage}}');
     root.append(
         el('h2', {}, AI_NAMES['ai-images']),
         el('p', {class: 'lead'}, 'Mostra imagens da palavra no popup, como o Migaku: a IA transforma a palavra num termo de busca em inglês, e o Lookitan procura esse termo no Bing Imagens. Sem IA, busca a palavra como está na tela. Passe o mouse numa imagem e clique na marca do canto para mandá-la ao Anki (marcador {image}); clique na imagem para ampliar.'),
+        profileBar(),
         el('h3', {}, 'Configurações do dicionário'),
         el('div', {class: 'group'},
             cardRow({icon: 'image', title: 'Mostrar imagens automaticamente', desc: 'Desligado: as imagens só aparecem quando você clica em "Mostrar imagens" no popup, como o botão Explicar.',

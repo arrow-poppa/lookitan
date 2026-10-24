@@ -5,7 +5,7 @@
 import {emit, listen} from '@tauri-apps/api/event';
 import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib/api.js';
 import {explain, isConfigured} from '../lib/ai/explain.js';
-import {aiOptionsFor} from '../lib/ai/defaults.js';
+import {aiOptionsFor, effectiveAi} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
@@ -1241,7 +1241,8 @@ async function render(payload) {
     const dictionaries = await api.listDictionaries();
     if (sequence !== renderSequence) { return; }
     settings = all.settings;
-    ai = all.ai;
+    // The AI profile chosen by hand, laid on the global options (Global: as they are).
+    ai = effectiveAi(all.ai);
     anki = all.anki;
     dicts = dictionaries;
     state = {payload, keys: new Set()};
@@ -1563,7 +1564,7 @@ void listen('settings-changed', async () => {
     try {
         const all = await loadAllSettings();
         settings = all.settings;
-        ai = all.ai;
+        ai = effectiveAi(all.ai);
         anki = all.anki;
         // The note type or its fields may have changed.
         modelFieldNames = new Map();
