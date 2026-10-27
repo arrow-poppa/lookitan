@@ -57,23 +57,27 @@ const STRESS_VOWELS = {
 const LATIN_VOWEL = /^[aeiouyAEIOUY]$/u;
 
 /**
- * {{displayField}} for an OCR language: Russian, Ukrainian and Bulgarian are asked for the
- * headword with its own stress marked (not the stress of the form in the text: дома́ → до́м);
- * Latin for macrons on long vowels; '' (no key) in every other language, whose dictionary spelling
- * already has the marks it needs (Greek tonos, Portuguese, Czech or Turkish letters, Arabic marks)
- * or which has its reading (Chinese, Japanese). Fixed text per language, in the cached system
- * message. A reply's display form is used only once `validDisplayHeadword` accepts it.
+ * {{displayField}} for an OCR language: Russian, Ukrainian and Bulgarian are asked for the word as
+ * written in the context with its stress marked ("displaySurface": Шелестят → Шелестя́т), which the
+ * pop-up's title shows, and for the headword with its own stress (not the stress of the form in
+ * the text: дома́ → до́м); Latin for both with macrons on long vowels; '' (no key) in every other
+ * language, whose spelling already has the marks it needs (Greek tonos, Portuguese, Czech or
+ * Turkish letters, Arabic marks) or which has its reading (Chinese, Japanese). Fixed text per
+ * language, in the cached system message. A reply's display forms are used only once
+ * `validDisplaySurface` and `validDisplayHeadword` accept them.
  * @param {string} tag the OCR language
  */
 export function headwordDisplayInstruction(tag) {
     const language = baseLanguage(tag);
     if (STRESS_MARKED.has(language)) {
-        return ', "displayHeadword": the headword with an acute (U+0301) on the vowel of its own stressed syllable, one per word, ' +
-            `e.g. "ма́ма" (its dictionary stress, not that of the form in the text)${language === 'ru' ? '; none on ё, which is always stressed' : ''}; ` +
-            '"" when you are not sure of it';
+        return ', "displaySurface": the word exactly as written in the context, letter for letter, with an acute (U+0301) on the vowel ' +
+            'of its stressed syllable, one per word; "displayHeadword": the headword marked the same way by its own stress, e.g. "ма́ма" ' +
+            `(not the stress of the form in the text)${language === 'ru' ? '; none on ё, which is always stressed' : ''}; ` +
+            '"" for either when you are not sure of it';
     }
     if (LENGTH_MARKED.has(language)) {
-        return ', "displayHeadword": the headword with macrons on its long vowels, e.g. "amīcus"; "" unless you are sure of every vowel\'s length';
+        return ', "displaySurface": the word exactly as written in the context with macrons on its long vowels; ' +
+            '"displayHeadword": the headword likewise, e.g. "amīcus"; "" for either unless you are sure of every vowel\'s length';
     }
     return '';
 }
@@ -89,8 +93,41 @@ export function headwordDisplayInstruction(tag) {
  * @param {string} tag the OCR language
  */
 export function validDisplayHeadword(card, tag) {
-    const headword = String(card?.headword || '').trim().normalize('NFD');
-    const display = String(card?.displayHeadword || '').trim().normalize('NFD');
+    return marked(card?.headword, card?.displayHeadword, tag);
+}
+
+/**
+ * The card's display form of the word on screen (`word`, payload.word) when it may be shown, else
+ * '': `displaySurface` checked as `validDisplayHeadword` checks the headword's, against the word as
+ * the OCR read it, so the title shows that word, its stress marked, and never another form of it.
+ * @param {{displaySurface?: string}|null|undefined} card
+ * @param {string} word
+ * @param {string} tag the OCR language
+ */
+export function validDisplaySurface(card, word, tag) {
+    return marked(word, card?.displaySurface, tag);
+}
+
+/**
+ * Whether two spellings are one word for the reader: the same once the language's display marks
+ * (stress acutes in Russian, Ukrainian and Bulgarian, Latin macrons) and case, by the language's
+ * own rules, are set aside. Every other mark counts.
+ */
+export function sameWord(a, b, tag) {
+    const language = baseLanguage(tag);
+    const mark = STRESS_MARKED.has(language) ? ACUTE : LENGTH_MARKED.has(language) ? MACRON : '';
+    const key = (s) => {
+        const text = String(s || '').trim().normalize('NFD');
+        const plain = (mark ? text.replaceAll(mark, '') : text).normalize('NFC');
+        try { return plain.toLocaleLowerCase(tag || undefined); } catch (_e) { return plain.toLowerCase(); }
+    };
+    return key(a) === key(b);
+}
+
+/** `display` when it is `base` with only the language's display marks added on vowels, NFC; else ''. */
+function marked(baseText, displayText, tag) {
+    const headword = String(baseText || '').trim().normalize('NFD');
+    const display = String(displayText || '').trim().normalize('NFD');
     if (!headword || !display || display === headword) { return ''; }
     const language = baseLanguage(tag);
     const mark = STRESS_MARKED.has(language) ? ACUTE : LENGTH_MARKED.has(language) ? MACRON : '';
@@ -522,7 +559,7 @@ function cedictHas(payload, word) {
  * older build) gets the dictionary forms as the word analyzer's. The line holds {{target}}, so it
  * goes with the word after the cached instructions (see `_splitPrompts`). Empty when there is
  * nothing to add.
- * @param {{word?: string, context?: string, contextAt?: number|null, lineBreak?: number|null, candidates?: string[], analyzer?: string, entries?: {dictName?: string, headword?: string, matched?: string}[]}} payload
+ * @param {{word?: string, context?: string, contextAt?: number|null, lineBreak?: number|null, candidates?: string[], lemmas?: string[], analyzer?: string, entries?: {dictName?: string, headword?: string, matched?: string}[]}} payload
  */
 export function cardHints(payload) {
     const word = String(payload.word || '');
@@ -530,7 +567,8 @@ export function cardHints(payload) {
     const run = ocrRun(payload);
     const candidates = (payload.candidates || []).map(String);
     const own = candidates.indexOf(word);
-    const lemmas = own >= 0 ? candidates.slice(0, own) : [];
+    // `lemmas` since the form on screen leads `candidates`; older payloads had them before it.
+    const lemmas = Array.isArray(payload.lemmas) ? payload.lemmas.map(String) : own >= 0 ? candidates.slice(0, own) : [];
     const forms = [...new Set(lemmas.filter((c) => c && c !== word && c !== run))].slice(0, 3);
     const quoted = (list) => list.map((f) => `"${f}"`).join(', ');
     const hints = [];
@@ -651,8 +689,9 @@ export function parseCard(text) {
         return {
             // NFC, so a decomposed and a precomposed spelling are one (ἀρχή), keeping every mark.
             headword: String(obj.headword || '').normalize('NFC'),
-            // Shown only once `validDisplayHeadword` accepts it for the OCR language.
+            // Shown only once `validDisplayHeadword` / `validDisplaySurface` accept them.
             displayHeadword: String(obj.displayHeadword || '').normalize('NFC'),
+            displaySurface: String(obj.displaySurface || '').normalize('NFC'),
             ipa: String(obj.ipa || '').replace(/^\/+|\/+$/g, ''),
             cefr: String(obj.cefr || '').toUpperCase().trim(),
             partOfSpeech: list(obj.partOfSpeech),

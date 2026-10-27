@@ -23,8 +23,8 @@ test('the display form is asked only where learners\' dictionaries mark what the
     assert.deepEqual(asked.sort(), ['bg-BG', 'la', 'ru-RU', 'uk-UA']);
     for (const tag of ['ru-RU', 'uk-UA', 'bg-BG']) {
         const text = headwordDisplayInstruction(tag);
-        assert(text.startsWith(', "displayHeadword": ') && text.includes('acute (U+0301)') && text.includes('not that of the form in the text') &&
-            text.includes('"" when you are not sure'), tag);
+        assert(text.startsWith(', "displaySurface": the word exactly as written in the context, letter for letter,') && text.includes('"displayHeadword": ') &&
+            text.includes('acute (U+0301)') && text.includes('not the stress of the form in the text') && text.includes('"" for either when you are not sure'), tag);
     }
     assert(headwordDisplayInstruction('ru-RU').includes('none on ё') && !headwordDisplayInstruction('uk-UA').includes('ё'), 'ё is Russian');
     assert(headwordDisplayInstruction('la').includes('macrons on its long vowels') && !headwordDisplayInstruction('la').includes('stress'),
@@ -170,7 +170,7 @@ test('saved words keep the display form apart from the dictionary form; lookups,
     assert.deepEqual(note.clozeAt, [8, 13], 'the cloze is the word in the context, not the display form');
     assert.equal(locateSelection(context, 8, 'дома́', {parts: ['до́м']}), null, 'a display form is no selection');
     const csv = toCsv([saved]).split('\r\n');
-    assert(csv[0].endsWith(',Forma exibida') && csv[1].endsWith(',до́м'), 'a new last column; the others stay where they were');
+    assert(csv[0].endsWith(',Forma de dicionário exibida,Palavra exibida') && csv[1].endsWith(',до́м,'), 'new last columns; the others stay where they were');
     assert(csv[0].startsWith('Palavra,Forma de dicionário,'));
     assert.equal(cardFromLookup({payload: {word: 'house'}, aiCard: parseCard('{"headword":"house","displayHeadword":"hóuse"}')}, {ocrLanguage: 'en-US'}).displayHeadword, '');
 });

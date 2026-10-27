@@ -9,10 +9,13 @@ use crate::segment::Segment;
 #[serde(rename_all = "camelCase")]
 pub struct Pick {
     pub word: String,
-    /// Forms to look up, best first. For a word an analyzer found (segment.rs), its dictionary
-    /// forms, then the word as written; otherwise, for unspaced scripts, prefixes starting at the
-    /// pointer.
+    /// Forms to look up, best first: the word as written first, so each dictionary gives its entry
+    /// for the form on screen when it has one; then, for a word an analyzer found (segment.rs), its
+    /// dictionary forms; then, for unspaced scripts, prefixes starting at the pointer.
     pub candidates: Vec<String>,
+    /// The analyzer's dictionary forms of the word (進めて → 進める), apart from `candidates` so the
+    /// AI's hints name them whatever their place there (word-card.js `cardHints`).
+    pub lemmas: Vec<String>,
     /// The sentence holding the word, cut from its paragraph (context translation and Anki's
     /// {sentence}).
     pub sentence: String,
@@ -436,7 +439,10 @@ fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: 
     let mut candidates: Vec<String> = Vec::new();
     let run: Vec<char> = word.chars().take(MAX_RUN).collect();
     let shorter = run.first().is_some_and(|&c| is_unspaced_script(c));
-    for c in w.lemmas.into_iter().chain([word.clone()]).chain((1..run.len()).rev().filter(|_| shorter).map(|n| run[..n].iter().collect::<String>())) {
+    let lemmas: Vec<String> = w.lemmas.into_iter().filter(|l| *l != word).collect();
+    // The OCR's form first, its dictionary forms as fallbacks (dict::lookup takes, per dictionary,
+    // the first that it has).
+    for c in [word.clone()].into_iter().chain(lemmas.iter().cloned()).chain((1..run.len()).rev().filter(|_| shorter).map(|n| run[..n].iter().collect::<String>())) {
         if !candidates.contains(&c) {
             candidates.push(c);
         }
@@ -445,7 +451,7 @@ fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: 
     let Context { sentence, sentence_lines, context, context_at } = context_in(lines, para, idx, |_| whole);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break, analyzer: seg.name(), x0, y0, x1, y1, vertical: false, angle: 0.0 })
+    Some(Pick { word, candidates, lemmas, sentence, sentence_lines, context, context_at, line_break, analyzer: seg.name(), x0, y0, x1, y1, vertical: false, angle: 0.0 })
 }
 
 /// The word under the pointer, found through `seg` when it reads that word's script.
@@ -558,7 +564,7 @@ fn pick_upright(lines: &[OcrLine], para: &[usize], line_idx: usize, px: f32, py:
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, para, line_idx, span);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break: None, analyzer: "generic", x0, y0, x1, y1, vertical: false, angle: 0.0 })
+    Some(Pick { word, candidates, lemmas: Vec::new(), sentence, sentence_lines, context, context_at, line_break: None, analyzer: "generic", x0, y0, x1, y1, vertical: false, angle: 0.0 })
 }
 
 fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
@@ -1150,7 +1156,8 @@ mod tests {
         // On 強, the word's second character.
         let p = pick(&lines, 155.0, 110.0, Some(&seg)).unwrap();
         assert_eq!(p.word, "勉強しています");
-        assert_eq!(p.candidates[..4], ["勉強する", "勉強", "勉強しています", "勉強していま"]);
+        assert_eq!(p.candidates[..4], ["勉強しています", "勉強する", "勉強", "勉強していま"], "the form on screen first, its lemmas as fallbacks");
+        assert_eq!(p.lemmas, ["勉強する", "勉強"]);
         assert_eq!(p.candidates.last().map(String::as_str), Some("勉"));
         assert_eq!((p.x0, p.x1), (140.0, 210.0), "the box is the word's, not the run past the pointer");
         assert_eq!(p.sentence, "日本語を勉強しています。");
@@ -1210,7 +1217,8 @@ mod tests {
         for (x, y) in [(210.0, 310.0), (180.0, 110.0), (180.0, 130.0)] {
             let p = pick(&lines, x, y, Some(&seg)).unwrap();
             assert_eq!(p.word, "進めて", "from ({x}, {y})");
-            assert_eq!(p.candidates[0], "進める");
+            assert_eq!(p.candidates[..2], ["進めて", "進める"], "進めて is looked up before 進める");
+            assert_eq!(p.lemmas, ["進める"]);
             assert_eq!(p.context, "また行を右から左へと進めて表記を行っていた。", "the columns in reading order");
             assert_eq!(p.context_at, 10, "where 進めて starts, whichever piece is under the pointer");
             assert_eq!(p.line_break, Some(1));

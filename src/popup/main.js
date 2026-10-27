@@ -7,12 +7,12 @@ import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, markSentence, parseCard, parseCardProgress, promptText, splitContextTranslation, validDisplayHeadword} from '../lib/ai/word-card.js';
+import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, markSentence, parseCard, parseCardProgress, promptText, sameWord, splitContextTranslation, validDisplayHeadword, validDisplaySurface} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
-import {cardFromLookup, savedDisplayHeadword} from '../lib/cards.js';
+import {cardFromLookup, savedDisplayHeadword, savedDisplaySurface} from '../lib/cards.js';
 import {clozeRange, locateSelection, selectedSpan} from '../lib/ai/selection.js';
 import {invoke} from '@tauri-apps/api/core';
-import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
+import {audioFile, audioQuery, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile, wordAudio} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
 import {nearest} from '../lib/gamepad-nav.js';
 import {cleanQuery, downloadImage, imagePrompts, imageWord, searchImages, withMemeMode} from '../lib/images.js';
@@ -179,15 +179,22 @@ function bindSentence(body, text) {
 const audioIo = {invoke};
 let playing = null;
 
-function audioWord(term) {
-    return {term, reading: '', language: String(settings.ocrLanguage || 'en').split('-')[0], locale: settings.ocrLanguage || 'en-US'};
-}
-
 /** The recordings of `term` from the configured sources, found once per lookup. */
 function recordings(lookup, term) {
     lookup.audio ||= new Map();
-    if (!lookup.audio.has(term)) { lookup.audio.set(term, findAudio(normalizeAudioOptions(settings.audio), audioWord(term), audioIo)); }
+    if (!lookup.audio.has(term)) { lookup.audio.set(term, findAudio(normalizeAudioOptions(settings.audio), audioQuery(term, settings.ocrLanguage), audioIo)); }
     return lookup.audio.get(term);
+}
+
+/**
+ * The looked-up word's audio, for every way of playing it (the speaker, its buttons and menu,
+ * "Tocar o áudio automaticamente", Anki's {audio}): the word as the OCR read it first, then
+ * recordings of its dictionary forms (the AI's headword, the first entry's), named with the form
+ * (see `wordAudio`). Never the display form with its stress marks.
+ */
+function wordRecordings(lookup) {
+    const p = lookup.payload;
+    return wordAudio(p.word, [lookup.aiCard?.headword, p.entries?.[0]?.headword].filter(Boolean), settings.ocrLanguage, (term) => recordings(lookup, term));
 }
 
 function stopAudio() {
@@ -211,11 +218,11 @@ async function playRecording(entry, term) {
     try { await audio.play(); return true; } catch (_e) { return false; }
 }
 
-/** The word's audio: the first recording that plays, in the order of the sources. */
-async function playWord(lookup, term) {
-    for (const entry of await recordings(lookup, term)) {
+/** The word's audio: the first recording that plays, the word on screen's before its dictionary forms'. */
+async function playWord(lookup) {
+    for (const entry of await wordRecordings(lookup)) {
         if (state !== lookup) { return; }
-        if (await playRecording(entry, term)) { lookup.audioPlayed = entry.kind === 'tts' ? lookup.audioPlayed : entry; return; }
+        if (await playRecording(entry, entry.term)) { lookup.audioPlayed = entry.kind === 'tts' ? lookup.audioPlayed : entry; return; }
     }
 }
 
@@ -225,23 +232,23 @@ function audioOthers() {
 }
 
 /** "Um botão para cada áudio": a small button per recording found, next to the speaker. */
-async function audioButtons(target, lookup, term) {
+async function audioButtons(target, lookup) {
     if (!target) { return; }
-    const entries = (await recordings(lookup, term)).filter((e) => e.kind !== 'tts');
+    const entries = (await wordRecordings(lookup)).filter((e) => e.kind !== 'tts');
     if (state !== lookup || !target.isConnected) { return; }
     target.innerHTML = entries.map((e, i) => `<button class="ghost audio-chip" data-i="${i}" title="Ouvir: ${escapeHtml(e.name)}">${icon('speaker', 'sm')}${escapeHtml(e.name)}</button>`).join('');
     for (const b of target.querySelectorAll('button')) {
         b.addEventListener('click', async () => {
             const entry = entries[Number(b.dataset.i)];
-            if (await playRecording(entry, term)) { lookup.audioPlayed = entry; }
+            if (await playRecording(entry, entry.term)) { lookup.audioPlayed = entry; }
         });
     }
 }
 
 /** Right click on the speaker: every recording found, to pick one (as Yomitan's audio menu). */
-async function audioMenu(button, lookup, term) {
+async function audioMenu(button, lookup) {
     closeAudioMenu();
-    const entries = await recordings(lookup, term);
+    const entries = await wordRecordings(lookup);
     if (state !== lookup) { return; }
     const menu = document.createElement('div');
     menu.className = 'audio-menu';
@@ -256,7 +263,7 @@ async function audioMenu(button, lookup, term) {
         b.addEventListener('click', async () => {
             const entry = entries[Number(b.dataset.i)];
             closeAudioMenu();
-            if (await playRecording(entry, term) && entry.kind !== 'tts') { lookup.audioPlayed = entry; }
+            if (await playRecording(entry, entry.term) && entry.kind !== 'tts') { lookup.audioPlayed = entry; }
         });
     }
     setTimeout(() => document.addEventListener('click', closeAudioMenu, {once: true}), 0);
@@ -267,8 +274,8 @@ function closeAudioMenu() {
 }
 
 /** The file for {audio}: the recording last played, or the first that can be read (not the system voice). */
-async function audioForAnki(lookup, term) {
-    const entries = [lookup.audioPlayed, ...(await recordings(lookup, term))].filter((e) => e && e.kind !== 'tts');
+async function audioForAnki(lookup) {
+    const entries = [lookup.audioPlayed, ...(await wordRecordings(lookup))].filter((e) => e && e.kind !== 'tts');
     for (const entry of entries) {
         const file = await audioFile(entry, audioIo).catch(() => null);
         if (file) { return file; }
@@ -308,9 +315,12 @@ function cardExtrasHtml(card, components) {
 
 function renderCard(body, card, pending = false) {
     const p = state.payload;
-    // The headword as shown: its display form (stress, macrons) when valid; lookups, audio and
-    // Anki's {expression} keep `card.headword`.
-    const headword = validDisplayHeadword(card, settings.ocrLanguage) || card.headword || p.word;
+    // The title is the word as the OCR read it (with its stress marked when the card gave a valid
+    // display form of it), not a dictionary form; the headword, as a learner's dictionary shows it,
+    // goes below it when it differs. Lookups, audio and Anki's {expression} never use these.
+    const headword = validDisplaySurface(card, p.word, settings.ocrLanguage) || p.word || card.headword;
+    const lemma = validDisplayHeadword(card, settings.ocrLanguage) || card.headword;
+    const lemmaLine = lemma && !sameWord(lemma, p.word, settings.ocrLanguage) ? `<div class="muted saved-form">Forma de dicionário: <bdi>${escapeHtml(lemma)}</bdi></div>` : '';
     const chips = [];
     if (card.ocrFix) { chips.push(ocrFixHtml(card.ocrFix)); }
     if (card.cefr && /^[ABC][12]$/.test(card.cefr)) { chips.push(`<span class="cefr ${card.cefr.toLowerCase()}">${card.cefr}</span>`); }
@@ -325,6 +335,7 @@ function renderCard(body, card, pending = false) {
     body.innerHTML = `
         <div class="hw" dir="${dir}"><span class="word" dir="auto">${escapeHtml(headword)}</span><button class="ghost icon speak" title="${audioOthers() === 'menu' ? 'Ouvir (clique direito: escolher o áudio)' : 'Ouvir'}">${icon('speaker')}</button><span class="audio-buttons"></span></div>
         ${chips.length ? `<div class="chips" dir="${dir}">${chips.join('')}</div>` : ''}
+        ${lemmaLine}
         ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${cardExtrasHtml(card, ai.cardComponents !== false)}
@@ -332,11 +343,11 @@ function renderCard(body, card, pending = false) {
         ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div dir="auto">${markContext(p, state.contextMarks)}</div></div></details>` : ''}`;
     bindSentence(body, p.context || p.sentence);
     const speaker = body.querySelector('.speak');
-    speaker?.addEventListener('click', () => void playWord(state, headword));
+    speaker?.addEventListener('click', () => void playWord(state));
     if (audioOthers() === 'menu') {
-        speaker?.addEventListener('contextmenu', (ev) => { ev.preventDefault?.(); void audioMenu(speaker, state, headword); });
+        speaker?.addEventListener('contextmenu', (ev) => { ev.preventDefault?.(); void audioMenu(speaker, state); });
     } else if (!pending) {
-        void audioButtons(body.querySelector('.audio-buttons'), state, headword);
+        void audioButtons(body.querySelector('.audio-buttons'), state);
     }
     body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => ev.currentTarget.classList.remove('hidden-tr'));
     body.querySelector('.explain-btn')?.addEventListener('click', () => void runExplain(body.querySelector('.explanation')));
@@ -1067,8 +1078,8 @@ async function drawSavedCards() {
     const cards = await savedCardsOf(lookup);
     if (savedView?.box !== box) { return; }
     lookup.savedCards = cards;
-    const word = lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word;
-    const date = (ms) => (ms ? new Date(ms).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'}) : '');
+    const word = lookup.payload.word || lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword;
+    const date =(ms) => (ms ? new Date(ms).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'}) : '');
     box.innerHTML = `
         <div class="saved-bar">
             <strong dir="auto">${escapeHtml(word)}</strong><span class="muted">${cards.length === 1 ? '1 card salvo' : `${cards.length} cards salvos`}</span>
@@ -1132,7 +1143,7 @@ function validMarks(marks, text) {
  * the paragraph (or sentence) with its translation, the screenshot and the dictionaries' entries,
  * folded.
  */
-/** A saved word's headword as shown: its display form when still valid, else its dictionary form. */
+/** A saved word's dictionary form as shown: its display form when still valid. */
 function savedHeadword(c) {
     return savedDisplayHeadword(c) || c.dictionaryForm || c.word;
 }
@@ -1151,8 +1162,8 @@ function savedCardHtml(c, current) {
     const glossaries = (c.glossaries || []).filter((g) => g?.html).map((g) => `
         <details class="saved-gloss"><summary>${escapeHtml(g.name || 'Dicionário')}</summary><div class="gloss">${cleanGlossaryHtml(g.html)}</div></details>`).join('');
     return `
-        <div class="saved-head" dir="${headDir(c.dictionaryForm || c.word)}"><span class="word" dir="auto">${escapeHtml(savedHeadword(c))}</span>${chips}</div>
-        ${c.dictionaryForm && c.word && c.dictionaryForm.toLowerCase() !== c.word.toLowerCase() ? `<div class="muted saved-form">Na tela: <bdi>${escapeHtml(c.word)}</bdi></div>` : ''}
+        <div class="saved-head" dir="${headDir(c.word || c.dictionaryForm)}"><span class="word" dir="auto">${escapeHtml(savedDisplaySurface(c) || c.word || c.dictionaryForm)}</span>${chips}</div>
+        ${c.dictionaryForm && c.word && !sameWord(c.dictionaryForm, c.word, c.language) ? `<div class="muted saved-form">Forma de dicionário: <bdi>${escapeHtml(savedHeadword(c))}</bdi></div>` : ''}
         ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
         ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
         ${cardExtrasHtml(c, true)}
@@ -1176,6 +1187,7 @@ function noteContext(lookup = state, options = anki) {
         word: lookup.payload.word,
         headword: lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword,
         displayHeadword: validDisplayHeadword(lookup.aiCard, settings.ocrLanguage),
+        displaySurface: validDisplaySurface(lookup.aiCard, lookup.payload.word, settings.ocrLanguage),
         clozeWord: selectedSpan(lookup.payload.context || lookup.payload.sentence || '', lookup.contextMarks),
         clozeAt: lookup.payload.context ? clozeRange(lookup.payload.context, lookup.payload.contextAt, lookup.payload.word, lookup.contextMarks) : null,
         sentence: lookup.payload.sentence,
@@ -1191,7 +1203,7 @@ function noteContext(lookup = state, options = anki) {
         dictionaryOrder: glossaryDictionaryNames(dicts),
         screenshot: async () => (lookup.payload.recognition ? api.captureImage(lookup.payload.recognition, options.screenshotArea || 'sentence') : null),
         images: () => checkedImageFiles(lookup),
-        audio: () => audioForAnki(lookup, lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word),
+        audio: () => audioForAnki(lookup),
         sentenceAudio: () => sentenceAudioFile(lookup.payload.sentence, settings.audio, settings.ocrLanguage, audioIo),
     };
 }
@@ -1403,9 +1415,9 @@ async function render(payload) {
         $('sections').innerHTML = '<div class="empty"><strong>Nenhum resultado</strong>Adicione dicionários ou configure a IA na janela do Lookitan.</div>';
     }
     void refreshAnkiButton();
-    // "Tocar o áudio automaticamente": the word as found on screen or in the first entry.
+    // "Tocar o áudio automaticamente": the word as found on screen, its dictionary forms after it.
     if (normalizeAudioOptions(settings.audio).autoPlay && payload.word) {
-        void playWord(state, payload.entries?.[0]?.headword || payload.word);
+        void playWord(state);
     }
 }
 

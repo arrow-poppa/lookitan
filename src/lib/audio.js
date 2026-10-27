@@ -320,6 +320,86 @@ async function fromSource(source, word, io) {
     }
 }
 
+/** The languages whose learners' texts mark stress with an acute (U+0301), which recordings'
+ * names never carry: Russian, Ukrainian, Bulgarian. */
+const STRESS_MARKED = new Set(['ru', 'uk', 'bg']);
+
+/**
+ * The spelling a word's audio is searched by: the word itself, NFC, and in Russian, Ukrainian and
+ * Bulgarian without the stress acutes a learner's text may add (Шелестя́т → Шелестят). Every other
+ * mark and letter stays: ё, й, ї, Greek tonos, Arabic marks, Latin-script diacritics, CJK.
+ * @param {string} term
+ * @param {string} locale the OCR language
+ */
+export function audioSearchTerm(term, locale) {
+    const text = String(term || '').trim().normalize('NFC');
+    if (!STRESS_MARKED.has(String(locale || '').split('-')[0].toLowerCase())) { return text; }
+    return text.normalize('NFD').replace(/́/gu, '').normalize('NFC');
+}
+
+/** What a source is asked for a term (see fromSource). */
+export function audioQuery(term, locale) {
+    return {term, reading: '', language: String(locale || 'en').split('-')[0], locale: locale || 'en-US'};
+}
+
+/** Voices read their text, so they only ever read the word on screen (never a dictionary form). */
+const READ_ALOUD = new Set(['tts', 'edge']);
+
+/** One recording, whichever term found it. */
+function entryKey(e) {
+    return [e.kind, e.url, e.path, e.source, e.file, e.text, e.voice].map((v) => v ?? '').join('\u0000');
+}
+
+/**
+ * A looked-up word's audio, the word as the OCR read it first (`word`, not the AI's headword nor a
+ * dictionary form: Шелестят, not шелестеть; 進めて, not 進める): every source's recordings of it in
+ * the user's order, the voices reading it; then, only from recordings, the same word lowercased
+ * when it differs (a capital at the start of a sentence; by the language's own rules, so Turkish
+ * İ stays right); then recordings of each of `fallbacks` (its dictionary forms), named with the
+ * form they are of ("Wiktionary · … · шелестеть") so a recording of another form is never taken for
+ * one of the word on screen. Each entry gets `term`, the spelling it was found by.
+ * @param {string} word
+ * @param {string[]} fallbacks
+ * @param {string} locale
+ * @param {(term: string) => Promise<object[]>} find the recordings of one term (findAudio, cached)
+ */
+export async function wordAudio(word, fallbacks, locale, find) {
+    const own = audioSearchTerm(word, locale);
+    if (!own) { return []; }
+    let lower = own;
+    try { lower = own.toLocaleLowerCase(locale || undefined); } catch (_e) { lower = own.toLowerCase(); }
+    const seen = new Set();
+    const out = [];
+    const add = (entries, term, label) => {
+        for (const e of entries) {
+            const key = entryKey(e);
+            if (seen.has(key)) { continue; }
+            seen.add(key);
+            out.push({...e, term, ...(label ? {name: `${e.name} · ${label}`, fallback: true} : {})});
+        }
+    };
+    add(await find(own).catch(() => []), own);
+    if (lower !== own) { add((await find(lower).catch(() => [])).filter((e) => !READ_ALOUD.has(e.kind)), lower); }
+    const forms = [...new Set(fallbacks.map((f) => audioSearchTerm(f, locale)).filter((f) => f && f !== own && f !== lower))];
+    for (const form of forms) {
+        add((await find(form).catch(() => [])).filter((e) => !READ_ALOUD.has(e.kind)), form, form);
+    }
+    return out;
+}
+
+/**
+ * The file for Anki's {audio} of a saved word: the first recording of `wordAudio` that can be read,
+ * the system voice left out (it gives no file). Null when there is none.
+ */
+export async function wordAudioFile(options, word, fallbacks, locale, io) {
+    const entries = await wordAudio(word, fallbacks, locale, (term) => findAudio(options, audioQuery(term, locale), io));
+    for (const entry of entries.filter((e) => e.kind !== 'tts')) {
+        const file = await audioFile(entry, io).catch(() => null);
+        if (file) { return file; }
+    }
+    return null;
+}
+
 /**
  * Every recording found for a word, in the order of the sources (Configurações › Áudio). Each one
  * is {name, kind: 'db' | 'url' | 'tts', ...}; a source that fails is skipped, as in Yomitan. The

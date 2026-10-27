@@ -72,7 +72,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
             orderNoteFields: (note, names) => (names?.length ? {...note, fields: Object.fromEntries([
                 ...names.map((n) => [n, note.fields[n] ?? '']), ...Object.entries(note.fields).filter(([n]) => !names.includes(n))])} : note),
         },
-        [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }, savedDisplayHeadword: () => ''},
+        [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }, savedDisplayHeadword: () => '', savedDisplaySurface: () => ''},
         [file('src/lib/icons.js')]: {hydrateIcons() {}, icon: (name) => name},
         [file('src/lib/images.js')]: {...realImages, ...images},
     };
@@ -208,7 +208,8 @@ test('the card marks each piece of the longer unit it describes, safely, and the
     const body = new Element();
     await view.popup.runCard(body);
     assert.equal(calls, 1, 'one request');
-    assert(body.innerHTML.includes('<span class="word" dir="auto">turn off</span>'), 'the title is the unit\'s headword');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">turned</span>'), 'the title is the word the OCR read');
+    assert(body.innerHTML.includes('Forma de dicionário: <bdi>turn off</bdi>'), 'the unit\'s headword under it, matching the definition');
     assert(body.innerHTML.includes('She <mark>turned</mark> the light <mark>off</mark>.'), 'both pieces are marked');
     assert.deepEqual(view.lookup.payload.word, 'turned', 'the word as read is kept');
     answer = '{"headword":"x","selection":{"parts":["<b>bold</b> text"]}}';
@@ -290,6 +291,7 @@ test('the card asks every language for the form on screen, and scripts other tha
     const view = await fixture({explain: async (_options, _word, _sentence, request) => { prompts.push(request.prompt); return answer; }});
     view.ai.cardPrompt = CARD_PROMPT;
     view.settings.ocrLanguage = 'ar-SA';
+    view.lookup.payload = {word: 'فاضت', sentence: 'فاضت الدجاجة', entries: []};
     const body = new Element();
     await view.popup.runCard(body);
     assert(prompts[0].includes('"form"') && prompts[0].includes('"transliteration"'));
@@ -321,28 +323,60 @@ test('the card asks every language for the form on screen, and scripts other tha
     assert(prompts[prompts.length - 1].includes(', "form": my form, "transliteration": my letters'), "the user's prompts are sent");
 });
 
-test('the title shows a valid display form of the headword (Russian stress), else the headword', async () => {
-    let answer = '{"headword":"дом","displayHeadword":"до́м","definition":"house"}';
+test('the title is the word the OCR read, its stress marked when valid; the dictionary form goes under it', async () => {
+    let answer = '{"headword":"шелестеть","displaySurface":"Шелестя́т","displayHeadword":"шелесте́ть","definition":"to rustle"}';
     const prompts = [];
     const view = await fixture({explain: async (_options, _word, _sentence, request) => { prompts.push(request.prompt); return answer; }});
     view.ai.cardPrompt = CARD_PROMPT;
     view.settings.ocrLanguage = 'ru-RU';
+    view.lookup.payload = {word: 'Шелестят', sentence: 'Шелестят листья.', context: 'Шелестят листья.', contextAt: 0, entries: []};
     const body = new Element();
     await view.popup.runCard(body);
-    assert(prompts[0].includes('"displayHeadword"') && !prompts[0].includes('{{displayField}}'), 'Russian is asked for the stress');
-    assert(body.innerHTML.includes('<span class="word" dir="auto">до́м</span>'), 'the stressed form in the title');
+    assert(prompts[0].includes('"displaySurface"') && prompts[0].includes('"displayHeadword"') && !prompts[0].includes('{{displayField}}'), 'Russian is asked for the stress');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">Шелестя́т</span>'), 'the word on screen, stressed, in the title');
+    assert(body.innerHTML.includes('Forma de dicionário: <bdi>шелесте́ть</bdi>'), 'the infinitive below it, never in its place');
     assert.equal(body.innerHTML.split('class="word"').length, 2, 'one title, no second heading');
-    answer = '{"headword":"дом","displayHeadword":"дома́","definition":"house"}';
+    assert.equal(view.lookup.payload.word, 'Шелестят', 'the word as read is kept');
+    answer = '{"headword":"шелестеть","displaySurface":"Шелестя́ть","definition":"to rustle"}';
     view.ai.formPrompt = 'the features';  // a new request, not the cached card
-    const copied = new Element();
-    await view.popup.runCard(copied);
-    assert(copied.innerHTML.includes('<span class="word" dir="auto">дом</span>'), 'the stress of the form on screen copied onto another word: the headword');
+    const other = new Element();
+    await view.popup.runCard(other);
+    assert(other.innerHTML.includes('<span class="word" dir="auto">Шелестят</span>'), 'a display form of another word: the word as read');
     view.settings.ocrLanguage = 'en-US';
-    answer = '{"headword":"house","displayHeadword":"hóuse","definition":"дом"}';
+    view.lookup.payload = {word: 'running', sentence: 'She is running.', entries: []};
+    answer = '{"headword":"run","displaySurface":"rúnning","definition":"move fast"}';
     const english = new Element();
     await view.popup.runCard(english);
-    assert(!prompts.at(-1).includes('"displayHeadword"'), 'English is not asked');
-    assert(english.innerHTML.includes('<span class="word" dir="auto">house</span>'), 'nor shown an accent it gave anyway');
+    assert(!prompts.at(-1).includes('"displaySurface"'), 'English is not asked');
+    assert(english.innerHTML.includes('<span class="word" dir="auto">running</span>') && english.innerHTML.includes('Forma de dicionário: <bdi>run</bdi>'),
+        'running, not run, and no accent it gave anyway');
+    view.lookup.payload = {word: 'Run', sentence: 'Run!', entries: []};
+    answer = '{"headword":"run","definition":"move fast"}';
+    const same = new Element();
+    await view.popup.runCard(same);
+    assert(!same.innerHTML.includes('Forma de dicionário'), 'no line when the dictionary form is the word itself');
+});
+
+test('the word audio is searched by the word on screen first; a dictionary form\'s recording comes after, named as such', async () => {
+    const asked = [];
+    const view = await fixture({audioRows: async (command, args) => {
+        if (command === 'audio_lookup') {
+            asked.push(args.term);
+            return args.term === 'шелестеть' ? [{source: 'forvo', file: 'a/шелестеть.ogg', name: 'Forvo'}] : [];
+        }
+        if (command === 'audio_data') { return ['T2dnUw==', 'ogg']; }
+        return null;
+    }});
+    view.settings.audio = {sources: [{type: 'local-db', path: 'C:/audio/ru.db'}]};
+    view.settings.ocrLanguage = 'ru-RU';
+    view.options.enable = true;
+    view.lookup.payload = {word: 'Шелестя́т', sentence: 'Шелестя́т листья.', entries: [{headword: 'шелестеть', dictId: 'd', dictName: 'D', entry: 0, matched: 'шелестеть'}]};
+    view.lookup.aiCard = {headword: 'шелестеть', synonyms: [], partOfSpeech: [], labels: [], form: [], components: []};
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    await view.popup.onAnkiClick();
+    const file = await view.calls.notes.at(-1).audio();
+    assert.deepEqual(asked, ['Шелестят', 'шелестят', 'шелестеть'], 'the form on screen without the learner\'s stress mark, lowercased, then the infinitive');
+    assert.equal(file.extension, 'ogg', 'with no recording of Шелестят, the infinitive\'s is the fallback');
 });
 
 test('the popup grows from the word like a TeachingTip and a new lookup cancels a pending close', async () => {
@@ -845,7 +879,8 @@ test('only a unit found in the text places the Anki cloze; a proposed one that i
     await view.popup.runCard(body, true);
     assert.equal(view.lookup.contextMarks, null, 'proposed, not found: no marks');
     assert.equal(JSON.stringify(view.lookup.aiCard.selection.parts), '["Big Apple"]', 'the proposal itself is kept');
-    assert(body.innerHTML.includes('<span class="word" dir="auto">Big Apple</span>'), 'the title still matches the definition');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">York</span>') && body.innerHTML.includes('Forma de dicionário: <bdi>Big Apple</bdi>'),
+        'the title is the word read; the headword under it still matches the definition');
     assert(body.innerHTML.includes('I love New <mark>York</mark>.'), 'the word is marked where the OCR found it');
     await view.popup.onAnkiClick();
     ctx = view.calls.notes.at(-1);
@@ -1000,7 +1035,8 @@ test('a saved card opens whole in the pop-up, as the Palavras tab shows it', asy
     await view.popup.openSavedCards();
     const html = view.nodes.get('card').children.at(-1).innerHTML;
     for (const part of ['ˈɑptɪmaɪz', 'C1', '>verb<', '>technical<', 'otimizar', 'To make as effective as possible.', 'Used for **software**.',
-        'A new model. It is <mark>optimized</mark> for speed. It supports text.', '<mark>otimizado</mark>', 'Na tela: <bdi>optimized</bdi>',
+        'A new model. It is <mark>optimized</mark> for speed. It supports text.', '<mark>otimizado</mark>', '<span class="word" dir="auto">optimized</span>',
+        'Forma de dicionário: <bdi>optimize</bdi>',
         '<summary>Oxford</summary>', 'clean(<b>optimize</b> v.)']) {
         assert(html.includes(part), `the saved card shows ${part}`);
     }

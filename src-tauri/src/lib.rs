@@ -136,7 +136,12 @@ pub struct LookupPayload {
     /// How many of the word's characters come before a line or column break it runs across
     /// (an analyzer joined it there), for the AI's hints.
     pub line_break: Option<usize>,
+    /// Forms to look up: the word as written first, then its dictionary forms and other fallbacks.
     pub candidates: Vec<String>,
+    /// The analyzer's dictionary forms of the word (`Pick::lemmas`), for the AI's hints; not sent
+    /// when there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub lemmas: Vec<String>,
     /// What found the word (`Pick::analyzer`; for typed text, the analyzer whose dictionary forms
     /// lead `candidates`), for the AI's hints; not sent when unknown.
     #[serde(skip_serializing_if = "str::is_empty")]
@@ -408,17 +413,22 @@ fn lookup_words(state: &AppState, candidates: &[String]) -> Vec<EntryRef> {
     dict::lookup(&dicts, &forms)
 }
 
-/// Forms to look up for typed text: the dictionary forms of its first word when the language has
-/// an analyzer (食べた → 食べる), then, for an unspaced script, its prefixes, longest first; and
-/// the analyzer's name when it gave those forms.
-fn manual_candidates(text: &str, analyzer: Option<&dyn segment::Segment>) -> (Vec<String>, &'static str) {
+/// Forms to look up for typed text: the text as typed first, then the dictionary forms of its
+/// first word when the language has an analyzer (食べた → 食べる), then, for an unspaced script, its
+/// prefixes, longest first; with those dictionary forms and the analyzer's name when it gave them.
+fn manual_candidates(text: &str, analyzer: Option<&dyn segment::Segment>) -> (Vec<String>, Vec<String>, &'static str) {
     let text = text.trim();
     let mut out: Vec<String> = Vec::new();
+    if !text.is_empty() { out.push(text.to_string()); }
+    let mut lemmas: Vec<String> = Vec::new();
     let mut by = "";
     if let Some(seg) = analyzer.filter(|s| text.chars().next().is_some_and(|c| s.handles(c))) {
         if let Some(w) = seg.words(text).into_iter().find(|w| w.kind != segment::Kind::Punct).filter(|w| w.start == 0) {
             if !w.lemmas.is_empty() { by = seg.name(); }
-            out.extend(w.lemmas);
+            lemmas = w.lemmas.into_iter().filter(|l| l != text).collect();
+            for form in &lemmas {
+                if !out.contains(form) { out.push(form.clone()); }
+            }
         }
     }
     let rest = if text.chars().next().map(ocr::is_unspaced_script).unwrap_or(false) {
@@ -430,7 +440,7 @@ fn manual_candidates(text: &str, analyzer: Option<&dyn segment::Segment>) -> (Ve
     for form in rest {
         if !out.contains(&form) { out.push(form); }
     }
-    (out, by)
+    (out, lemmas, by)
 }
 
 pub fn scan(app: &AppHandle) {
@@ -627,6 +637,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 context_at: Some(pick.context_at),
                 line_break: pick.line_break,
                 analyzer: pick.analyzer,
+                lemmas: pick.lemmas,
                 candidates: pick.candidates,
                 engine,
                 ocr_ms,
@@ -1595,13 +1606,14 @@ async fn update_dictionary(app: AppHandle, id: String, enabled: Option<bool>, mo
 #[tauri::command]
 fn lookup_text(state: tauri::State<'_, AppState>, text: String, sentence: Option<String>, context: Option<String>) -> LookupPayload {
     let analyzer = segment::current(&state.settings.read().ocr_language);
-    let (candidates, analyzer) = manual_candidates(&text, analyzer.as_deref().map(|a| a as &dyn segment::Segment));
+    let (candidates, lemmas, analyzer) = manual_candidates(&text, analyzer.as_deref().map(|a| a as &dyn segment::Segment));
     let entries = lookup_words(&state, &candidates);
     LookupPayload {
         word: text.trim().to_string(),
         sentence: sentence.unwrap_or_default(),
         context: context.unwrap_or_default(),
         candidates,
+        lemmas,
         analyzer,
         entries,
         manual: true,
@@ -1637,6 +1649,7 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
         context_at: Some(pick.context_at),
         line_break: pick.line_break,
         analyzer: pick.analyzer,
+        lemmas: pick.lemmas,
         candidates: pick.candidates,
         engine,
         ocr_ms,

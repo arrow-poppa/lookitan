@@ -238,6 +238,13 @@ test('the AI card and {ai-display-headword} show the stressed headword; {express
     assert.deepEqual([old.A, old.B], ['дом', 'дом'], 'a card without a display form: the headword');
     assert.equal(notes.MARKERS.includes('ai-display-headword'), true);
     assert.equal((await notes.buildNote({word: 'x', displayHeadword: '<b>', sentence: 's'}, options, null)).fields.B, '&lt;b&gt;', 'escaped');
+    options.cardFormats[0].fields = {A: {value: '{expression}'}, S: {value: '{surface}'}, T: {value: '{display-surface}'}};
+    const surface = (await notes.buildNote({word: 'Шелестят', headword: 'шелестеть', displaySurface: 'Шелестя́т', sentence: 'Шелестят листья.'}, options, null)).fields;
+    assert.deepEqual([surface.A, surface.S, surface.T], ['шелестеть', 'Шелестят', 'Шелестя́т'], '{surface} is the word read, {display-surface} with its stress');
+    const plainSurface = (await notes.buildNote({word: 'running', headword: 'run', sentence: 'running'}, options, null)).fields;
+    assert.deepEqual([plainSurface.S, plainSurface.T], ['running', 'running']);
+    assert(notes.MARKERS.includes('surface') && notes.MARKERS.includes('display-surface'));
+    assert.equal((await notes.buildNote({word: '<i>', sentence: 's'}, options, null)).fields.S, '&lt;i&gt;', '{surface} escaped');
 });
 
 test('the form on screen and its transliteration go in the AI card, the tags and markers of their own', async () => {

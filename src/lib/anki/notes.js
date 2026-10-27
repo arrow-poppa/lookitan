@@ -47,7 +47,7 @@ export const MARKERS = [
     'expression', 'reading', 'glossary', 'glossary-brief', 'glossary-no-dictionary', 'glossary-plain',
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
-    'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-display-headword', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
+    'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'surface', 'display-surface', 'ai-card', 'ai-card-plain', 'ai-display-headword', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
     'translation', 'context-translation', 'sentence-translation', 'paragraph-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-transliteration', 'ai-form', 'ai-ocr-fix', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
 ];
 
@@ -313,6 +313,7 @@ function cloze(sentence, word) {
  * @property {string} word Word as read on screen.
  * @property {string} [headword] Dictionary form.
  * @property {string} [displayHeadword] The headword as shown (stress, macrons), when valid.
+ * @property {string} [displaySurface] The word on screen as shown (stress, macrons), when valid.
  * @property {string} [clozeWord] The longer unit the AI card marked in the context, when it is one piece.
  * @property {[number, number]|null} [clozeAt] What the cloze covers in `context`, in code points: that unit, else the word looked up.
  * @property {string} [sentence]
@@ -355,6 +356,9 @@ export async function buildNote(ctx, anki, conn) {
     const cardDictionaries = anki.aiCardMode === 'dictionaries' ? defs.filter((d) => d.dictionary !== AI_GLOSSARY_NAME) : [];
     const values = {
         'expression': escapeHtml(ctx.headword || ctx.word),
+        // The word as the OCR read it, and the same with its stress (or vowel length) marked.
+        'surface': escapeHtml(ctx.word || ''),
+        'display-surface': escapeHtml(ctx.displaySurface || ctx.word || ''),
         'reading': escapeHtml(ai.reading || ai.ipa || ''),
         'glossary': glossaryHtml(defs),
         'glossary-brief': glossaryHtml(defs, {brief: true}),

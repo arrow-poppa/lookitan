@@ -2,14 +2,20 @@
 
 import {invoke} from '@tauri-apps/api/core';
 import {api} from './api.js';
-import {sentenceAudioFile} from './audio.js';
+import {sentenceAudioFile, wordAudioFile} from './audio.js';
 import {clozeRange, selectedSpan} from './ai/selection.js';
-import {validDisplayHeadword} from './ai/word-card.js';
+import {validDisplayHeadword, validDisplaySurface} from './ai/word-card.js';
 
 /** A saved word's display form of its headword, checked again against its dictionary form and
  * language (an edit in the Palavras tab may have changed either); '' when it no longer fits. */
 export function savedDisplayHeadword(card) {
     return validDisplayHeadword({headword: card.dictionaryForm, displayHeadword: card.displayHeadword}, card.language);
+}
+
+/** A saved word's display form of the word on screen, checked again against `word`; '' when it no
+ * longer fits. */
+export function savedDisplaySurface(card) {
+    return validDisplaySurface(card, card.word, card.language);
 }
 
 /**
@@ -24,6 +30,8 @@ export function cardFromLookup(lookup, settings) {
         // The headword as shown (stress, macrons; see validDisplayHeadword), when the card had a
         // valid one; `dictionaryForm` stays the form looked up and matched.
         displayHeadword: validDisplayHeadword(ai, settings.ocrLanguage),
+        // The word on screen with its stress (or vowel length) marked, when valid; `word` stays as read.
+        displaySurface: validDisplaySurface(ai, lookup.payload.word, settings.ocrLanguage),
         translation: ai.translation || '',
         definition: ai.definition || '',
         explanation: lookup.explanation || '',
@@ -69,6 +77,7 @@ export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
         word: card.word,
         headword: card.dictionaryForm,
         displayHeadword: savedDisplayHeadword(card),
+        displaySurface: savedDisplaySurface(card),
         clozeWord: card.context && Array.isArray(card.contextMarks) ? selectedSpan(card.context, card.contextMarks) : '',
         clozeAt: card.context ? clozeRange(card.context, card.contextAt, card.word, card.contextMarks) : null,
         sentence: card.sentence,
@@ -95,6 +104,8 @@ export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
         query: card.word,
         screenshot: async () => (card.image ? await api.wordImage(card.image, card.imageCrop) : null),
         sentenceAudio: () => sentenceAudioFile(card.sentence, settings.audio, card.language || settings.ocrLanguage, {invoke}),
+        // {audio}: the word as saved from the screen first, its dictionary form's recordings after.
+        audio: () => wordAudioFile(settings.audio, card.word, [card.dictionaryForm].filter(Boolean), card.language || settings.ocrLanguage, {invoke}),
     };
 }
 
@@ -107,7 +118,7 @@ export const CSV_COLUMNS = [
     ['word', 'Palavra'], ['dictionaryForm', 'Forma de dicionário'], ['translation', 'Tradução'],
     ['definition', 'Definição'], ['sentence', 'Frase'], ['sentenceTranslation', 'Tradução da frase'],
     ['ipa', 'IPA'], ['cefr', 'CEFR'], ['partOfSpeech', 'Classe gramatical'], ['explanation', 'Explicação'],
-    ['windowTitle', 'Janela'], ['createdAt', 'Data'], ['displayHeadword', 'Forma exibida'],
+    ['windowTitle', 'Janela'], ['createdAt', 'Data'], ['displayHeadword', 'Forma de dicionário exibida'], ['displaySurface', 'Palavra exibida'],
 ];
 
 export function toCsv(cards) {
@@ -115,7 +126,7 @@ export function toCsv(cards) {
     // The sentence's translation goes with the sentence; an older word has only its contextTranslation.
     const cell = (c, key) => (key === 'createdAt' ? new Date(c.createdAt).toISOString() :
         key === 'sentenceTranslation' ? String(c.sentenceTranslation || c.contextTranslation || '').replace(/\*\*/g, '') :
-            key === 'displayHeadword' ? savedDisplayHeadword(c) : c[key]);
+            key === 'displayHeadword' ? savedDisplayHeadword(c) : key === 'displaySurface' ? savedDisplaySurface(c) : c[key]);
     const rows = cards.map((c) => CSV_COLUMNS.map(([key]) => csvCell(cell(c, key))).join(','));
     return [head, ...rows].join('\r\n');
 }
