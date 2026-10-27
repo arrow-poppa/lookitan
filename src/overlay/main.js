@@ -60,6 +60,17 @@ function containsCenter(w, s) {
     return cx >= w.x && cx <= w.x + w.w && cy >= w.y && cy <= w.y + w.h;
 }
 
+/** The groups (words.rs `WordBox::group`: the pieces of a word broken across lines or columns) of
+ * the words under `rects`, so every piece of such a word is highlighted, each in its own box. */
+function groupsUnder(rects) {
+    return new Set((current?.words || []).filter((w) => w.group && rects.some((r) => containsCenter(w, r))).map((w) => w.group));
+}
+
+/** The word elements of group `group`, or none. */
+function groupElements(group) {
+    return group ? Array.from(root.children).filter((el) => el.dataset?.group === String(group)) : [];
+}
+
 /** Blurs the frozen frame of a whole-screen lookup, with the words as sharp cut-outs. */
 function setBlurred(blurred) {
     for (const el of [frame, root]) {
@@ -122,16 +133,19 @@ function render() {
     drawDim(Boolean(current.spotlight) && !blurred, scale);
     drawBlock(scale);
     const frag = document.createDocumentFragment();
+    const selectedGroups = groupsUnder(selected ? [selected] : []);
+    const seenGroups = groupsUnder(seen);
     current.words.forEach((w, index) => {
         // The element takes the pointer over the whole hit area; its child draws the word.
         const hit = hitRect(w);
         const el = document.createElement('div');
         el.className = 'w';
-        if (selected && containsCenter(w, selected)) {
+        if (selected && (containsCenter(w, selected) || selectedGroups.has(w.group))) {
             el.classList.add('sel');
-        } else if (seen.some((s) => containsCenter(w, s))) {
+        } else if (seen.some((s) => containsCenter(w, s)) || seenGroups.has(w.group)) {
             el.classList.add('seen');
         }
+        if (w.group) { el.dataset.group = String(w.group); }
         position(el, hit, scale);
         // A word on a turned line: its boxes turn about the hit area's centre, the drawn box with
         // it (see WordBox::angle in words.rs).
@@ -209,8 +223,10 @@ void listen('overlay', (event) => {
 function pick(target, x, y) {
     for (const el of root.querySelectorAll('.w.sel')) { el.classList.remove('sel'); el.classList.add('seen'); }
     if (selected) { seen.push(selected); }
-    target.classList.remove('seen');
-    target.classList.add('sel');
+    for (const el of [target, ...groupElements(target.dataset?.group)]) {
+        el.classList.remove('seen');
+        el.classList.add('sel');
+    }
     showNotice('');
     void invoke('overlay_pick', {x, y});
 }
@@ -227,6 +243,16 @@ document.addEventListener('mousedown', (ev) => {
 });
 
 window.addEventListener('resize', render);
+
+// The pointer on one piece of a word broken across lines or columns lights up its other pieces.
+for (const [name, on] of [['mouseover', true], ['mouseout', false]]) {
+    document.addEventListener(name, (ev) => {
+        const group = ev.target instanceof HTMLElement ? ev.target.dataset?.group : null;
+        for (const el of groupElements(group)) {
+            if (on) { el.classList.add('hover'); } else { el.classList.remove('hover'); }
+        }
+    });
+}
 
 document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { void invoke('overlay_close'); }

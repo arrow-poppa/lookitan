@@ -12,8 +12,8 @@
            .w is the clickable area, wider than the word; .ink inside it is the word's drawn box. */
         .w { position: fixed; background: transparent; cursor: pointer; }
         .w > .ink { position: absolute; border-radius: 2px; pointer-events: none; transition: background 60ms; }
-        .w:hover > .ink, .w.seen > .ink { background: rgba(255, 221, 0, 0.26); }
-        .w.sel > .ink, .w.sel:hover > .ink { background: rgba(255, 221, 0, 0.5); }
+        .w:hover > .ink, .w.hover > .ink, .w.seen > .ink { background: rgba(255, 221, 0, 0.26); }
+        .w.sel > .ink, .w.sel:hover > .ink, .w.sel.hover > .ink { background: rgba(255, 221, 0, 0.5); }
         /* The word the game controller is on (gamepad.rs), outlined like Lookupper's gamepad focus. */
         .w.gp > .ink { outline: 3px solid #4cc2ff; outline-offset: 1px; }
         /* Between lookups, and while a whole-screen lookup is still being read: nothing visible.
@@ -30,12 +30,12 @@
         #frame.spotlight { filter: blur(2.5px) brightness(0.85); }
         /* Live screen (no freeze): the same slight dim, with holes where the words are. */
         #dim { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; pointer-events: none; display: none; }
-        #words.spotlight .w > .ink, #words.spotlight .w:hover > .ink, #words.spotlight .w.seen > .ink, #words.spotlight .w.sel > .ink {
+        #words.spotlight .w > .ink, #words.spotlight .w:hover > .ink, #words.spotlight .w.hover > .ink, #words.spotlight .w.seen > .ink, #words.spotlight .w.sel > .ink {
             background-color: transparent;
             background-repeat: no-repeat;
         }
         #words.spotlight .ink::after { content: ""; position: absolute; inset: 0; border-radius: inherit; transition: background 60ms; }
-        #words.spotlight .w:hover > .ink::after, #words.spotlight .w.seen > .ink::after { background: rgba(255, 221, 0, 0.26); }
+        #words.spotlight .w:hover > .ink::after, #words.spotlight .w.hover > .ink::after, #words.spotlight .w.seen > .ink::after { background: rgba(255, 221, 0, 0.26); }
         #words.spotlight .w.sel > .ink::after { background: rgba(255, 221, 0, 0.5); }
         /* Google Lens failed and the local OCR read the screen (whole-screen lookup, no pop-up). */
         #lens-notice {

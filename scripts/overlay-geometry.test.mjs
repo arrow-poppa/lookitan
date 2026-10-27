@@ -8,6 +8,7 @@ import {createContext, SourceTextModule, SyntheticModule} from 'node:vm';
 class Element {
     constructor() {
         this.style = {};
+        this.dataset = {};
         this.children = [];
         this.className = '';
         this.classList = {
@@ -64,6 +65,31 @@ test('the controller moves between words from the one looked up, and Confirm loo
     assert.equal(JSON.stringify(view.requests.at(-1)), JSON.stringify({command: 'overlay_pick', args: {x: 155, y: 29}}));
     assert(view.root.children[2].classList.contains('sel'));
     assert(view.root.children[0].classList.contains('seen'));
+});
+
+test('the pieces of a word broken across columns are selected, seen and hovered together, each in its own box', async () => {
+    const view = await fixture();
+    // 進 at the foot of the right column, めて at the head of the left one, 表記 below めて.
+    const shin = {text: '進', x: 200, y: 160, w: 20, h: 20, group: 7};
+    const mete = {text: 'めて', x: 170, y: 100, w: 20, h: 40, group: 7};
+    const hyoki = {text: '表記', x: 170, y: 140, w: 20, h: 40};
+    view.emit({id: 1, words: [shin, mete, hyoki], selected: mete, viewportWidth: 1920, viewportHeight: 1080});
+    const [a, b, c] = view.root.children;
+    assert(a.classList.contains('sel') && b.classList.contains('sel'), 'both pieces of the word looked up');
+    assert(!c.classList.contains('sel'), 'not the next word');
+    assert.deepEqual([a.style.left, a.style.top, b.style.left, b.style.top], ['200px', '160px', '170px', '100px'], 'each in its own box');
+    view.handlers.mouseover({target: a});
+    assert(b.classList.contains('hover') && !c.classList.contains('hover'), 'the pointer on 進 lights めて');
+    view.handlers.mouseout({target: a});
+    assert(!b.classList.contains('hover'));
+    view.handlers.mousedown({target: c, clientX: 180, clientY: 160, preventDefault() {}});
+    assert(c.classList.contains('sel'));
+    assert(a.classList.contains('seen') && b.classList.contains('seen') && !a.classList.contains('sel'), 'the word before is seen, both pieces');
+    view.emit({id: 1, words: [shin, mete, hyoki], selected: hyoki});
+    assert(view.root.children[0].classList.contains('seen') && view.root.children[1].classList.contains('seen'), 'and stays seen when redrawn');
+    view.handlers.mousedown({target: view.root.children[0], clientX: 210, clientY: 170, preventDefault() {}});
+    assert(view.root.children[1].classList.contains('sel'), 'a click on 進 selects めて too');
+    assert.equal(JSON.stringify(view.requests.at(-1)), JSON.stringify({command: 'overlay_pick', args: {x: 210, y: 170}}), 'looked up at the click');
 });
 
 test('moving or scaling the overlay redraws borders and keeps the selected word', async () => {

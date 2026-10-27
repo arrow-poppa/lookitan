@@ -187,6 +187,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
     - Configurações › Essenciais › "Separação de palavras (…)" (`segmenterRow` in settings-tab.js, under the recognition language, only for ja/zh/ko), like Lookupper's analyzer model Download/Delete buttons (`Settings_AnalyzerModel_*`, `AnalyzerModelDownloadDialog`; texts are our own): its state, "Apagar" (asked first, `plugin-dialog` `ask`) when its files are there, else "Baixar". A "Baixar de novo" button was tried and removed at the user's request: delete, then download. Commands `install_segmenter` and `remove_segmenter` (`segment::remove`: refused while it downloads; unloads it, waiting up to 5 s for lookups to let it go, since Windows will not delete a loaded kiwi.dll or a mapped system.dic; then deletes its folder). `EngineStatus.segmenter_installed` says whether its folder is there. A removed analyzer comes back with the next lookup in that language or the next start.
     - The rules in japanese.rs and korean.rs are Lookitan's own, written to Lookupper's behavior.
     - Candidates: the lemmas, the word as written, then (for unspaced scripts) its prefixes, longest first. The Yomitan rules in morphology.rs still expand each of them.
+    - A word the analyzer joined across a line or column break (進 at the foot of one column, めて at the head of the next, as in Lookupper) keeps a box per piece; `analyzed_spans` gives its pieces one `WordBox::group` (`OverlayWord.group`), and the overlay highlights the whole group when one piece is selected, seen or hovered (`groupsUnder`, `.w.hover`), each piece in its own box, nothing drawn between them. The pick keeps the box of the piece under the pointer (pop-up placement, `is_under`), and `context_at` is where the whole word starts (`context_in`), whichever piece was picked; before 2026-10-27 it was the piece's start.
     - With lindera's SudachiDict, used before 2026-10-22:
       - there was no dictionary form, so lemmas came from the normalized form (居る for いる);
       - digits were split apart;
@@ -348,6 +349,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 ## Log
 
 Newest first. One line per change that matters to the next agent.
+
+- 2026-10-27 (Claude, `tests`): at the user's request (screenshots of 進めて read down two columns, only めて lit), the pieces of an analyzed word broken across lines or columns are one group in the overlay, highlighted together, and `context_at` points at the whole word.
 
 - 2026-10-27 (Claude, `tests`): review of 76b9df6. The card notes (expressions, OCR) also follow a custom card prompt with a `"headword"` key and skip a prompt that asks for `"selection"`/`"ocrFix"` itself (`takesCardNotes`); Dicionários says when the prompt takes none. Only the found `lookup.contextMarks` place things (saved cards, cloze, pictures), never the AI's proposal. The Anki cloze is the occurrence looked up (`clozeAt`, `rangeWithin`), also for a plain repeated word, which before always took the first match. Occurrences in `cardHints` are whole words ("turnover" is not "turn").
 

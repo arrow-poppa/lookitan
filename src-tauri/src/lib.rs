@@ -162,6 +162,10 @@ struct OverlayWord {
     /// radians (see `WordBox::angle`).
     #[serde(skip_serializing_if = "Option::is_none")]
     angle: Option<f64>,
+    /// For a piece of a word broken across lines or columns, the number its other pieces share
+    /// (see `WordBox::group`): the overlay highlights them together.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group: Option<u32>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -803,12 +807,12 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
                 let (hx0, hy0) = r.capture.to_desktop(w.hit.0, w.hit.1);
                 let (hx1, hy1) = r.capture.to_desktop(w.hit.2, w.hit.3);
                 let (hx, hy, hw, hh) = css_rect(hx0, hy0, hx1, hy1);
-                OverlayWord { text: w.text, x, y, w: w2, h, hit: Some([hx, hy, hw, hh]), angle: (w.angle != 0.0).then_some(w.angle as f64) }
+                OverlayWord { text: w.text, x, y, w: w2, h, hit: Some([hx, hy, hw, hh]), angle: (w.angle != 0.0).then_some(w.angle as f64), group: w.group }
             })
             .collect();
         let selected = selected.map(|(x0, y0, x1, y1)| {
             let (x, y, w, h) = css_rect(x0, y0, x1, y1);
-            OverlayWord { text: String::new(), x, y, w, h, hit: None, angle: None }
+            OverlayWord { text: String::new(), x, y, w, h, hit: None, angle: None, group: None }
         });
         // Only a profile set to freeze shows the captured frame; otherwise the screen stays live
         // under the word highlights.
@@ -817,7 +821,7 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
             let c = &r.capture;
             let (x, y, w, h) = css_rect(c.origin_x, c.origin_y,
                 c.origin_x + c.image.width() as f64 / c.scale, c.origin_y + c.image.height() as f64 / c.scale);
-            OverlayWord { text: String::new(), x, y, w, h, hit: None, angle: None }
+            OverlayWord { text: String::new(), x, y, w, h, hit: None, angle: None, group: None }
         });
         OverlayPayload {
             id,
@@ -830,7 +834,7 @@ fn emit_overlay(app: &AppHandle, id: u64, selected: Option<(f64, f64, f64, f64)>
                 let (x0, y0) = r.capture.to_desktop(b.x0, b.y0);
                 let (x1, y1) = r.capture.to_desktop(b.x1, b.y1);
                 let (x, y, w, h) = css_rect(x0, y0, x1, y1);
-                OverlayWord { text: String::new(), x, y, w, h, hit: None, angle: None }
+                OverlayWord { text: String::new(), x, y, w, h, hit: None, angle: None, group: None }
             }),
             viewport_width,
             viewport_height,

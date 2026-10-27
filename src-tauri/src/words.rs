@@ -100,6 +100,10 @@ pub struct WordBox {
     /// radians. `hit` is then upright about its centre, and the drawn box lies against it as it
     /// does in the line's frame, so turning the two together puts each on the screen. 0 otherwise.
     pub angle: f32,
+    /// For a piece of a word an analyzer joined across a line or column break (進 at the foot of
+    /// one column, めて at the head of the next), a number shared by all its pieces and no other
+    /// box, so the overlay highlights them together, each in its own box. None otherwise.
+    pub group: Option<u32>,
 }
 
 /// How far the hit area reaches past the first and last word of a line, in line heights.
@@ -155,14 +159,14 @@ pub fn word_boxes(lines: &[OcrLine], seg: Option<&dyn Segment>) -> Vec<WordBox> 
         let first = out.len();
         let spans = match analyzed.get(li) {
             Some(Some(spans)) => spans.clone(),
-            _ => scanned_spans(line),
+            _ => scanned_spans(line).into_iter().map(|(start, end)| (start, end, None)).collect(),
         };
-        for (start, end) in spans {
+        for (start, end, group) in spans {
             let text: String = chars[start..end].iter().map(|c| c.ch).collect();
             if !text.trim().is_empty() {
                 let (y0, y1) = text_rows(line);
                 let (x0, x1) = span_x(line, start, end);
-                out.push(WordBox { text, x0, y0, x1, y1, hit: (0.0, 0.0, 0.0, 0.0), angle: 0.0 });
+                out.push(WordBox { text, x0, y0, x1, y1, hit: (0.0, 0.0, 0.0, 0.0), angle: 0.0, group });
             }
         }
         // Left to right on screen, whichever way the line reads.
@@ -364,21 +368,35 @@ fn analyzed_line(line: &OcrLine, seg: &dyn Segment) -> bool {
     line.chars.iter().any(|c| seg.handles(c.ch))
 }
 
+/// A word's characters on one line, and the group of its pieces when it has pieces on several
+/// lines (`WordBox::group`).
+type Span = (usize, usize, Option<u32>);
+
 /// The words of every line the analyzer reads, as character ranges. Like Lookupper, each paragraph
-/// is analyzed as one text, so a word broken across two lines is one word with a piece on each.
-fn analyzed_spans(lines: &[OcrLine], para: &[usize], seg: &dyn Segment) -> Vec<Option<Vec<(usize, usize)>>> {
-    let mut out: Vec<Option<Vec<(usize, usize)>>> = vec![None; lines.len()];
+/// is analyzed as one text, so a word broken across two lines is one word with a piece on each;
+/// those pieces share a group number, unique among all lines.
+fn analyzed_spans(lines: &[OcrLine], para: &[usize], seg: &dyn Segment) -> Vec<Option<Vec<Span>>> {
+    let mut out: Vec<Option<Vec<Span>>> = vec![None; lines.len()];
+    let mut groups = 0u32;
     for i in 0..lines.len() {
         if out[i].is_some() || !analyzed_line(&lines[i], seg) {
             continue;
         }
         let (text, pieces) = join(lines, &paragraph(lines, para, i));
         let words = seg.words(&text.iter().collect::<String>());
-        for p in &pieces {
-            if out[p.line].is_some() || !analyzed_line(&lines[p.line], seg) {
-                continue;
-            }
-            let spans = words.iter().filter_map(|w| piece_span(p, w.start, w.end)).collect();
+        let read: Vec<&Piece> = pieces.iter().filter(|p| out[p.line].is_none() && analyzed_line(&lines[p.line], seg)).collect();
+        // Words with a piece on more than one of these lines, by their index in `words`.
+        let group: Vec<Option<u32>> = words
+            .iter()
+            .map(|w| {
+                (read.iter().filter(|p| piece_span(p, w.start, w.end).is_some()).count() > 1).then(|| {
+                    groups += 1;
+                    groups
+                })
+            })
+            .collect();
+        for p in read {
+            let spans = words.iter().zip(&group).filter_map(|(w, &g)| piece_span(p, w.start, w.end).map(|(a, b)| (a, b, g))).collect();
             out[p.line] = Some(spans);
         }
     }
@@ -409,6 +427,7 @@ fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: 
     let w = seg.words(&text.iter().collect::<String>()).into_iter().find(|w| w.start <= at && at < w.end)?;
     let (start, end) = piece_span(p, w.start, w.end)?;
     let word: String = text[w.start..w.end].iter().collect();
+    let whole = (w.start, w.end);
     let line_break = pieces.iter().map(|q| q.at).find(|&b| w.start < b && b < w.end).map(|b| b - w.start);
     let mut candidates: Vec<String> = Vec::new();
     let run: Vec<char> = word.chars().take(MAX_RUN).collect();
@@ -418,7 +437,8 @@ fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: 
             candidates.push(c);
         }
     }
-    let Context { sentence, sentence_lines, context, context_at } = context_of(lines, para, idx, start..end);
+    // The whole word, not only its piece on this line: `context_at` is where `word` starts.
+    let Context { sentence, sentence_lines, context, context_at } = context_in(lines, para, idx, |_| whole);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
     Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break, x0, y0, x1, y1, vertical: false, angle: 0.0 })
@@ -649,14 +669,23 @@ struct Context {
 
 /// The sentence and the paragraph holding characters `span` of line `idx`.
 fn context_of(lines: &[OcrLine], para: &[usize], idx: usize, span: std::ops::Range<usize>) -> Context {
+    context_in(lines, para, idx, |p| {
+        let ws = p.at + span.start.saturating_sub(p.first).min(p.len);
+        (ws, (p.at + span.end.saturating_sub(p.first).min(p.len)).max(ws + 1))
+    })
+}
+
+/// The sentence and the paragraph holding the characters `span` gives in the paragraph of line
+/// `idx` joined as one text, from the piece of that line. A word with pieces on several lines is
+/// given whole, so the context starts at its first character whichever piece was picked.
+fn context_in(lines: &[OcrLine], para: &[usize], idx: usize, span: impl Fn(&Piece) -> (usize, usize)) -> Context {
     let order = paragraph(lines, para, idx);
     let (text, pieces) = join(lines, &order);
     let Some(p) = pieces.iter().find(|p| p.line == idx) else {
         let line = lines[idx].text.trim().to_string();
         return Context { sentence: line.clone(), sentence_lines: vec![idx], context: line, context_at: 0 };
     };
-    let ws = p.at + span.start.saturating_sub(p.first).min(p.len);
-    let we = (p.at + span.end.saturating_sub(p.first).min(p.len)).max(ws + 1);
+    let (ws, we) = span(p);
     let ranges = crate::sentence::split(&text);
     let mut hit = ranges.iter().filter(|r| r.start < we && r.end > ws);
     let first = hit.next().cloned().unwrap_or(0..text.len());
@@ -1139,7 +1168,67 @@ mod tests {
         assert_eq!(p.word, "勉強しています");
         assert_eq!(p.line_break, Some(1), "勉 ends the upper line; the AI is told the word runs across the break");
         assert_eq!((p.x0, p.x1), (100.0, 160.0), "the piece on the pointer's line");
+        assert_eq!(p.context_at, 4, "where the whole word starts, not the piece on the pointer's line");
+        assert_eq!(pick(&lines, 185.0, 110.0, Some(&seg)).unwrap().context_at, 4, "the same from the upper piece");
+        let groups: Vec<Option<u32>> = boxes.iter().map(|b| b.group).collect();
+        assert!(groups[2].is_some() && groups[2] == groups[3], "the two pieces of 勉強しています are one group");
+        assert_eq!([groups[0], groups[1], groups[4]], [None, None, None], "words on one line have none");
         assert_eq!(super::word_boxes(&lines, None).len(), 3, "without an analyzer, a box per run, and the 。");
+    }
+
+    /// 進めて read down two columns, as in "…左へと進" / "めて表記を…": 進 ends the right column and めて
+    /// starts the next one to the left.
+    fn split_columns(left_x: f32) -> ([OcrLine; 2], Words) {
+        let lines = [column("左へと進", 200.0, 100.0), column("めて表記。", left_x, 100.0)];
+        let seg = Words(vec![("左", vec![]), ("へ", vec![]), ("と", vec![]), ("進", vec![]), ("進めて", vec!["進める"]), ("めて", vec![]),
+            ("表記", vec![]), ("。", vec![])]);
+        (lines, seg)
+    }
+
+    #[test]
+    fn a_word_running_down_into_the_next_column_is_one_word_with_a_box_in_each() {
+        // The mock analyzer takes its words in order: in "左へと進めて表記。" it finds 進 nowhere
+        // before 進めて, so the paragraph's words are 左 へ と 進めて 表記 。.
+        let (lines, _) = split_columns(170.0);
+        let seg = Words(vec![("左", vec![]), ("へ", vec![]), ("と", vec![]), ("進めて", vec!["進める"]), ("表記", vec![]), ("。", vec![])]);
+        let boxes = super::word_boxes(&lines, Some(&seg));
+        let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["左", "へ", "と", "進", "めて", "表記", "。"]);
+        let (shin, mete) = (&boxes[3], &boxes[4]);
+        assert!(shin.group.is_some() && shin.group == mete.group, "進 and めて are one word");
+        assert!(boxes.iter().enumerate().all(|(i, b)| i == 3 || i == 4 || b.group.is_none()), "no other box shares it");
+        assert_eq!((shin.x0, shin.y0, shin.x1, shin.y1), (200.0, 160.0, 220.0, 180.0), "進 at the foot of the right column");
+        assert_eq!((mete.x0, mete.y0, mete.x1, mete.y1), (170.0, 100.0, 190.0, 140.0), "めて at the head of the left one");
+        assert!(shin.x0 >= mete.x1, "two boxes, nothing drawn between the columns");
+        for (x, y) in [(210.0, 170.0), (180.0, 110.0), (180.0, 130.0)] {
+            let p = pick(&lines, x, y, Some(&seg)).unwrap();
+            assert_eq!(p.word, "進めて", "from ({x}, {y})");
+            assert_eq!(p.candidates[0], "進める");
+            assert_eq!(p.context, "左へと進めて表記。", "the columns in reading order");
+            assert_eq!(p.context_at, 3, "where 進めて starts, whichever piece is under the pointer");
+            assert_eq!(p.line_break, Some(1));
+            assert_eq!(p.sentence_lines, [0, 1], "the screenshot frames both columns");
+            assert!(p.is_under(x, y));
+        }
+        let p = pick(&lines, 210.0, 170.0, Some(&seg)).unwrap();
+        assert_eq!((p.x0, p.y0, p.x1, p.y1), (200.0, 160.0, 220.0, 180.0), "the pop-up is placed by the piece under the pointer");
+        assert!(!p.is_under(180.0, 110.0), "the box under the pointer is the piece, not both columns");
+        let p = pick(&lines, 180.0, 150.0, Some(&seg)).unwrap();
+        assert_eq!((p.word.as_str(), p.context_at), ("表記", 6), "the next word is apart");
+        assert!(!pick(&lines, 240.0, 170.0, Some(&seg)).is_some_and(|p| p.is_under(240.0, 170.0)), "beside the column is off the word");
+    }
+
+    #[test]
+    fn columns_of_two_paragraphs_are_never_one_word() {
+        // The left column is far from the right one: two paragraphs, analyzed apart.
+        let (lines, seg) = split_columns(60.0);
+        let boxes = super::word_boxes(&lines, Some(&seg));
+        let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(texts, ["左", "へ", "と", "進", "めて", "表記", "。"]);
+        assert!(boxes.iter().all(|b| b.group.is_none()));
+        let p = pick(&lines, 70.0, 110.0, Some(&seg)).unwrap();
+        assert_eq!((p.word.as_str(), p.context.as_str(), p.context_at, p.line_break), ("めて", "めて表記。", 0, None));
+        assert_eq!(pick(&lines, 210.0, 170.0, Some(&seg)).unwrap().word, "進");
     }
 
     #[test]
