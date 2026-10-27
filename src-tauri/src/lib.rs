@@ -43,7 +43,7 @@ use crate::cards::CardStore;
 use crate::dict::{DictList, Dictionary, EntryRef};
 use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
-use crate::ocr::paddle::{plan_batches, split_focus, PaddleOcr, TextBox};
+use crate::ocr::paddle::{plan_batches, split_focus, EnginePlan, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
 use crate::platform::geometry::DisplayGeometry;
@@ -90,7 +90,7 @@ pub struct AppState {
     pub dicts: RwLock<DictList>,
     dict_errors: RwLock<HashMap<String, String>>,
     dictionary_gate: Mutex<()>,
-    paddle: Mutex<Option<(String, bool, Option<settings::GpuPreference>, Arc<PaddleOcr>)>>,
+    paddle: Mutex<Option<(String, EnginePlan, Arc<PaddleOcr>)>>,
     engine_error: RwLock<Option<String>>,
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
     lens: Mutex<Option<Arc<LensOcr>>>,
@@ -271,24 +271,24 @@ fn ensure_ort(state: &AppState) -> Result<()> {
 
 fn ensure_paddle(state: &AppState) -> Result<Arc<PaddleOcr>> {
     ensure_ort(state)?;
-    let (rec, gpu, choice) = {
+    let (rec, plan) = {
         let s = state.settings.read();
-        (s.rec_model().to_string(), s.use_gpu && cfg!(any(windows, target_os = "linux")), s.gpu_choice())
+        (s.rec_model().to_string(), s.engine_plan())
     };
     let mut slot = state.paddle.lock();
-    if let Some((r, g, c, engine)) = slot.as_ref() {
-        if *r == rec && *g == gpu && *c == choice {
+    if let Some((r, p, engine)) = slot.as_ref() {
+        if *r == rec && *p == plan {
             return Ok(engine.clone());
         }
     }
     let models = state.resource_dir.join("models");
     // Drop the previous cached models before allocating their replacements.
     *slot = None;
-    match PaddleOcr::new(&models, &rec, gpu, choice) {
+    match PaddleOcr::new(&models, &rec, plan) {
         Ok(engine) => {
             let engine = Arc::new(engine);
             engine.warm_up();
-            *slot = Some((rec, gpu, choice, engine.clone()));
+            *slot = Some((rec, plan, engine.clone()));
             *state.engine_error.write() = None;
             Ok(engine)
         }
@@ -728,7 +728,7 @@ enum Reading {
 /// Recognizes the lines around the pointer first. In a whole-screen pass the other boxes are
 /// returned in `rest` so the overlay can fill in while the user reads.
 fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, reading: Reading) -> Result<OcrPass> {
-    let key = frame_key(image, &format!("{:?}|{}|{}|{}|{}", kind, settings.ocr_language, settings.rec_model(), settings.use_gpu,
+    let key = frame_key(image, &format!("{:?}|{}|{}|{:?}|{}", kind, settings.ocr_language, settings.rec_model(), settings.engine_plan(),
         if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
     let mut notice = None;
     if kind == OcrEngineKind::Lens {
@@ -1380,8 +1380,7 @@ fn import_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: 
 fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: Settings) -> std::result::Result<(), String> {
     settings::save(&state.config_dir, &next).map_err(|e| format!("{e:#}"))?;
     let engine_changed = previous.ocr_language != next.ocr_language || previous.rec_model() != next.rec_model()
-        || previous.use_gpu != next.use_gpu
-        || previous.gpu_choice() != next.gpu_choice();
+        || previous.engine_plan() != next.engine_plan();
     *state.settings.write() = next.clone();
     if engine_changed {
         warm_engine_in_background(app);
@@ -1474,7 +1473,7 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
     // This synchronous command runs on the UI thread. Model initialization holds these
     // locks for seconds; report a loading snapshot instead of waiting and freezing the WebView.
     let ort = state.ort_ready.try_lock().and_then(|ready| ready.clone());
-    let paddle = state.paddle.try_lock().and_then(|slot| slot.as_ref().map(|(_, _, _, e)| e.clone()));
+    let paddle = state.paddle.try_lock().and_then(|slot| slot.as_ref().map(|(_, _, e)| e.clone()));
     EngineStatus {
         session: platform::session_kind(),
         runtime_loaded: matches!(ort, Some(Ok(()))),

@@ -487,6 +487,44 @@ test('a tiny language chooses tiny or small for itself, and the others show thei
     }
 });
 
+test('the manual OCR mode picks the detector and puts each model on the CPU or the GPU; off, nothing new shows', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ru-RU', useGpu: true});
+    const {root, settings} = fixture;
+    fixture.languages.resolve([{tag: 'ru-RU', name: 'Russian', rec: 'rec_cyrillic'}, {tag: 'pt-BR', name: 'Portuguese (Brazil)', rec: 'rec_tiny'}]);
+    fixture.status.resolve({session: 'windows'});
+    await fixture.initialization;
+    const row = (title) => descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
+    const switches = (r) => descendants(r).filter((node) => node.className === 'segmented');
+    assert.equal(row('Modelo de detecção'), undefined, 'off by default: the automatic choice');
+    assert(row('Usar a placa de vídeo'), 'off: the one GPU switch');
+    assert.equal(switches(fixture.view.document.getElementById('recognizer-row')).length, 0);
+    const manual = descendants(row('Escolher modelos manualmente')).find((node) => node.tagName === 'input');
+    manual.checked = true;
+    manual.dispatch('change');
+    assert.deepEqual([settings.ocrManual, settings.manualDet, settings.manualDetGpu, settings.manualRecGpu], [true, 'det_small', true, true],
+        'the first time, from the automatic choice');
+    assert.equal(row('Usar a placa de vídeo'), undefined, 'each model has its own switch instead');
+    const detector = row('Modelo de detecção');
+    const detSelect = descendants(detector).find((node) => node.tagName === 'select');
+    assert.deepEqual(detSelect.children.map((o) => o.textContent), ['Tiny', 'Small']);
+    assert.equal(detSelect.value, 'det_small');
+    detSelect.value = 'det_tiny';
+    detSelect.dispatch('change');
+    assert.equal(settings.manualDet, 'det_tiny');
+    const [detDevice] = switches(detector);
+    detDevice.children[0].dispatch('click');
+    assert.equal(settings.manualDetGpu, false, 'the detector on the CPU');
+    const recognizer = fixture.view.document.getElementById('recognizer-row');
+    assert.deepEqual(descendants(recognizer).find((node) => node.tagName === 'select').children.map((o) => o.textContent), ['Cirílico (padrão)'],
+        'Cyrillic offers only its own model');
+    const [recDevice] = switches(recognizer);
+    assert(recDevice, 'with a CPU | GPU switch');
+    recDevice.children[0].dispatch('click');
+    assert.equal(settings.manualRecGpu, false);
+    recDevice.children[1].dispatch('click');
+    assert.equal(settings.manualRecGpu, true, 'the recognizer back on the GPU');
+});
+
 test('the capture region offers only Automático and Personalizada, and custom dimensions save on change while OCR is pending', async () => {
     const fixture = await settingsFixture({ocrScope: 'region'});
     const {view, settings} = fixture;

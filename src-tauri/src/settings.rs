@@ -187,6 +187,13 @@ pub struct Settings {
     /// "Modelo de reconhecimento"), each language on its own.
     pub small_recognizer: Vec<String>,
     pub use_gpu: bool,
+    /// "Escolher modelos manualmente" (Configurações › OCR): the detector and the device of each
+    /// model are the user's (`manual_*`, `engine_plan`); off, `use_gpu` and Lookupper's choice.
+    pub ocr_manual: bool,
+    /// The manual mode's detector: "det_small" or "det_tiny".
+    pub manual_det: String,
+    pub manual_det_gpu: bool,
+    pub manual_rec_gpu: bool,
     /// Off: the GPU API's own default (adapter 0 for DirectML, Dawn's default on Linux).
     /// On: OCR asks for the card in `gpu_preference`.
     pub choose_gpu: bool,
@@ -257,6 +264,23 @@ impl Settings {
     pub fn rec_model(&self) -> &'static str {
         crate::ocr::rec_model(&self.ocr_language, &self.small_recognizer)
     }
+
+    /// Which detector runs where, and where the recognizer runs: the manual mode's choices, or
+    /// Lookupper's from `use_gpu`. The GPU only where OCR has one (Windows, Linux).
+    pub fn engine_plan(&self) -> crate::ocr::paddle::EnginePlan {
+        let gpu = cfg!(any(windows, target_os = "linux"));
+        if self.ocr_manual {
+            crate::ocr::paddle::EnginePlan {
+                manual: true,
+                det: if self.manual_det == "det_tiny" { "det_tiny" } else { "det_small" },
+                det_gpu: gpu && self.manual_det_gpu,
+                rec_gpu: gpu && self.manual_rec_gpu,
+                gpu_choice: self.gpu_choice(),
+            }
+        } else {
+            crate::ocr::paddle::EnginePlan::automatic(gpu && self.use_gpu, self.gpu_choice())
+        }
+    }
 }
 
 impl Default for Settings {
@@ -273,6 +297,10 @@ impl Default for Settings {
             ocr_language: "en-US".into(),
             small_recognizer: Vec::new(),
             use_gpu: true,
+            ocr_manual: false,
+            manual_det: "det_small".into(),
+            manual_det_gpu: true,
+            manual_rec_gpu: true,
             choose_gpu: false,
             gpu_preference: GpuPreference::HighPerformance,
             lens_api_key: String::new(),
@@ -658,6 +686,22 @@ mod tests {
         assert_eq!(saved.definition_language, "es-419", "the other settings are kept");
         let ids: Vec<&str> = saved.dictionaries.iter().map(|d| d.id.as_str()).collect();
         assert_eq!(ids, ["ai-word", "ai-context", "ai-images", "local"]);
+    }
+
+    #[test]
+    fn the_engine_plan_is_automatic_until_the_manual_mode_is_on() {
+        let old: Settings = serde_json::from_str(r#"{"useGpu": true}"#).unwrap();
+        assert!(!old.ocr_manual, "settings saved before the option are automatic");
+        let gpu = cfg!(any(windows, target_os = "linux"));
+        assert_eq!(old.engine_plan(), crate::ocr::paddle::EnginePlan::automatic(gpu, None));
+        let manual: Settings = serde_json::from_str(r#"{"ocrManual": true, "manualDet": "det_tiny", "manualDetGpu": false, "manualRecGpu": true, "useGpu": false}"#).unwrap();
+        let plan = manual.engine_plan();
+        assert!(plan.manual);
+        assert_eq!(plan.det, "det_tiny");
+        assert!(!plan.det_gpu, "the detector on the CPU");
+        assert_eq!(plan.rec_gpu, gpu, "the recognizer on the GPU, though useGpu is off");
+        let odd: Settings = serde_json::from_str(r#"{"ocrManual": true, "manualDet": "det_huge"}"#).unwrap();
+        assert_eq!(odd.engine_plan().det, "det_small", "an unknown detector is the small one");
     }
 
     #[test]

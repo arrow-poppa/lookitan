@@ -2,6 +2,8 @@
 //
 // Engine choice mirrors Lookupper: try the `small` detector on the GPU (DirectML on Windows, WebGPU
 // on Linux) first and fall back to the `tiny` detector on the CPU with full graph optimization.
+// In the manual mode (Configurações › OCR, `EnginePlan::manual`) the user picks the detector and
+// where each model runs; a model that fails on the GPU then goes on, the same model, on the CPU.
 // Normalization comes from the official PaddlePaddle `inference.yml` of each model; the detector's
 // border, binarization, unclip ratio and image size are Lookupper's.
 
@@ -85,6 +87,27 @@ mod tests {
                 .unwrap(),
             7
         );
+    }
+
+    #[test]
+    fn the_automatic_plan_is_lookuppers_and_the_manual_one_keeps_its_detector_on_the_cpu() {
+        let auto = EnginePlan::automatic(true, None);
+        assert_eq!(auto.det_models(), ("det_small", "det_tiny"), "small on the GPU, tiny when it falls back");
+        assert!(auto.det_gpu && auto.rec_gpu);
+        let off = EnginePlan::automatic(false, None);
+        assert!(!off.det_gpu && !off.rec_gpu);
+        let manual = EnginePlan { manual: true, det: "det_small", det_gpu: false, rec_gpu: true, gpu_choice: None };
+        assert_eq!(manual.det_models(), ("det_small", "det_small"), "the chosen detector on either device");
+        let tiny = EnginePlan { det: "det_tiny", det_gpu: true, ..manual };
+        assert_eq!(tiny.det_models(), ("det_tiny", "det_tiny"));
+    }
+
+    #[test]
+    fn the_box_threshold_follows_the_detector_and_the_image_size_its_device() {
+        assert_eq!(box_thresh("det_small"), 0.45);
+        assert_eq!(box_thresh("det_tiny"), 0.4);
+        assert_eq!(det_max_side(true), DET_MAX_SIDE_GPU);
+        assert_eq!(det_max_side(false), DET_MAX_SIDE_CPU);
     }
 
     #[test]
@@ -587,11 +610,49 @@ fn turned_kernel(pixels: &[(usize, usize)], miny: usize, maxy: usize) -> Option<
     quad::min_area_rect(corners).filter(quad::Rect::rotated)
 }
 
+/// Which detector runs where, and where the recognizer runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnginePlan {
+    /// Off: Lookupper's choice, `det_small` on the GPU (falling back to `det_tiny` on the CPU) and
+    /// the recognizer wherever the detector ended up. On: the user's (Configurações › OCR).
+    pub manual: bool,
+    /// The detector in the manual mode: "det_small" or "det_tiny".
+    pub det: &'static str,
+    pub det_gpu: bool,
+    /// Manual mode only; the automatic plan puts the recognizer where the detector is.
+    pub rec_gpu: bool,
+    pub gpu_choice: Option<GpuPreference>,
+}
+
+impl EnginePlan {
+    pub fn automatic(gpu: bool, gpu_choice: Option<GpuPreference>) -> Self {
+        Self { manual: false, det: "det_small", det_gpu: gpu, rec_gpu: gpu, gpu_choice }
+    }
+
+    /// The detector tried on the GPU, and the one on the CPU (from the start or after a GPU failure).
+    fn det_models(&self) -> (&'static str, &'static str) {
+        if self.manual { (self.det, self.det) } else { ("det_small", "det_tiny") }
+    }
+}
+
+/// The detector's box score threshold: the small model's maps are sharper (Lookupper's values,
+/// which it pairs with the GPU and the CPU).
+fn box_thresh(det_model: &str) -> f32 {
+    if det_model == "det_small" { 0.45 } else { 0.4 }
+}
+
+/// Longest side of the detector's image on each device.
+fn det_max_side(on_gpu: bool) -> f32 {
+    if on_gpu { DET_MAX_SIDE_GPU } else { DET_MAX_SIDE_CPU }
+}
+
 pub struct PaddleOcr {
     det: Mutex<InferenceSession>,
     rec: Mutex<InferenceSession>,
     dict: Vec<String>,
     det_on_gpu: Arc<AtomicBool>,
+    /// The detector on the GPU and on the CPU (`EnginePlan::det_models`).
+    det_models: (&'static str, &'static str),
     pub rec_model: String,
     rec_on_gpu: Arc<AtomicBool>,
 }
@@ -703,27 +764,31 @@ fn gpu_session(_path: &Path, _choice: Option<GpuPreference>) -> Result<Session> 
 }
 
 impl PaddleOcr {
-    pub fn new(models_dir: &Path, rec_stem: &str, want_gpu: bool, gpu_choice: Option<GpuPreference>) -> Result<Self> {
-        let det_small = models_dir.join("det_small.onnx");
-        let det_tiny = models_dir.join("det_tiny.onnx");
+    pub fn new(models_dir: &Path, rec_stem: &str, plan: EnginePlan) -> Result<Self> {
+        let gpu_choice = plan.gpu_choice;
+        let (det_gpu_model, det_cpu_model) = plan.det_models();
+        let det_gpu_path = models_dir.join(format!("{det_gpu_model}.onnx"));
+        let det_cpu_path = models_dir.join(format!("{det_cpu_model}.onnx"));
         let rec_path = models_dir.join(format!("{rec_stem}.onnx"));
         let dict_path = models_dir.join(format!("{rec_stem}.dict.json"));
         if !rec_path.exists() {
             bail!("recognition model not found: {}", rec_path.display());
         }
 
-        let (det, det_model, det_on_gpu) = if want_gpu {
-            match gpu_session(&det_small, gpu_choice) {
-                Ok(s) => (s, "det_small", true),
+        let (det, det_model, det_on_gpu) = if plan.det_gpu {
+            match gpu_session(&det_gpu_path, gpu_choice) {
+                Ok(s) => (s, det_gpu_model, true),
                 Err(e) => {
                     log::warn!("Ocr.GpuFallback.Detection: {e:#}");
-                    (cpu_session(&det_tiny)?, "det_tiny", false)
+                    (cpu_session(&det_cpu_path)?, det_cpu_model, false)
                 }
             }
         } else {
-            (cpu_session(&det_tiny)?, "det_tiny", false)
+            (cpu_session(&det_cpu_path)?, det_cpu_model, false)
         };
-        let (rec, rec_on_gpu) = if det_on_gpu {
+        // Automatic: the recognizer goes where the detector went; manual: where the user put it.
+        let rec_wants_gpu = if plan.manual { plan.rec_gpu } else { det_on_gpu };
+        let (rec, rec_on_gpu) = if rec_wants_gpu {
             match gpu_session(&rec_path, gpu_choice) {
                 Ok(s) => (s, true),
                 Err(e) => {
@@ -749,7 +814,7 @@ impl PaddleOcr {
             det: Mutex::new(InferenceSession {
                 session: Some(det),
                 on_gpu: det_on_gpu.clone(),
-                cpu_path: det_tiny,
+                cpu_path: det_cpu_path,
                 stage: "Detection",
             }),
             rec: Mutex::new(InferenceSession {
@@ -760,6 +825,7 @@ impl PaddleOcr {
             }),
             dict,
             det_on_gpu,
+            det_models: (det_gpu_model, det_cpu_model),
             rec_model: rec_stem.to_string(),
             rec_on_gpu,
         })
@@ -770,19 +836,16 @@ impl PaddleOcr {
     }
 
     fn det_max_side(&self) -> f32 {
-        if self.det_on_gpu() { DET_MAX_SIDE_GPU } else { DET_MAX_SIDE_CPU }
+        det_max_side(self.det_on_gpu())
     }
 
     pub fn rec_on_gpu(&self) -> bool {
         self.rec_on_gpu.load(Ordering::Relaxed)
     }
 
+    /// The detector in use: the GPU's while it runs there, else the CPU's (also after a GPU failure).
     pub fn det_model(&self) -> &'static str {
-        if self.det_on_gpu() {
-            "det_small"
-        } else {
-            "det_tiny"
-        }
+        if self.det_on_gpu() { self.det_models.0 } else { self.det_models.1 }
     }
 
     /// Runs both models once so the first real lookup does not pay for graph setup.
@@ -900,7 +963,7 @@ impl PaddleOcr {
             })?
         };
 
-        let box_thresh = if self.det_on_gpu() { 0.45 } else { 0.4 };
+        let box_thresh = box_thresh(self.det_model());
         let sx = w as f32 / mw as f32;
         let sy = h as f32 / mh as f32;
         let mut visited = vec![false; mh * mw];

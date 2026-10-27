@@ -290,6 +290,50 @@ function segmenterRow() {
 
 const OWN_MODELS = {rec_arabic: 'Árabe', rec_cyrillic: 'Cirílico', rec_el: 'Grego', rec_korean: 'Coreano'};
 
+/** The manual mode's `CPU | GPU` switch for one model, saved in `key` (manualDetGpu, manualRecGpu). */
+function deviceSwitch(key) {
+    const s = store.settings;
+    return segmented([{value: 'cpu', label: 'CPU'}, {value: 'gpu', label: 'GPU'}], s[key] === false ? 'cpu' : 'gpu', (v) => {
+        s[key] = v === 'gpu';
+        save();
+    });
+}
+
+/** In the manual mode, a model's select with its `CPU | GPU` switch beside it. */
+function withDevice(control, key) {
+    return store.settings.ocrManual ? el('div', {class: 'model-controls'}, control, deviceSwitch(key)) : control;
+}
+
+/**
+ * "Escolher modelos manualmente": off, the OCR picks as Lookupper does (the small detector on the
+ * GPU, the tiny one on the CPU, the recognizer where the detector is); on, the detector and where
+ * each model runs are the user's (Settings `ocrManual`, `manualDet`, `manualDetGpu`, `manualRecGpu`).
+ */
+function manualModelRows() {
+    const s = store.settings;
+    const mode = cardRow({icon: 'settings', title: 'Escolher modelos manualmente',
+        desc: 'Desligado, o Lookitan escolhe: detecção small na placa de vídeo (tiny na CPU sem ela) e o reconhecimento onde a detecção estiver. Ligado, você escolhe o modelo de detecção e se cada modelo roda na CPU ou na GPU.',
+        control: toggle(!!s.ocrManual, (v) => {
+            if (v && s.manualDet === undefined) {
+                // The first time, from the automatic choice.
+                s.manualDet = 'det_small';
+                s.manualDetGpu = s.useGpu !== false;
+                s.manualRecGpu = s.useGpu !== false;
+            }
+            s.ocrManual = v;
+            save();
+            rerender();
+        })});
+    if (!s.ocrManual) { return [mode]; }
+    const detector = select([
+        {value: 'det_tiny', label: 'Tiny'},
+        {value: 'det_small', label: 'Small'},
+    ], s.manualDet === 'det_tiny' ? 'det_tiny' : 'det_small', (v) => { s.manualDet = v; save(); });
+    return [mode, cardRow({icon: 'scan', title: 'Modelo de detecção',
+        desc: 'Acha onde há texto na tela. O small acha mais, mas na CPU é bem mais lento; o tiny ganha pouco na GPU. Se a GPU falhar, o mesmo modelo segue na CPU.',
+        wide: true, control: withDevice(detector, 'manualDetGpu')})];
+}
+
 /**
  * The recognition model of the OCR language: one that reads with rec_tiny can switch to rec_small,
  * on its own; one on rec_small or on a model of its own shows only that model.
@@ -324,7 +368,9 @@ function fillRecognizerRow(row) {
         control = select([{value: language.rec, label: only ? 'Small (padrão)' : `${OWN_MODELS[language.rec] || language.rec} (padrão)`}], language.rec, () => {});
         control.disabled = true;
     }
-    row.append(cardRow({icon: 'scan', title: 'Modelo de reconhecimento', desc, wide: true, control}));
+    // The manual mode adds where it runs; the models offered stay those that read the language's
+    // script (rec_tiny and rec_small have no Cyrillic, Arabic or Hangul).
+    row.append(cardRow({icon: 'scan', title: 'Modelo de reconhecimento', desc, wide: true, control: withDevice(control, 'manualRecGpu')}));
 }
 
 function fillSegmenterRow(row) {
@@ -633,10 +679,12 @@ function render(root) {
             control: engineSelect(s.ocrEngine, (v) => { s.ocrEngine = v; })}),
         cardRow({icon: 'scan', title: 'OCR da tela inteira', desc: `Usado quando o atalho é apertado fora de uma palavra; depois é só clicar na palavra. ${engineDesc(screenEngine)}`, wide: true,
             control: engineSelect(screenEngine, (v) => { s.screenOcrEngine = v; })}),
+        ...manualModelRows(),
         recognizerRow(),
         usesLens ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'Opcional nos instaladores do GitHub, que já vêm com uma chave. Cole a sua se ela parar de funcionar.', wide: true, control: lensKey}) : null,
         captureRegionRows(),
-        cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: isWindows ? 'DirectML, com volta automática para a CPU.' : 'WebGPU via Vulkan (experimental), com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}),
+        // In the manual mode each model has its own CPU | GPU switch instead.
+        s.ocrManual ? null : cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: isWindows ? 'DirectML, com volta automática para a CPU.' : 'WebGPU via Vulkan (experimental), com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}),
         cardRow({icon: 'settings', title: 'Escolher a placa de vídeo', desc: 'Para computadores com duas placas, como Intel junto com NVIDIA. Desligado, o sistema escolhe.',
             control: toggle(!!s.chooseGpu, (v) => { s.chooseGpu = v; save(); rerender(); })}),
         s.chooseGpu ? cardRow({icon: 'settings', title: 'Placa usada no OCR', desc: 'Vale a partir da próxima leitura.', wide: true,

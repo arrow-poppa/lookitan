@@ -82,6 +82,9 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 /* Configurações › "Perfil". */
 .profile-controls { display: flex; align-items: center; gap: 8px; }
 .profile-controls select, .profile-controls input { flex: 1; min-width: 0; }
+/* A model's select with its CPU | GPU switch (Configurações › OCR, manual mode). */
+.model-controls { display: flex; align-items: center; gap: 8px; }
+.model-controls select { flex: 1; min-width: 0; }
 .sub { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 2px 40px; }
 .sub label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 
