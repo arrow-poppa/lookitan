@@ -4,7 +4,6 @@ import {invoke} from '@tauri-apps/api/core';
 import {api} from './api.js';
 import {sentenceAudioFile} from './audio.js';
 import {clozeRange, selectedSpan} from './ai/selection.js';
-import {translationText} from './ai/word-card.js';
 
 /**
  * @param {object} lookup popup state: payload, aiCard, explanation, contextTranslation, glossaries
@@ -16,9 +15,6 @@ export function cardFromLookup(lookup, settings) {
         word: lookup.payload.word,
         dictionaryForm: ai.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word,
         translation: ai.translation || '',
-        // Other translations of the same meaning ("concluiu" besides "terminou"); `translation`
-        // stays the main one, a string, as before.
-        translationAlternatives: ai.translationAlternatives || [],
         definition: ai.definition || '',
         explanation: lookup.explanation || '',
         contextTranslation: lookup.contextTranslation || '',
@@ -70,7 +66,6 @@ export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
             labels: card.labels,
             definition: card.definition,
             translation: card.translation,
-            translationAlternatives: card.translationAlternatives || [],
             reading: card.reading,
             transliteration: card.transliteration,
             form: card.form,
@@ -101,14 +96,13 @@ export const CSV_COLUMNS = [
 
 export function toCsv(cards) {
     const head = CSV_COLUMNS.map(([, label]) => csvCell(label)).join(',');
-    const cell = (c, key) => (key === 'createdAt' ? new Date(c.createdAt).toISOString() : (key === 'translation' ? translationText(c) : c[key]));
-    const rows = cards.map((c) => CSV_COLUMNS.map(([key]) => csvCell(cell(c, key))).join(','));
+    const rows = cards.map((c) => CSV_COLUMNS.map(([key]) => csvCell(key === 'createdAt' ? new Date(c.createdAt).toISOString() : c[key])).join(','));
     return [head, ...rows].join('\r\n');
 }
 
 /** Quizlet import format: term<TAB>definition, one card per line. */
 export function toQuizlet(cards) {
     return cards
-        .map((c) => `${(c.word || '').replace(/\s+/g, ' ')}\t${[translationText(c), c.definition].filter(Boolean).join(' — ').replace(/\s+/g, ' ')}`)
+        .map((c) => `${(c.word || '').replace(/\s+/g, ' ')}\t${[c.translation, c.definition].filter(Boolean).join(' — ').replace(/\s+/g, ' ')}`)
         .join('\n');
 }

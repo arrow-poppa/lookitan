@@ -1,52 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {normalizeAiOptions} from '../src/lib/ai/defaults.js';
-import {CARD_PROMPT, LEGACY_CARD_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, WORD_TRANSLATION_PROMPT,
-    cardPrompt, ocrErrorsFor, parseCard, parseCardProgress, translationText} from '../src/lib/ai/word-card.js';
-import {cardFromLookup, noteContextFromCard, toCsv, toQuizlet} from '../src/lib/cards.js';
+import {CARD_PROMPT, LEGACY_CARD_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT,
+    WORD_TRANSLATION_PROMPT, cardPrompt, ocrErrorsFor, parseCard} from '../src/lib/ai/word-card.js';
+import {cardFromLookup, toCsv, toQuizlet} from '../src/lib/cards.js';
 
-const reply = (alternatives) => parseCard(JSON.stringify({headword: 'finish', translation: 'terminou', translationAlternatives: alternatives}));
-
-test('the card keeps one to three translations, the main one first', () => {
-    assert.deepEqual(reply(undefined).translationAlternatives, [], 'old replies have none');
-    assert.equal(translationText(reply(undefined)), 'terminou', 'one: as before');
-    assert.equal(translationText(reply(['concluiu'])), 'terminou, concluiu');
-    assert.equal(translationText(reply(['concluiu', 'acabou'])), 'terminou, concluiu, acabou');
-    assert.deepEqual(reply(['concluiu', 'acabou', 'finalizou']).translationAlternatives, ['concluiu', 'acabou'], 'at most two besides the main one');
-    assert.deepEqual(reply([]).translationAlternatives, []);
-    assert.equal(typeof reply(['concluiu']).translation, 'string', 'translation stays a string');
-});
-
-test('alternatives that are malformed, repeated or too long are dropped or cut', () => {
-    for (const bad of ['concluiu', 3, null, {a: 1}]) { assert.deepEqual(reply(bad).translationAlternatives, [], JSON.stringify(bad)); }
-    assert.deepEqual(reply([3, null, {t: 'x'}, ['y'], '', '  ', 'concluiu']).translationAlternatives, ['concluiu'], 'strings only');
-    assert.deepEqual(reply(['Terminou', ' terminou ', 'con  cluiu', 'Con cluiu']).translationAlternatives, ['con cluiu'],
-        'never the main one again, nor twice, case and spacing aside');
-    const long = reply(['a'.repeat(200)]).translationAlternatives[0];
-    assert.equal(long.length, 80);
-    assert.equal(parseCard(JSON.stringify({translation: `x${' '.repeat(5)}y\n`})).translation, 'x y');
-    const ar = parseCard(JSON.stringify({translation: 'أطفأ', translationAlternatives: ['أغلق', '𠮷野']}));
-    assert.equal(translationText(ar), 'أطفأ, أغلق, 𠮷野', 'right-to-left and astral text kept as written');
-    assert.equal(translationText({translation: '', translationAlternatives: ['b']}), 'b');
-    assert.equal(translationText(null), '');
-});
-
-test('alternatives arriving while streaming are read as far as they came', () => {
-    const partial = parseCardProgress('{"headword":"finish","translation":"terminou","translationAlternatives":["conclu');
-    assert.equal(translationText(partial), 'terminou, conclu');
-});
-
-test('the prompt asks for alternatives with the translation, only once, and not when the translation is off', () => {
+test('the translation prompt asks for the best translation and up to two others of the same meaning, in the one key', () => {
     const settings = {ocrLanguage: 'en-US', translationLanguage: 'pt-BR'};
     const prompt = cardPrompt(CARD_PROMPT, settings, {});
-    assert(prompt.includes('"translationAlternatives": [up to two other natural translations into Brazilian Portuguese'));
-    assert(prompt.indexOf('"translation"') < prompt.indexOf('"translationAlternatives"'));
-    assert.equal(prompt.split('"translationAlternatives"').length, 2);
-    assert(!cardPrompt(CARD_PROMPT, {...settings, showWordTranslation: false}, {}).includes('translation'), 'off: no translation key at all');
-    const mine = cardPrompt(CARD_PROMPT, settings, {wordTranslationPrompt: 'one word in {{translationLanguage}}'});
-    assert(mine.includes('"translation": one word in Brazilian Portuguese, "translationAlternatives"'), 'the user\'s translation prompt is kept');
-    const own = `${CARD_PROMPT.slice(0, -1)}, "translationAlternatives": my own}`;
-    assert.equal(cardPrompt(own, settings, {}).split('"translationAlternatives"').length, 2, 'a prompt asking for them itself is not asked twice');
+    assert(prompt.includes(`"translation": ${WORD_TRANSLATION_PROMPT.replace('{{translationLanguage}}', 'Brazilian Portuguese')}`));
+    assert(WORD_TRANSLATION_PROMPT.includes('separated by commas, up to two other natural translations with exactly this meaning'));
+    assert(WORD_TRANSLATION_PROMPT.includes('never other senses'));
+    assert(!prompt.includes('translationAlternatives'), 'no other key');
+    assert(!cardPrompt(CARD_PROMPT, {...settings, showWordTranslation: false}, {}).includes('translation'), 'off: no translation asked');
+    assert(cardPrompt(CARD_PROMPT, settings, {wordTranslationPrompt: 'one word in {{translationLanguage}}'}).includes('"translation": one word in Brazilian Portuguese,'),
+        'the user\'s own translation prompt is sent as written');
+});
+
+test('a translation with alternatives is one string, kept as it came everywhere', () => {
+    const card = parseCard('{"headword":"finish","translation":"terminou, concluiu","definition":"to end"}');
+    assert.equal(card.translation, 'terminou, concluiu');
+    assert.equal(Object.hasOwn(card, 'translationAlternatives'), false);
+    const lookup = {payload: {word: 'finished', sentence: 'She finished her homework.', context: 'She finished her homework.', contextAt: 4}, aiCard: card};
+    const saved = {...cardFromLookup(lookup, {ocrLanguage: 'en-US'}), createdAt: 0};
+    assert.equal(saved.translation, 'terminou, concluiu');
+    assert(toCsv([saved]).includes('"terminou, concluiu"'));
+    assert(toQuizlet([saved]).startsWith('finished\tterminou, concluiu'));
 });
 
 test('every key of the default card describes the unit; the form stays the word on screen', () => {
@@ -60,26 +39,14 @@ test('every key of the default card describes the unit; the form stays the word 
 });
 
 test('prompts still on an earlier default move to the new one; edited ones stay', () => {
-    const old = normalizeAiOptions({cardPrompt: LEGACY_CARD_PROMPT, wordTranslationPrompt: LEGACY_WORD_TRANSLATION_PROMPT, ocrErrorsPrompt: LEGACY_OCR_ERRORS_PROMPT, cardPromptVersion: 3});
-    assert.equal(old.cardPrompt, CARD_PROMPT);
-    assert.equal(old.wordTranslationPrompt, WORD_TRANSLATION_PROMPT);
-    assert.equal(old.ocrErrorsPrompt, OCR_ERRORS_PROMPT);
+    for (const translation of [LEGACY_WORD_TRANSLATION_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT]) {
+        const old = normalizeAiOptions({cardPrompt: LEGACY_CARD_PROMPT, wordTranslationPrompt: translation, ocrErrorsPrompt: LEGACY_OCR_ERRORS_PROMPT, cardPromptVersion: 3});
+        assert.equal(old.cardPrompt, CARD_PROMPT);
+        assert.equal(old.wordTranslationPrompt, WORD_TRANSLATION_PROMPT, translation);
+        assert.equal(old.ocrErrorsPrompt, OCR_ERRORS_PROMPT);
+    }
     const edited = normalizeAiOptions({cardPrompt: `${LEGACY_CARD_PROMPT} Be brief.`, wordTranslationPrompt: 'mine', ocrErrorsPrompt: 'my OCR note', cardPromptVersion: 3});
     assert.deepEqual([edited.cardPrompt, edited.wordTranslationPrompt, edited.ocrErrorsPrompt], [`${LEGACY_CARD_PROMPT} Be brief.`, 'mine', 'my OCR note']);
-});
-
-test('saved words, their Anki notes and the exports keep every translation; old cards still work', () => {
-    const lookup = {payload: {word: 'finished', sentence: 'She finished her homework.', context: 'She finished her homework.', contextAt: 4},
-        aiCard: reply(['concluiu']), contextMarks: null};
-    const card = {...cardFromLookup(lookup, {ocrLanguage: 'en-US'}), createdAt: 0};
-    assert.equal(card.translation, 'terminou');
-    assert.deepEqual(card.translationAlternatives, ['concluiu']);
-    assert.deepEqual(noteContextFromCard(card).aiCard.translationAlternatives, ['concluiu']);
-    assert(toCsv([card]).includes('"terminou, concluiu"'), 'the CSV translation column has both');
-    assert(toQuizlet([card]).startsWith('finished\tterminou, concluiu'), 'and Quizlet');
-    const old = {word: 'run', translation: 'correr', createdAt: 0};
-    assert(toCsv([old]).split('\r\n')[1].includes(',correr,'), 'a card saved before has only its translation');
-    assert.deepEqual(noteContextFromCard(old).aiCard.translationAlternatives, []);
 });
 
 test('the OCR note corrects only clear misreadings, and the scripts\' examples are only misread characters', () => {

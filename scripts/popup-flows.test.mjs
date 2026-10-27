@@ -176,24 +176,6 @@ test('the word card and the explanation read the whole paragraph, the context tr
     assert(card.innerHTML.includes('Run club. I <mark>run</mark> daily.'), 'the word is marked where the OCR found it');
 });
 
-test('the other translations share the translation line, hidden and shown with it, escaped', async () => {
-    const answer = '{"headword":"finish","definition":"to end","translation":"terminou","translationAlternatives":["concluiu","<b>acabou</b>"]}';
-    const view = await fixture({explain: async () => answer});
-    view.lookup.payload = {word: 'finished', sentence: 'She finished her homework.', entries: []};
-    const body = new Element();
-    await view.popup.runCard(body);
-    assert(body.innerHTML.includes('<div class="tr" dir="auto" title="">terminou, concluiu, &lt;b&gt;acabou&lt;/b&gt;</div>'), 'one line, the main one first');
-    view.settings.hideWordTranslation = true;
-    const hidden = new Element();
-    await view.popup.runCard(hidden);
-    assert(hidden.innerHTML.includes('<div class="tr hidden-tr" dir="auto" title="Clique para mostrar">terminou, concluiu,'), 'all hidden together');
-    assert.equal(hidden.innerHTML.split('class="tr').length, 2, 'in one block');
-    view.settings.showWordTranslation = false;
-    const off = new Element();
-    await view.popup.runCard(off);
-    assert(!off.innerHTML.includes('terminou') && !off.innerHTML.includes('concluiu'), 'off: none of them');
-});
-
 test('the card marks each piece of the longer unit it describes, safely, and the word when the unit is not found', async () => {
     let answer = '{"headword":"turn off","definition":"stop","selection":{"parts":["turned","off"],"type":"phrasal_verb"}}';
     let calls = 0;

@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FORM_FIELD, FORM_PROMPT, LEGACY_CARD_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FORM_FIELD, FORM_PROMPT, LEGACY_CARD_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -160,11 +160,13 @@ export function normalizeAiOptions(stored) {
         out.cardPrompt = out.cardPrompt.replace(COMPONENTS_FIELD, COMPONENTS_FIELD + FORM_FIELD);
     }
     out.cardPromptVersion = 3;
-    // The defaults of 2026-10-27 describe the longer unit a word belongs to in every key, ask for
-    // other translations of the same meaning and correct the OCR only when sure; a prompt still on
-    // the earlier default moves to it, an edited one stays as the user wrote it.
+    // The defaults of 2026-10-27 describe the longer unit a word belongs to in every key, ask in the
+    // translation for up to two other translations of the same meaning and correct the OCR only
+    // when sure; a prompt still on an earlier default moves to it, an edited one stays as written.
     if (out.cardPrompt.trim() === LEGACY_CARD_PROMPT) { out.cardPrompt = CARD_PROMPT; }
-    if (out.wordTranslationPrompt.trim() === LEGACY_WORD_TRANSLATION_PROMPT) { out.wordTranslationPrompt = WORD_TRANSLATION_PROMPT; }
+    if ([LEGACY_WORD_TRANSLATION_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT].includes(out.wordTranslationPrompt.trim())) {
+        out.wordTranslationPrompt = WORD_TRANSLATION_PROMPT;
+    }
     if (out.ocrErrorsPrompt.trim() === LEGACY_OCR_ERRORS_PROMPT) { out.ocrErrorsPrompt = OCR_ERRORS_PROMPT; }
     // The Arabic-only OCR note of 2026-10-24 became the OCR errors note of every language.
     delete out.arabicOcrPrompt;

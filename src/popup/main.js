@@ -7,7 +7,7 @@ import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress, translationText} from '../lib/ai/word-card.js';
+import {cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {clozeRange, locateSelection, selectedSpan} from '../lib/ai/selection.js';
@@ -322,7 +322,7 @@ function renderCard(body, card, pending = false) {
     body.innerHTML = `
         <div class="hw" dir="${dir}"><span class="word" dir="auto">${escapeHtml(headword)}</span><button class="ghost icon speak" title="${audioOthers() === 'menu' ? 'Ouvir (clique direito: escolher o áudio)' : 'Ouvir'}">${icon('speaker')}</button><span class="audio-buttons"></span></div>
         ${chips.length ? `<div class="chips" dir="${dir}">${chips.join('')}</div>` : ''}
-        ${translationText(card) && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" dir="auto" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(translationText(card))}</div>` : ''}
+        ${card.translation && settings.showWordTranslation !== false ? `<div class="tr${hide ? ' hidden-tr' : ''}" title="${hide ? 'Clique para mostrar' : ''}">${escapeHtml(card.translation)}</div>` : ''}
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${cardExtrasHtml(card, ai.cardComponents !== false)}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn explain-word">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
@@ -1117,7 +1117,7 @@ function savedCardHtml(c, current) {
     return `
         <div class="saved-head" dir="${headDir(c.dictionaryForm || c.word)}"><span class="word" dir="auto">${escapeHtml(c.dictionaryForm || c.word)}</span>${chips}</div>
         ${c.dictionaryForm && c.word && c.dictionaryForm.toLowerCase() !== c.word.toLowerCase() ? `<div class="muted saved-form">Na tela: <bdi>${escapeHtml(c.word)}</bdi></div>` : ''}
-        ${translationText(c) ? `<div class="tr" dir="auto">${escapeHtml(translationText(c))}</div>` : ''}
+        ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
         ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
         ${cardExtrasHtml(c, true)}
         ${c.explanation ? `<div class="explanation ai-text">${renderMarkdown(c.explanation)}</div>` : ''}

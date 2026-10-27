@@ -7,22 +7,18 @@
 import {occurrence, parseSelection} from './selection.js';
 
 /** Default instruction for the card's "translation" key (the "Prompt da tradução da palavra"): of
- * what the card describes, the word or the longer unit it belongs to. */
-export const WORD_TRANSLATION_PROMPT = 'the single best translation into {{translationLanguage}} of what you describe, as it is meant in this context';
+ * what the card describes, the word or the longer unit it belongs to, the best translation first
+ * and, in the same text, other wordings of exactly this meaning ("terminou, concluiu"), never other
+ * senses. */
+export const WORD_TRANSLATION_PROMPT =
+    'the translation into {{translationLanguage}} of what you describe, as it is meant in this context: the best one, ' +
+    'then, separated by commas, up to two other natural translations with exactly this meaning, only when there are some; never other senses';
 
 /** The first default word translation prompt (for migration). */
 export const LEGACY_WORD_TRANSLATION_PROMPT = 'the translation of the word in this context into {{translationLanguage}}';
 
-/** The card's "translationAlternatives" key, after "translation" while the word translation is on:
- * other wordings of the same meaning, never other senses, so an empty list is the usual answer. */
-export const TRANSLATION_ALTERNATIVES_KEY =
-    ', "translationAlternatives": [up to two other natural translations into {{translationLanguage}} with exactly this meaning in this context, ' +
-    'never other senses nor the main translation again; [] when there are none]';
-
-/** At most this many alternatives are kept besides the main translation. */
-const MAX_ALTERNATIVES = 2;
-/** Characters kept of one translation. */
-const MAX_TRANSLATION = 80;
+/** The default of 2026-10-27 that asked for the best translation alone (for migration). */
+export const SINGLE_WORD_TRANSLATION_PROMPT = 'the single best translation into {{translationLanguage}} of what you describe, as it is meant in this context';
 
 /** Where the card prompt receives the translation key; empty when the word translation is off. */
 export const TRANSLATION_FIELD = '{{translationField}}';
@@ -349,9 +345,7 @@ export function takesCardNotes(template) {
  * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, ocrErrorsPrompt?: string, expressionsPrompt?: string, cardComponents?: boolean, cardOcrFix?: boolean, cardExpressions?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
-    const alternatives = template.includes('"translationAlternatives"') ? '' : TRANSLATION_ALTERNATIVES_KEY;
-    const field = settings.showWordTranslation === false ? '' :
-        `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}${alternatives}`;
+    const field = settings.showWordTranslation === false ? '' : `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}`;
     const language = baseLanguage(settings.ocrLanguage);
     const reading = READING_SYSTEMS[language] ?
         `, "reading": ${promptOr(ai.readingPrompt, READING_PROMPT).replaceAll('{{readingSystem}}', READING_SYSTEMS[language])}` : '';
@@ -370,39 +364,6 @@ export function cardPrompt(template, settings, ai = {}) {
         .replaceAll(READING_FIELD, reading)
         .replaceAll(COMPONENTS_FIELD, components)
         .replaceAll(FORM_FIELD, form) + note, settings);
-}
-
-/** One translation as kept: spaces collapsed, cut to MAX_TRANSLATION characters. */
-function cleanTranslation(value) {
-    return [...String(value).replace(/\s+/gu, ' ').trim()].slice(0, MAX_TRANSLATION).join('');
-}
-
-/** The reply's other translations: strings only, none repeating the main one or each other (case
- * and spacing aside), at most MAX_ALTERNATIVES. */
-function alternativeList(value, main) {
-    if (!Array.isArray(value)) { return []; }
-    const seen = new Set([main.toLocaleLowerCase()]);
-    const out = [];
-    for (const item of value) {
-        const text = typeof item === 'string' ? cleanTranslation(item) : '';
-        const key = text.toLocaleLowerCase();
-        if (text && !seen.has(key) && out.length < MAX_ALTERNATIVES) {
-            seen.add(key);
-            out.push(text);
-        }
-    }
-    return out;
-}
-
-/**
- * The card's translations as one line, the main one first ("terminou, concluiu"): what the pop-up,
- * saved words, Anki and the exports show.
- * @param {{translation?: string, translationAlternatives?: string[]}|null|undefined} card
- */
-export function translationText(card) {
-    const main = String(card?.translation || '').trim();
-    const others = Array.isArray(card?.translationAlternatives) ? card.translationAlternatives.map((t) => String(t).trim()) : [];
-    return (main ? [main, ...others] : others).filter(Boolean).join(', ');
 }
 
 /** The components of a reply: objects with a part, its reading or hanja and its meaning. */
@@ -432,8 +393,7 @@ export function parseCard(text) {
             partOfSpeech: list(obj.partOfSpeech),
             labels: list(obj.labels),
             definition: String(obj.definition || ''),
-            translation: cleanTranslation(obj.translation || ''),
-            translationAlternatives: alternativeList(obj.translationAlternatives, cleanTranslation(obj.translation || '')),
+            translation: String(obj.translation || ''),
             reading: String(obj.reading || ''),
             transliteration: String(obj.transliteration || ''),
             form: list(obj.form),

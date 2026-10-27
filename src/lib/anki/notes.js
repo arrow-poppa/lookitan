@@ -5,7 +5,6 @@ import {AnkiConnect} from './anki-connect.js';
 import {generateAnkiNoteMediaFileName, getFieldMarkers} from './anki-util.js';
 import {markdownToText, renderMarkdown} from '../markdown.js';
 import {rangeWithin} from '../ai/selection.js';
-import {translationText} from '../ai/word-card.js';
 
 export function defaultAnkiOptions() {
     return {
@@ -239,7 +238,7 @@ function ocrFixHtml(fix) {
  */
 function aiCardHtml(headword, ai, explanation, dictionaries = []) {
     const glossary = glossaryHtml(dictionaries);
-    if (!ai.definition && !translationText(ai) && !explanation) { return glossary; }
+    if (!ai.definition && !ai.translation && !explanation) { return glossary; }
     const head = [`<b>${escapeHtml(headword)}</b>`];
     if (ai.reading) { head.push(escapeHtml(ai.reading)); }
     if (ai.transliteration) { head.push(`<i>${escapeHtml(ai.transliteration)}</i>`); }
@@ -249,7 +248,7 @@ function aiCardHtml(headword, ai, explanation, dictionaries = []) {
     const parts = [block(head.join(' '))];
     if (ai.ocrFix) { parts.push(`<div dir="ltr"><i>OCR: ${ocrFixHtml(ai.ocrFix)}</i></div>`); }
     if (tags.length) { parts.push(block(`<i>${tags.map(escapeHtml).join(', ')}</i>`)); }
-    if (translationText(ai)) { parts.push(block(escapeHtml(translationText(ai)))); }
+    if (ai.translation) { parts.push(block(escapeHtml(ai.translation))); }
     if (ai.definition) { parts.push(block(escapeHtml(ai.definition))); }
     if (ai.synonyms?.length) { parts.push(block(`<i>${ai.synonyms.map(escapeHtml).join(', ')}</i>`)); }
     if (ai.components?.length) { parts.push(block(componentsHtml(ai))); }
@@ -260,12 +259,12 @@ function aiCardHtml(headword, ai, explanation, dictionaries = []) {
 
 function aiCardPlain(headword, ai, explanation, dictionaries = []) {
     const glossary = glossaryPlain(dictionaries);
-    if (!ai.definition && !translationText(ai) && !explanation) { return glossary; }
+    if (!ai.definition && !ai.translation && !explanation) { return glossary; }
     const tags = [ai.cefr, ...(ai.form || []), ...(ai.partOfSpeech || []), ...(ai.labels || [])].filter(Boolean);
     const lines = [[headword, ai.reading, ai.transliteration, ai.ipa && `/${ai.ipa}/`].filter(Boolean).join(' ')];
     if (ai.ocrFix) { lines.push(`OCR: ${ai.ocrFix}`); }
     if (tags.length) { lines.push(`(${tags.join(', ')})`); }
-    if (translationText(ai)) { lines.push(translationText(ai)); }
+    if (ai.translation) { lines.push(ai.translation); }
     if (ai.definition) { lines.push(ai.definition); }
     if (ai.synonyms?.length) { lines.push(ai.synonyms.join(', ')); }
     lines.push(...componentsPlain(ai));
@@ -307,7 +306,7 @@ function cloze(sentence, word) {
  * @property {string} [sentence]
  * @property {string} [context] The paragraph around the word, used when contextMode is 'paragraph'.
  * @property {{name: string, html: string}[]} [glossaries]
- * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string, translationAlternatives?: string[], reading?: string, transliteration?: string, form?: string[], ocrFix?: string, synonyms?: string[], components?: {part: string, reading: string, meaning: string}[]}} [aiCard]
+ * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string, reading?: string, transliteration?: string, form?: string[], ocrFix?: string, synonyms?: string[], components?: {part: string, reading: string, meaning: string}[]}} [aiCard]
  * @property {string} [aiExplanation]
  * @property {string} [contextTranslation]
  * @property {() => Promise<string|null>} [screenshot] Base64 PNG of the capture.
@@ -363,7 +362,7 @@ export async function buildNote(ctx, anki, conn) {
         'ai-definition': escapeHtml(ai.definition || ''),
         'ai-explanation': renderMarkdown(ctx.aiExplanation || ''),
         'ai-explanation-plain': escapeHtml(markdownToText(ctx.aiExplanation || '')).replace(/\n/g, '<br>'),
-        'translation': escapeHtml(translationText(ai)),
+        'translation': escapeHtml(ai.translation || ''),
         'context-translation': escapeHtml((ctx.contextTranslation || '').replace(/\*\*/g, '')),
         'cefr': escapeHtml(ai.cefr || ''),
         'part-of-speech': escapeHtml((ai.partOfSpeech || []).join(', ')),

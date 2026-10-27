@@ -158,20 +158,6 @@ test('{sentence} and the cloze hold the sentence by default and the whole paragr
     assert.equal(built.fields.Front, 'I run daily.', 'a lookup without a paragraph keeps the sentence');
 });
 
-test('{translation} and the AI card carry every translation, the main one first', async () => {
-    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); });
-    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
-        T: {value: '{translation}'}, Card: {value: '{ai-card}'}, Plain: {value: '{ai-card-plain}'},
-    }}];
-    const ctx = {word: 'finished', headword: 'finish', sentence: 'She finished.',
-        aiCard: {definition: 'to end', translation: 'terminou', translationAlternatives: ['concluiu', '<i>x</i>']}};
-    const built = await notes.buildNote(ctx, options, null);
-    assert.equal(built.fields.T, 'terminou, concluiu, &lt;i&gt;x&lt;/i&gt;');
-    assert(built.fields.Card.includes('terminou, concluiu, &lt;i&gt;x&lt;/i&gt;') && built.fields.Plain.includes('terminou, concluiu'));
-    const old = await notes.buildNote({...ctx, aiCard: {definition: 'to end', translation: 'terminou'}}, options, null);
-    assert.equal(old.fields.T, 'terminou', 'a card without alternatives, as before');
-});
-
 test('the cloze holds the longer unit the AI card marked, when the sentence has it', async () => {
     const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); });
     options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
