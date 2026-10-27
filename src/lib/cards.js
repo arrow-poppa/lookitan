@@ -4,6 +4,13 @@ import {invoke} from '@tauri-apps/api/core';
 import {api} from './api.js';
 import {sentenceAudioFile} from './audio.js';
 import {clozeRange, selectedSpan} from './ai/selection.js';
+import {validDisplayHeadword} from './ai/word-card.js';
+
+/** A saved word's display form of its headword, checked again against its dictionary form and
+ * language (an edit in the Palavras tab may have changed either); '' when it no longer fits. */
+export function savedDisplayHeadword(card) {
+    return validDisplayHeadword({headword: card.dictionaryForm, displayHeadword: card.displayHeadword}, card.language);
+}
 
 /**
  * @param {object} lookup popup state: payload, aiCard, explanation, contextTranslation, glossaries
@@ -14,6 +21,9 @@ export function cardFromLookup(lookup, settings) {
     return {
         word: lookup.payload.word,
         dictionaryForm: ai.headword || lookup.payload.entries?.[0]?.headword || lookup.payload.word,
+        // The headword as shown (stress, macrons; see validDisplayHeadword), when the card had a
+        // valid one; `dictionaryForm` stays the form looked up and matched.
+        displayHeadword: validDisplayHeadword(ai, settings.ocrLanguage),
         translation: ai.translation || '',
         definition: ai.definition || '',
         explanation: lookup.explanation || '',
@@ -58,6 +68,7 @@ export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
         dictionaryOrder,
         word: card.word,
         headword: card.dictionaryForm,
+        displayHeadword: savedDisplayHeadword(card),
         clozeWord: card.context && Array.isArray(card.contextMarks) ? selectedSpan(card.context, card.contextMarks) : '',
         clozeAt: card.context ? clozeRange(card.context, card.contextAt, card.word, card.contextMarks) : null,
         sentence: card.sentence,
@@ -96,14 +107,15 @@ export const CSV_COLUMNS = [
     ['word', 'Palavra'], ['dictionaryForm', 'Forma de dicionário'], ['translation', 'Tradução'],
     ['definition', 'Definição'], ['sentence', 'Frase'], ['sentenceTranslation', 'Tradução da frase'],
     ['ipa', 'IPA'], ['cefr', 'CEFR'], ['partOfSpeech', 'Classe gramatical'], ['explanation', 'Explicação'],
-    ['windowTitle', 'Janela'], ['createdAt', 'Data'],
+    ['windowTitle', 'Janela'], ['createdAt', 'Data'], ['displayHeadword', 'Forma exibida'],
 ];
 
 export function toCsv(cards) {
     const head = CSV_COLUMNS.map(([, label]) => csvCell(label)).join(',');
     // The sentence's translation goes with the sentence; an older word has only its contextTranslation.
     const cell = (c, key) => (key === 'createdAt' ? new Date(c.createdAt).toISOString() :
-        key === 'sentenceTranslation' ? String(c.sentenceTranslation || c.contextTranslation || '').replace(/\*\*/g, '') : c[key]);
+        key === 'sentenceTranslation' ? String(c.sentenceTranslation || c.contextTranslation || '').replace(/\*\*/g, '') :
+            key === 'displayHeadword' ? savedDisplayHeadword(c) : c[key]);
     const rows = cards.map((c) => CSV_COLUMNS.map(([key]) => csvCell(cell(c, key))).join(','));
     return [head, ...rows].join('\r\n');
 }

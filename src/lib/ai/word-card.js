@@ -33,6 +33,76 @@ export const COMPONENTS_FIELD = '{{componentsField}}';
  * other than Latin, its transliteration). */
 export const FORM_FIELD = '{{formField}}';
 
+/** Where the card prompt receives the "displayHeadword" key, only in the languages whose
+ * learners' dictionaries mark what their spelling leaves out (`headwordDisplayInstruction`). */
+export const DISPLAY_FIELD = '{{displayField}}';
+
+/** The languages whose headword may be shown with its stress marked by an acute (U+0301), as
+ * learners' dictionaries do ("ма́ма"): ordinary text never marks it. Russian, Ukrainian and
+ * Bulgarian, each by its own stress. */
+const STRESS_MARKED = new Set(['ru', 'uk', 'bg']);
+/** The languages whose headword may be shown with macrons on its long vowels ("amīcus"), which
+ * mark vowel length, not stress. */
+const LENGTH_MARKED = new Set(['la']);
+const ACUTE = '́';
+const DIAERESIS = '̈';
+const MACRON = '̄';
+/** Each language's vowel letters that take a stress acute, decomposed: ё (е + U+0308) is always
+ * stressed and takes none; ї (і + U+0308) takes one; Bulgarian ъ is a vowel, Russian ъ a sign. */
+const STRESS_VOWELS = {
+    ru: /^[аеиоуыэюяАЕИОУЫЭЮЯ]$/u,
+    uk: /^[аеиоуюяієАЕИОУЮЯІЄ]$/u,
+    bg: /^[аеиоуъюяАЕИОУЪЮЯ]$/u,
+};
+const LATIN_VOWEL = /^[aeiouyAEIOUY]$/u;
+
+/**
+ * {{displayField}} for an OCR language: Russian, Ukrainian and Bulgarian are asked for the
+ * headword with its own stress marked (not the stress of the form in the text: дома́ → до́м);
+ * Latin for macrons on long vowels; '' (no key) in every other language, whose dictionary spelling
+ * already has the marks it needs (Greek tonos, Portuguese, Czech or Turkish letters, Arabic marks)
+ * or which has its reading (Chinese, Japanese). Fixed text per language, in the cached system
+ * message. A reply's display form is used only once `validDisplayHeadword` accepts it.
+ * @param {string} tag the OCR language
+ */
+export function headwordDisplayInstruction(tag) {
+    const language = baseLanguage(tag);
+    if (STRESS_MARKED.has(language)) {
+        return ', "displayHeadword": the headword with an acute (U+0301) on the vowel of its own stressed syllable, one per word, ' +
+            `e.g. "ма́ма" (its dictionary stress, not that of the form in the text)${language === 'ru' ? '; none on ё, which is always stressed' : ''}; ` +
+            '"" when you are not sure of it';
+    }
+    if (LENGTH_MARKED.has(language)) {
+        return ', "displayHeadword": the headword with macrons on its long vowels, e.g. "amīcus"; "" unless you are sure of every vowel\'s length';
+    }
+    return '';
+}
+
+/**
+ * The card's display form of the headword when it may be shown, else '': in a language that asks
+ * for one (`headwordDisplayInstruction`), the headword's own letters with only the allowed marks
+ * added, each on a vowel: one stress acute per word (none on ё), or macrons in Latin. Any other
+ * difference (a changed or dropped letter, a mark elsewhere, a display form in another language)
+ * makes it '', and the headword is shown, so a wrong or half-streamed form never replaces it.
+ * Display only: lookups, audio, duplicates and Anki's {expression} keep the headword. NFC.
+ * @param {{headword?: string, displayHeadword?: string}|null|undefined} card
+ * @param {string} tag the OCR language
+ */
+export function validDisplayHeadword(card, tag) {
+    const headword = String(card?.headword || '').trim().normalize('NFD');
+    const display = String(card?.displayHeadword || '').trim().normalize('NFD');
+    if (!headword || !display || display === headword) { return ''; }
+    const language = baseLanguage(tag);
+    const mark = STRESS_MARKED.has(language) ? ACUTE : LENGTH_MARKED.has(language) ? MACRON : '';
+    if (!mark || headword.includes(mark) || display.replaceAll(mark, '') !== headword) { return ''; }
+    const chars = [...display];
+    const onVowel = (i) => (mark === MACRON ? LATIN_VOWEL.test(chars[i - 1] || '') :
+        STRESS_VOWELS[language].test(chars[i - 1] || '') || (language === 'uk' && chars[i - 1] === DIAERESIS && /^[іІ]$/u.test(chars[i - 2] || '')));
+    if (!chars.every((c, i) => c !== mark || onVowel(i))) { return ''; }
+    if (mark === ACUTE && display.split(/[\s-]+/u).some((w) => w.split(ACUTE).length > 2)) { return ''; }
+    return display.normalize('NFC');
+}
+
 /** The synonyms key of the card prompt, for every language: words for the meaning the card gives
  * (the intended one, when the card infers it; see CONTEXT_RULE), not for the headword's other
  * senses. */
@@ -64,6 +134,21 @@ export const LEGACY_TRANSLATION_FIELD = `, "translation": ${LEGACY_WORD_TRANSLAT
 // the word, or the longer unit it belongs to (see EXPRESSIONS_PROMPT), so the headword, IPA,
 // definition, translations and synonyms agree with each other.
 export const CARD_PROMPT =
+    "Word: '{{target}}'\n" +
+    "Context: '{{sentence}}'\n\n" +
+    CONTEXT_RULE + ' Reply with JSON only (no markdown, no code fence) with these keys:\n' +
+    '{"headword": the dictionary form of what you describe, spelled as dictionaries of the language spell it, ' +
+    'with the letters and marks of that spelling and no added stress or length marks' + DISPLAY_FIELD + ', ' +
+    '"ipa": IPA transcription of the headword without slashes, ' +
+    '"cefr": CEFR level (A1, A2, B1, B2, C1 or C2) or "", ' +
+    '"partOfSpeech": ["noun", ...], ' +
+    '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
+    '"definition": a one or two sentence definition in {{definitionLanguage}} of its meaning here' +
+    TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + FORM_FIELD + '}';
+
+/** The default card prompt of 2026-10-27 with the context rule, before {{displayField}} and the
+ * headword's spelling (for migration). */
+export const CONTEXT_CARD_PROMPT =
     "Word: '{{target}}'\n" +
     "Context: '{{sentence}}'\n\n" +
     CONTEXT_RULE + ' Reply with JSON only (no markdown, no code fence) with these keys:\n' +
@@ -470,7 +555,8 @@ export function takesCardNotes(template) {
  * tokens on it. Likewise {{readingField}} gets the reading prompt only in Chinese and Japanese,
  * {{componentsField}} the components prompt only when they are switched on, and {{formField}} the
  * form prompt, plus the transliteration prompt in a script other than Latin; their variables follow
- * the OCR language. A prompt that asks for the card's JSON (`takesCardNotes`) is followed by the
+ * the OCR language, and {{displayField}} the display form's key in the languages that have one
+ * (`headwordDisplayInstruction`). A prompt that asks for the card's JSON (`takesCardNotes`) is followed by the
  * note on longer units, unless it asks for "selection" itself, and then by the OCR errors note,
  * unless it asks for "ocrFix" itself or "Corrigir erros de OCR com IA" (`cardOcrFix`) is off, each
  * on a paragraph of its own; the OCR note has the examples of the OCR language's script. Any other
@@ -502,6 +588,7 @@ export function cardPrompt(template, settings, ai = {}) {
     const ocr = ai.cardOcrFix !== false && notes && !main.includes('"ocrFix"') ? ocrNote(ai.ocrErrorsPrompt, OCR_ERRORS_PROMPT, settings) : '';
     const note = [expressions, ocr].filter(Boolean).map((n) => `\n\n${n}`).join('');
     return fillLanguages(main
+        .replaceAll(DISPLAY_FIELD, headwordDisplayInstruction(settings.ocrLanguage))
         .replaceAll(TRANSLATION_FIELD, field)
         .replaceAll(READING_FIELD, reading)
         .replaceAll(COMPONENTS_FIELD, components)
@@ -529,7 +616,10 @@ export function parseCard(text) {
         const obj = JSON.parse(text.slice(start, end + 1));
         const list = (v) => (Array.isArray(v) ? v.map(String).filter(Boolean) : (typeof v === 'string' && v ? [v] : []));
         return {
-            headword: String(obj.headword || ''),
+            // NFC, so a decomposed and a precomposed spelling are one (ἀρχή), keeping every mark.
+            headword: String(obj.headword || '').normalize('NFC'),
+            // Shown only once `validDisplayHeadword` accepts it for the OCR language.
+            displayHeadword: String(obj.displayHeadword || '').normalize('NFC'),
             ipa: String(obj.ipa || '').replace(/^\/+|\/+$/g, ''),
             cefr: String(obj.cefr || '').toUpperCase().trim(),
             partOfSpeech: list(obj.partOfSpeech),

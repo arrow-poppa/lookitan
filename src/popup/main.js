@@ -7,9 +7,9 @@ import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, markSentence, parseCard, parseCardProgress, promptText, splitContextTranslation} from '../lib/ai/word-card.js';
+import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, markSentence, parseCard, parseCardProgress, promptText, splitContextTranslation, validDisplayHeadword} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
-import {cardFromLookup} from '../lib/cards.js';
+import {cardFromLookup, savedDisplayHeadword} from '../lib/cards.js';
 import {clozeRange, locateSelection, selectedSpan} from '../lib/ai/selection.js';
 import {invoke} from '@tauri-apps/api/core';
 import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
@@ -308,7 +308,9 @@ function cardExtrasHtml(card, components) {
 
 function renderCard(body, card, pending = false) {
     const p = state.payload;
-    const headword = card.headword || p.word;
+    // The headword as shown: its display form (stress, macrons) when valid; lookups, audio and
+    // Anki's {expression} keep `card.headword`.
+    const headword = validDisplayHeadword(card, settings.ocrLanguage) || card.headword || p.word;
     const chips = [];
     if (card.ocrFix) { chips.push(ocrFixHtml(card.ocrFix)); }
     if (card.cefr && /^[ABC][12]$/.test(card.cefr)) { chips.push(`<span class="cefr ${card.cefr.toLowerCase()}">${card.cefr}</span>`); }
@@ -1130,6 +1132,11 @@ function validMarks(marks, text) {
  * the paragraph (or sentence) with its translation, the screenshot and the dictionaries' entries,
  * folded.
  */
+/** A saved word's headword as shown: its display form when still valid, else its dictionary form. */
+function savedHeadword(c) {
+    return savedDisplayHeadword(c) || c.dictionaryForm || c.word;
+}
+
 function savedCardHtml(c, current) {
     const chips = [
         ocrFixHtml(c.ocrFix),
@@ -1144,7 +1151,7 @@ function savedCardHtml(c, current) {
     const glossaries = (c.glossaries || []).filter((g) => g?.html).map((g) => `
         <details class="saved-gloss"><summary>${escapeHtml(g.name || 'Dicionário')}</summary><div class="gloss">${cleanGlossaryHtml(g.html)}</div></details>`).join('');
     return `
-        <div class="saved-head" dir="${headDir(c.dictionaryForm || c.word)}"><span class="word" dir="auto">${escapeHtml(c.dictionaryForm || c.word)}</span>${chips}</div>
+        <div class="saved-head" dir="${headDir(c.dictionaryForm || c.word)}"><span class="word" dir="auto">${escapeHtml(savedHeadword(c))}</span>${chips}</div>
         ${c.dictionaryForm && c.word && c.dictionaryForm.toLowerCase() !== c.word.toLowerCase() ? `<div class="muted saved-form">Na tela: <bdi>${escapeHtml(c.word)}</bdi></div>` : ''}
         ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
         ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
@@ -1168,6 +1175,7 @@ function noteContext(lookup = state, options = anki) {
     return {
         word: lookup.payload.word,
         headword: lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword,
+        displayHeadword: validDisplayHeadword(lookup.aiCard, settings.ocrLanguage),
         clozeWord: selectedSpan(lookup.payload.context || lookup.payload.sentence || '', lookup.contextMarks),
         clozeAt: lookup.payload.context ? clozeRange(lookup.payload.context, lookup.payload.contextAt, lookup.payload.word, lookup.contextMarks) : null,
         sentence: lookup.payload.sentence,

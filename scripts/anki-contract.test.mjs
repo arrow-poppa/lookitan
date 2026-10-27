@@ -223,6 +223,23 @@ test('the AI card carries the reading, synonyms and components, which also have 
     assert.equal(plain.E, '');
 });
 
+test('the AI card and {ai-display-headword} show the stressed headword; {expression} and the cloze keep the dictionary form and the text', async () => {
+    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); }, {DOMParser: FakeDOMParser});
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
+        A: {value: '{expression}'}, B: {value: '{ai-display-headword}'}, C: {value: '{ai-card-plain}'}, D: {value: '{cloze-body}'}, E: {value: '{ai-card}'}}}];
+    const sentence = 'Мы были дома́.';
+    const f = (await notes.buildNote({word: 'дома́', headword: 'дом', displayHeadword: 'до́м', clozeAt: [8, 13], sentence, context: sentence,
+        aiCard: {definition: 'house'}}, options, null)).fields;
+    assert.equal(f.A, 'дом', '{expression} unchanged');
+    assert.equal(f.B, 'до́м');
+    assert(f.C.startsWith('до́м') && f.E.includes('до́м'));
+    assert.equal(f.D, 'дома́', 'the cloze is the word as in the text');
+    const old = (await notes.buildNote({word: 'дома́', headword: 'дом', sentence, aiCard: {definition: 'house'}}, options, null)).fields;
+    assert.deepEqual([old.A, old.B], ['дом', 'дом'], 'a card without a display form: the headword');
+    assert.equal(notes.MARKERS.includes('ai-display-headword'), true);
+    assert.equal((await notes.buildNote({word: 'x', displayHeadword: '<b>', sentence: 's'}, options, null)).fields.B, '&lt;b&gt;', 'escaped');
+});
+
 test('the form on screen and its transliteration go in the AI card, the tags and markers of their own', async () => {
     const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); }, {DOMParser: FakeDOMParser});
     options.cardFormats = [{deck: 'D', model: 'Basic', fields: {

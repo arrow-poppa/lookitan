@@ -20,7 +20,7 @@ let shown = {id: null, updatedAt: null};
  * and kind (`text`, `area`, `list` for comma-separated values, or `cefr`).
  */
 const FIELDS = [
-    ['dictionaryForm', 'Forma de dicionário', 'text'], ['translation', 'Tradução', 'text'],
+    ['dictionaryForm', 'Forma de dicionário', 'text'], ['displayHeadword', 'Forma exibida', 'text'], ['translation', 'Tradução', 'text'],
     ['definition', 'Definição', 'area'], ['sentence', 'Frase', 'area'],
     ['contextTranslation', 'Tradução do contexto', 'area'], ['sentenceTranslation', 'Tradução da frase', 'area'],
     ['reading', 'Leitura', 'text'],

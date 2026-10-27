@@ -47,7 +47,7 @@ export const MARKERS = [
     'expression', 'reading', 'glossary', 'glossary-brief', 'glossary-no-dictionary', 'glossary-plain',
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
-    'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
+    'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-display-headword', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
     'translation', 'context-translation', 'sentence-translation', 'paragraph-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-transliteration', 'ai-form', 'ai-ocr-fix', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
 ];
 
@@ -312,6 +312,7 @@ function cloze(sentence, word) {
  * @typedef {object} NoteContext
  * @property {string} word Word as read on screen.
  * @property {string} [headword] Dictionary form.
+ * @property {string} [displayHeadword] The headword as shown (stress, macrons), when valid.
  * @property {string} [clozeWord] The longer unit the AI card marked in the context, when it is one piece.
  * @property {[number, number]|null} [clozeAt] What the cloze covers in `context`, in code points: that unit, else the word looked up.
  * @property {string} [sentence]
@@ -370,8 +371,11 @@ export async function buildNote(ctx, anki, conn) {
         'cloze-body': escapeHtml(c.body),
         'cloze-suffix': escapeHtml(c.suffix),
         'dictionary': escapeHtml(first[0] ? first[0].dictionary : ''),
-        'ai-card': aiCardHtml(ctx.headword || ctx.word, ai, ctx.aiExplanation || '', cardDictionaries),
-        'ai-card-plain': aiCardPlain(ctx.headword || ctx.word, ai, ctx.aiExplanation || '', cardDictionaries),
+        // The AI card shows the headword's display form (stress, macrons) when it has one, as the
+        // pop-up does; {expression} stays the dictionary form.
+        'ai-card': aiCardHtml(ctx.displayHeadword || ctx.headword || ctx.word, ai, ctx.aiExplanation || '', cardDictionaries),
+        'ai-card-plain': aiCardPlain(ctx.displayHeadword || ctx.headword || ctx.word, ai, ctx.aiExplanation || '', cardDictionaries),
+        'ai-display-headword': escapeHtml(ctx.displayHeadword || ctx.headword || ctx.word),
         'ai-definition': escapeHtml(ai.definition || ''),
         'ai-explanation': renderMarkdown(ctx.aiExplanation || ''),
         'ai-explanation-plain': escapeHtml(markdownToText(ctx.aiExplanation || '')).replace(/\n/g, '<br>'),

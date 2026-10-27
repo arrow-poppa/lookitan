@@ -72,7 +72,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
             orderNoteFields: (note, names) => (names?.length ? {...note, fields: Object.fromEntries([
                 ...names.map((n) => [n, note.fields[n] ?? '']), ...Object.entries(note.fields).filter(([n]) => !names.includes(n))])} : note),
         },
-        [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }},
+        [file('src/lib/cards.js')]: {cardFromLookup: () => { throw new Error('Unexpected local word save'); }, savedDisplayHeadword: () => ''},
         [file('src/lib/icons.js')]: {hydrateIcons() {}, icon: (name) => name},
         [file('src/lib/images.js')]: {...realImages, ...images},
     };
@@ -319,6 +319,30 @@ test('the card asks every language for the form on screen, and scripts other tha
     view.settings.ocrLanguage = 'ru-RU';
     await view.popup.runCard(new Element());
     assert(prompts[prompts.length - 1].includes(', "form": my form, "transliteration": my letters'), "the user's prompts are sent");
+});
+
+test('the title shows a valid display form of the headword (Russian stress), else the headword', async () => {
+    let answer = '{"headword":"дом","displayHeadword":"до́м","definition":"house"}';
+    const prompts = [];
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => { prompts.push(request.prompt); return answer; }});
+    view.ai.cardPrompt = CARD_PROMPT;
+    view.settings.ocrLanguage = 'ru-RU';
+    const body = new Element();
+    await view.popup.runCard(body);
+    assert(prompts[0].includes('"displayHeadword"') && !prompts[0].includes('{{displayField}}'), 'Russian is asked for the stress');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">до́м</span>'), 'the stressed form in the title');
+    assert.equal(body.innerHTML.split('class="word"').length, 2, 'one title, no second heading');
+    answer = '{"headword":"дом","displayHeadword":"дома́","definition":"house"}';
+    view.ai.formPrompt = 'the features';  // a new request, not the cached card
+    const copied = new Element();
+    await view.popup.runCard(copied);
+    assert(copied.innerHTML.includes('<span class="word" dir="auto">дом</span>'), 'the stress of the form on screen copied onto another word: the headword');
+    view.settings.ocrLanguage = 'en-US';
+    answer = '{"headword":"house","displayHeadword":"hóuse","definition":"дом"}';
+    const english = new Element();
+    await view.popup.runCard(english);
+    assert(!prompts.at(-1).includes('"displayHeadword"'), 'English is not asked');
+    assert(english.innerHTML.includes('<span class="word" dir="auto">house</span>'), 'nor shown an accent it gave anyway');
 });
 
 test('the popup grows from the word like a TeachingTip and a new lookup cancels a pending close', async () => {
