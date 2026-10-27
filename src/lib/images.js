@@ -45,16 +45,18 @@ export function imagePrompts(ai, settings) {
 /**
  * The word the pictures look for: as the OCR read it or, unless "Usar a palavra corrigida pelo
  * card" (`imageUseCardWord`) is off, the word the AI word card corrected it to (`ocrFix`, "read →
- * corrected"). No second AI request is made for it.
+ * corrected"), or the longer unit it described ("Socrates Awards" for "Socrates"), by its
+ * headword. No second AI request is made for it.
  * @param {string} word
- * @param {{ocrFix?: string}|null|undefined} card
+ * @param {{ocrFix?: string, headword?: string, selection?: object|null}|null|undefined} card
  * @param {{imageUseCardWord?: boolean}} ai
  */
 export function imageWord(word, card, ai) {
     if (ai.imageUseCardWord === false) { return word; }
     const fix = String(card?.ocrFix || '');
     const corrected = fix.includes('→') ? fix.slice(fix.lastIndexOf('→') + 1).trim() : '';
-    return corrected || word;
+    const unit = card?.selection ? String(card.headword || '').trim() : '';
+    return corrected || unit || word;
 }
 
 /**

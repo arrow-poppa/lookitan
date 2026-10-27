@@ -158,6 +158,21 @@ test('{sentence} and the cloze hold the sentence by default and the whole paragr
     assert.equal(built.fields.Front, 'I run daily.', 'a lookup without a paragraph keeps the sentence');
 });
 
+test('the cloze holds the longer unit the AI card marked, when the sentence has it', async () => {
+    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); });
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
+        Front: {value: '{cloze-prefix}[{cloze-body}]{cloze-suffix}', overwriteMode: 'coalesce'},
+        Back: {value: '{expression}', overwriteMode: 'coalesce'},
+    }}];
+    const sentence = 'He got nominated to the Socrates Awards.';
+    let built = await notes.buildNote({word: 'Socrates', headword: 'Socrates Awards', clozeWord: 'Socrates Awards', sentence}, options, null);
+    assert.deepEqual({...built.fields}, {Front: 'He got nominated to the [Socrates Awards].', Back: 'Socrates Awards'});
+    built = await notes.buildNote({word: 'Socrates', clozeWord: 'Nobel Prize', sentence}, options, null);
+    assert.equal(built.fields.Front, 'He got nominated to the [Socrates] Awards.', 'not in the sentence: the word');
+    built = await notes.buildNote({word: 'turned', headword: 'turn off', clozeWord: '', sentence: 'She turned the light off.'}, options, null);
+    assert.equal(built.fields.Front, 'She [turned] the light off.', 'a split unit keeps the word');
+});
+
 // Enough of DOMParser for cleanGlossaryHtml and htmlToText on simple, script-free entries.
 class FakeDOMParser {
     parseFromString(html) {

@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, FORM_FIELD, FORM_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FORM_FIELD, FORM_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -58,6 +58,7 @@ function baseAiOptions() {
         formPrompt: FORM_PROMPT,
         transliterationPrompt: TRANSLITERATION_PROMPT,
         ocrErrorsPrompt: OCR_ERRORS_PROMPT,
+        expressionsPrompt: EXPRESSIONS_PROMPT,
         contextOcrPrompt: CONTEXT_OCR_PROMPT,
         contextPrompt: CONTEXT_PROMPT,
         // The "Imagens" dictionary: its own system and user prompts for the search query (as
@@ -75,6 +76,9 @@ function baseAiOptions() {
         // not ask for them.
         cardComponents: true,
         cardOcrFix: true,
+        // The card describes the longer unit the word belongs to ("Socrates Awards", "turn off")
+        // and marks it in the context.
+        cardExpressions: true,
         contextOcrFix: true,
         // The pictures search the word the AI card corrected from the OCR.
         imageUseCardWord: true,
@@ -116,7 +120,7 @@ export function normalizeAiOptions(stored) {
         return defaultAiOptions();
     }
     const out = {...base, ...stored};
-    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'cardComponents', 'cardOcrFix', 'contextOcrFix', 'imageUseCardWord']) {
+    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'cardComponents', 'cardOcrFix', 'cardExpressions', 'contextOcrFix', 'imageUseCardWord']) {
         if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
     }
     // One switch used to start both the word card and the context translation: until the
@@ -129,7 +133,7 @@ export function normalizeAiOptions(stored) {
     // one, they start from a copy of the word card's, so they keep working as they did.
     const own = isObject(stored.sectionProviders) ? stored.sectionProviders : {};
     out.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(isObject(own[id]) ? own[id] : out, base)]));
-    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'readingPrompt', 'componentsPrompt', 'formPrompt', 'transliterationPrompt', 'ocrErrorsPrompt', 'contextOcrPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
+    for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'readingPrompt', 'componentsPrompt', 'formPrompt', 'transliterationPrompt', 'ocrErrorsPrompt', 'expressionsPrompt', 'contextOcrPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
         if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
     }
     // The old default explanation and context prompts mixed the word into their instructions; the

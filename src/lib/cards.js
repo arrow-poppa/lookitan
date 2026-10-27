@@ -3,6 +3,7 @@
 import {invoke} from '@tauri-apps/api/core';
 import {api} from './api.js';
 import {sentenceAudioFile} from './audio.js';
+import {locateSelection, selectedSpan} from './ai/selection.js';
 
 /**
  * @param {object} lookup popup state: payload, aiCard, explanation, contextTranslation, glossaries
@@ -29,6 +30,10 @@ export function cardFromLookup(lookup, settings) {
         ocrFix: ai.ocrFix || '',
         synonyms: ai.synonyms || [],
         components: ai.components || [],
+        // The longer unit the AI card described ("Socrates Awards", "turned … off") and where it
+        // is in `context`, so the saved card marks it as the pop-up did.
+        selection: ai.selection || null,
+        contextMarks: lookup.payload.context ? locateSelection(lookup.payload.context, lookup.payload.contextAt, lookup.payload.word, ai.selection) : null,
         language: settings.ocrLanguage,
         windowTitle: lookup.payload.app?.title || '',
         executable: lookup.payload.app?.executable || '',
@@ -47,6 +52,7 @@ export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
         dictionaryOrder,
         word: card.word,
         headword: card.dictionaryForm,
+        clozeWord: card.context && Array.isArray(card.contextMarks) ? selectedSpan(card.context, card.contextMarks) : '',
         sentence: card.sentence,
         context: card.context,
         glossaries: card.glossaries || [],

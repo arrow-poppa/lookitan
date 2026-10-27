@@ -276,6 +276,12 @@ function aiCardPlain(headword, ai, explanation, dictionaries = []) {
     return glossary ? `${text}<br>${glossary}` : text;
 }
 
+/** The cloze of `word` in `sentence`, or of the longer unit the AI card marked (`unit`, one piece
+ * of the context) when the sentence has it. */
+function clozeOf(sentence, word, unit) {
+    return unit && sentence && sentence.toLowerCase().includes(unit.toLowerCase()) ? cloze(sentence, unit) : cloze(sentence, word);
+}
+
 function cloze(sentence, word) {
     if (!sentence || !word) { return {prefix: '', body: word || '', suffix: ''}; }
     const i = sentence.toLowerCase().indexOf(word.toLowerCase());
@@ -287,6 +293,7 @@ function cloze(sentence, word) {
  * @typedef {object} NoteContext
  * @property {string} word Word as read on screen.
  * @property {string} [headword] Dictionary form.
+ * @property {string} [clozeWord] The longer unit the AI card marked in the context, when it is one piece.
  * @property {string} [sentence]
  * @property {string} [context] The paragraph around the word, used when contextMode is 'paragraph'.
  * @property {{name: string, html: string}[]} [glossaries]
@@ -320,7 +327,7 @@ export async function buildNote(ctx, anki, conn) {
     const defs = definitions(clean, ai, ctx.dictionaryOrder);
     const first = defs.slice(0, 1);
     const sentence = (anki.contextMode === 'paragraph' && ctx.context) || ctx.sentence || '';
-    const c = cloze(sentence, ctx.word);
+    const c = clozeOf(sentence, ctx.word, ctx.clozeWord);
     // The dictionaries' entries, for an AI card that carries them too.
     const cardDictionaries = anki.aiCardMode === 'dictionaries' ? defs.filter((d) => d.dictionary !== AI_GLOSSARY_NAME) : [];
     const values = {

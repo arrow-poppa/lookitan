@@ -1,0 +1,54 @@
+{
+  "about": "Cases for the AI word card's \"selection\" (the longer unit a word on screen belongs to). Test data only: never sent with a request. The production prompt has its own five examples (EXPRESSIONS_PROMPT in src/lib/ai/word-card.js). `parts` is the unit as written in the context (null: the word is the unit, no selection). scripts/semantic-selection.test.mjs checks that each `parts` is found by locateSelection; whether a model gives these answers can only be measured against a real provider.",
+  "cases": [
+    {"language": "en", "context": "He got nominated to the Socrates Awards.", "word": "Socrates", "parts": ["Socrates Awards"], "headword": "Socrates Awards", "type": "proper_noun", "production": true},
+    {"language": "de", "context": "Er macht das Licht aus.", "word": "macht", "parts": ["macht", "aus"], "headword": "ausmachen", "type": "separable_verb", "production": true},
+    {"language": "zh", "context": "我喜欢学习中文。", "word": "学", "parts": ["学习"], "headword": "学习", "type": "compound", "production": true},
+    {"language": "ar", "context": "وبكتابهم", "word": "وبكتابهم", "parts": null, "headword": "كتاب", "note": "components و + ب + كتاب + هم; the written word stays selected", "production": true},
+    {"language": "pt-BR", "context": "Esse filme é massa!", "word": "massa", "parts": null, "headword": "massa", "note": "informal: very good, cool", "production": true},
+
+    {"language": "pt", "context": "Ele ficou de olho no resultado.", "word": "olho", "parts": ["ficou de olho no"], "headword": "ficar de olho em", "type": "idiom"},
+    {"language": "pt", "context": "Ela me deu uma mão.", "word": "mão", "parts": ["deu uma mão"], "headword": "dar uma mão", "type": "idiom"},
+    {"language": "es", "context": "Ella echó de menos a su familia.", "word": "menos", "parts": ["echó de menos"], "headword": "echar de menos", "type": "idiom"},
+    {"language": "fr", "context": "Il a posé un lapin à Marie.", "word": "lapin", "parts": ["posé un lapin"], "headword": "poser un lapin", "type": "idiom"},
+    {"language": "it", "context": "Mi ha preso in giro.", "word": "giro", "parts": ["preso in giro"], "headword": "prendere in giro", "type": "idiom"},
+    {"language": "ro", "context": "A ținut cont de sfatul ei.", "word": "cont", "parts": ["ținut cont de"], "headword": "a ține cont de", "type": "fixed_expression"},
+    {"language": "es-MX", "context": "Está chido.", "word": "chido", "parts": null, "headword": "chido", "note": "informal: cool"},
+    {"language": "fr", "context": "J'ai le seum.", "word": "seum", "parts": ["ai le seum"], "headword": "avoir le seum", "type": "idiom", "note": "slang: to feel bitter or frustrated"},
+
+    {"language": "en", "context": "She turned the light off.", "word": "turned", "parts": ["turned", "off"], "headword": "turn off", "type": "phrasal_verb"},
+    {"language": "en", "context": "Come on, spill the tea about the party!", "word": "tea", "parts": ["spill the tea"], "headword": "spill the tea", "type": "idiom", "note": "the brief's \"She spilled the tea.\" is just as likely literal, so this context makes the slang sense clear"},
+    {"language": "nl", "context": "Hij zet de computer aan.", "word": "zet", "parts": ["zet", "aan"], "headword": "aanzetten", "type": "separable_verb"},
+    {"language": "sv", "context": "Hon tycker om musik.", "word": "tycker", "parts": ["tycker om"], "headword": "tycka om", "type": "phrasal_verb"},
+    {"language": "nb", "context": "Hun ser frem til ferien.", "word": "frem", "parts": ["ser frem til"], "headword": "se frem til", "type": "phrasal_verb"},
+    {"language": "da", "context": "Hun ser frem til ferien.", "word": "frem", "parts": ["ser frem til"], "headword": "se frem til", "type": "phrasal_verb"},
+    {"language": "de", "context": "Das ist krass!", "word": "krass", "parts": null, "headword": "krass", "note": "colloquial: extreme, awesome or shocking by context"},
+
+    {"language": "ru", "context": "Он принял участие в конкурсе.", "word": "участие", "parts": ["принял участие"], "headword": "принять участие", "type": "collocation"},
+    {"language": "uk", "context": "Вона взяла участь у конкурсі.", "word": "участь", "parts": ["взяла участь"], "headword": "взяти участь", "type": "collocation"},
+    {"language": "pl", "context": "On wziął udział w konkursie.", "word": "udział", "parts": ["wziął udział"], "headword": "wziąć udział", "type": "collocation"},
+    {"language": "bg", "context": "Хвърли око на книгата.", "word": "око", "parts": ["Хвърли око на"], "headword": "хвърлям око на", "type": "idiom"},
+    {"language": "ru", "context": "Это полный отстой.", "word": "отстой", "parts": null, "headword": "отстой", "note": "informal: something very bad"},
+    {"language": "cs", "context": "Dávej pozor na cestu.", "word": "pozor", "parts": ["Dávej pozor"], "headword": "dávat pozor", "type": "collocation"},
+    {"language": "sk", "context": "Daj si pozor na cestu.", "word": "pozor", "parts": ["Daj si pozor"], "headword": "dať si pozor", "type": "collocation"},
+
+    {"language": "el", "context": "Έφαγα πόρτα στο κλαμπ.", "word": "πόρτα", "parts": ["Έφαγα πόρτα"], "headword": "τρώω πόρτα", "type": "idiom", "note": "colloquial: to be refused entry"},
+
+    {"language": "ja", "context": "それ、やばい！", "word": "やばい", "parts": null, "headword": "やばい", "note": "informal; good or bad only by a clearer context"},
+    {"language": "ja", "context": "日本語を勉強しています。", "word": "勉強しています", "parts": null, "headword": "勉強する", "note": "conjugated surface, dictionary form as the headword"},
+    {"language": "zh", "context": "他开始摆烂了。", "word": "摆烂", "parts": null, "headword": "摆烂", "note": "internet slang: to give up on purpose"},
+    {"language": "ko", "context": "와, 대박!", "word": "대박", "parts": null, "headword": "대박", "note": "colloquial exclamation: awesome"},
+    {"language": "ar-EG", "context": "ده جامد!", "word": "جامد", "parts": null, "headword": "جامد", "note": "Egyptian Arabic, informal: awesome; not an OCR error"},
+
+    {"language": "tr", "context": "Göz kulak ol!", "word": "kulak", "parts": ["Göz kulak ol"], "headword": "göz kulak olmak", "type": "idiom"},
+    {"language": "hu", "context": "Figyelmen kívül hagyta a tanácsot.", "word": "kívül", "parts": ["Figyelmen kívül hagyta"], "headword": "figyelmen kívül hagy", "type": "fixed_expression"}
+  ],
+  "negative": [
+    {"language": "pt", "context": "Ela comprou um livro interessante.", "word": "livro", "headword": "livro"},
+    {"language": "en", "context": "She drank cold water.", "word": "cold", "headword": "cold"},
+    {"language": "de", "context": "Er trinkt kaltes Wasser.", "word": "kaltes", "headword": "kalt"},
+    {"language": "ru", "context": "Она читает интересную книгу.", "word": "книгу", "headword": "книга"},
+    {"language": "fr", "context": "Il a acheté une voiture rouge.", "word": "voiture", "headword": "voiture"},
+    {"language": "el", "context": "Αυτό είναι τέλειο!", "word": "τέλειο", "headword": "τέλειος"}
+  ]
+}

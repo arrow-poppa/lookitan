@@ -10,6 +10,7 @@ import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
+import {locateSelection, selectedSpan} from '../lib/ai/selection.js';
 import {invoke} from '@tauri-apps/api/core';
 import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
@@ -89,9 +90,29 @@ function markWord(text, word) {
     return `${escapeHtml(text.slice(0, i))}<mark>${escapeHtml(text.slice(i, i + word.length))}</mark>${escapeHtml(text.slice(i + word.length))}`;
 }
 
-/** The paragraph around the word, the word marked where the OCR found it (else at its first match). */
-function markContext(p) {
+/** `text` with the [start, end) code point ranges marked. */
+function markRanges(text, ranges) {
+    const chars = Array.from(text);
+    let html = '';
+    let from = 0;
+    for (const [start, end] of ranges) {
+        html += `${escapeHtml(chars.slice(from, start).join(''))}<mark>${escapeHtml(chars.slice(start, end).join(''))}</mark>`;
+        from = end;
+    }
+    return html + escapeHtml(chars.slice(from).join(''));
+}
+
+/** Where the AI card's unit is in the lookup's context ("Socrates Awards", "turned" + "off"), or
+ * null to mark the word itself. */
+function selectionRanges(p, card) {
+    return card?.selection ? locateSelection(p.context || p.sentence || '', p.context ? p.contextAt : null, p.word, card.selection) : null;
+}
+
+/** The paragraph around the word, the word marked where the OCR found it (else at its first match),
+ * or the AI card's unit when `ranges` places it. */
+function markContext(p, ranges = null) {
     const text = p.context || p.sentence || '';
+    if (ranges?.length) { return markRanges(text, ranges); }
     const chars = Array.from(text);
     const at = p.context ? p.contextAt : null;
     const n = Array.from(p.word || '').length;
@@ -304,7 +325,7 @@ function renderCard(body, card, pending = false) {
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${cardExtrasHtml(card, ai.cardComponents !== false)}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn explain-word">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
-        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div dir="auto">${markContext(p)}</div></div></details>` : ''}`;
+        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div dir="auto">${markContext(p, selectionRanges(p, card))}</div></div></details>` : ''}`;
     bindSentence(body, p.context || p.sentence);
     const speaker = body.querySelector('.speak');
     speaker?.addEventListener('click', () => void playWord(state, headword));
@@ -1059,6 +1080,18 @@ ${savedCardHtml(c, c.id === lookup.savedId)}
     });
 }
 
+/** Whether a saved card's marks fit its context (cards are edited in the Palavras tab). */
+function validMarks(marks, text) {
+    if (!Array.isArray(marks) || !marks.length) { return false; }
+    const n = Array.from(text).length;
+    let from = 0;
+    for (const r of marks) {
+        if (!Array.isArray(r) || !Number.isInteger(r[0]) || !Number.isInteger(r[1]) || r[0] < from || r[1] <= r[0] || r[1] > n) { return false; }
+        from = r[1];
+    }
+    return true;
+}
+
 /**
  * The whole saved card, as the Palavras tab shows it: the word with its transliteration, IPA, CEFR,
  * grammatical features, part of speech and labels, the translation, definition and explanation,
@@ -1085,7 +1118,7 @@ function savedCardHtml(c, current) {
         ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
         ${cardExtrasHtml(c, true)}
         ${c.explanation ? `<div class="explanation ai-text">${renderMarkdown(c.explanation)}</div>` : ''}
-        ${text ? `<blockquote dir="auto">${markWord(text, c.word)}</blockquote>` : ''}
+        ${text ? `<blockquote dir="auto">${text === c.context && validMarks(c.contextMarks, text) ? markRanges(text, c.contextMarks) : markWord(text, c.word)}</blockquote>` : ''}
         ${c.contextTranslation ? `<p class="ctx-tr">${highlightStars(c.contextTranslation)}</p>` : ''}
         <div class="saved-shot" hidden></div>
         ${glossaries}`;
@@ -1103,6 +1136,7 @@ function noteContext(lookup = state, options = anki) {
     return {
         word: lookup.payload.word,
         headword: lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword,
+        clozeWord: selectedSpan(lookup.payload.context || lookup.payload.sentence || '', selectionRanges(lookup.payload, lookup.aiCard)),
         sentence: lookup.payload.sentence,
         context: lookup.payload.context,
         glossaries: lookup.glossaries || [],

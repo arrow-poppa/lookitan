@@ -176,6 +176,31 @@ test('the word card and the explanation read the whole paragraph, the context tr
     assert(card.innerHTML.includes('Run club. I <mark>run</mark> daily.'), 'the word is marked where the OCR found it');
 });
 
+test('the card marks each piece of the longer unit it describes, safely, and the word when the unit is not found', async () => {
+    let answer = '{"headword":"turn off","definition":"stop","selection":{"parts":["turned","off"],"type":"phrasal_verb"}}';
+    let calls = 0;
+    const view = await fixture({explain: async () => { calls++; return answer; }});
+    const lookupOf = (context, word) => ({word, sentence: context, context, contextAt: [...context.slice(0, context.indexOf(word))].length, entries: []});
+    view.lookup.payload = lookupOf('She turned the light off.', 'turned');
+    const body = new Element();
+    await view.popup.runCard(body);
+    assert.equal(calls, 1, 'one request');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">turn off</span>'), 'the title is the unit\'s headword');
+    assert(body.innerHTML.includes('She <mark>turned</mark> the light <mark>off</mark>.'), 'both pieces are marked');
+    assert.deepEqual(view.lookup.payload.word, 'turned', 'the word as read is kept');
+    answer = '{"headword":"x","selection":{"parts":["<b>bold</b> text"]}}';
+    view.lookup.payload = lookupOf('Some <b>bold</b> text here.', 'bold');
+    const unsafe = new Element();
+    await view.popup.runCard(unsafe);
+    assert(unsafe.innerHTML.includes('Some <mark>&lt;b&gt;bold&lt;/b&gt; text</mark> here.'), 'the marked text is escaped');
+    assert(!unsafe.innerHTML.includes('<b>bold</b>'));
+    answer = '{"headword":"Nobel Prize","selection":{"parts":["Nobel Prize"]}}';
+    view.lookup.payload = lookupOf('He got nominated to the Socrates Awards.', 'Socrates');
+    const missing = new Element();
+    await view.popup.runCard(missing);
+    assert(missing.innerHTML.includes('the <mark>Socrates</mark> Awards.'), 'a unit not in the text leaves the word marked');
+});
+
 test('turning the word translation off drops it from the prompt and from the card', async () => {
     const answer = '{"headword":"run","definition":"move quickly","translation":"correr"}';
     const prompts = [];
@@ -721,6 +746,18 @@ test('a counter beside the bookmark shows how many cards of the word were saved,
     const empty = await fixture({words: [words[2]]});
     await empty.popup.refreshSavedCount(empty.lookup);
     assert.equal(empty.nodes.get('btn-saved').hidden, true, 'no counter for a word never saved');
+});
+
+test('a saved card marks the unit its AI card marked, while the marks still fit its context', async () => {
+    const view = await fixture({words: [
+        {id: 'd', word: 'run', dictionaryForm: 'run out', sentence: 'We run out of milk.', context: 'We run out of milk.', contextMarks: [[3, 10]], createdAt: 2},
+        {id: 'e', word: 'run', dictionaryForm: 'run', sentence: 'Edited run.', context: 'Edited run.', contextMarks: [[3, 99]], createdAt: 1},
+    ]});
+    await view.popup.refreshSavedCount(view.lookup);
+    await view.popup.openSavedCards();
+    const box = view.nodes.get('card').children.at(-1);
+    assert(box.innerHTML.includes('We <mark>run out</mark> of milk.'), 'the unit the AI card marked');
+    assert(box.innerHTML.includes('Edited <mark>run</mark>.'), 'marks that no longer fit give way to the word');
 });
 
 test('a counter beside the Anki button shows the notes of the word in Anki, and opens them in Anki', async () => {
