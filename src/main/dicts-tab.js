@@ -5,7 +5,7 @@ import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
-import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPRESSIONS_PROMPT, FORM_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages, takesCardNotes} from '../lib/ai/word-card.js';
+import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPRESSIONS_PROMPT, FORM_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages, promptText, takesCardNotes} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
@@ -308,12 +308,19 @@ function testButton(dictId = 'ai-word', promptKey = 'customPrompt') {
     const out = el('span', {class: 'muted'});
     const btn = el('button', {class: 'primary', html: `${icon('sparkle', 'sm')}Testar a IA`});
     btn.addEventListener('click', async () => {
+        // An emptied prompt sends nothing (promptText), here as in the pop-up.
+        const prompt = fillLanguages(promptText(store.ai[promptKey], ''), store.settings);
+        if (!prompt) {
+            out.className = 'error';
+            out.textContent = 'O prompt usado no teste está vazio. Use Restaurar padrão para testar.';
+            return;
+        }
         out.className = 'muted';
         out.textContent = 'Testando…';
         try {
             const text = await explain(aiOptionsFor(store.ai, dictId), 'serendipity', 'Finding that old book in the attic was pure serendipity.', {
                 signal: new AbortController().signal,
-                prompt: fillLanguages(store.ai[promptKey], store.settings),
+                prompt,
                 onChunk: (_d, full) => { out.textContent = full.slice(0, 200); },
             });
             out.className = 'ok';
