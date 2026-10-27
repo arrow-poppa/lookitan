@@ -150,7 +150,7 @@ function render(root) {
             {value: 'new', label: 'Permitir adicionar outra nota'},
             {value: 'prevent', label: 'Não adicionar'},
         ], anki.duplicateBehavior === 'prevent' ? 'prevent' : 'new', (v) => { anki.duplicateBehavior = v; save(); })}));
-    root.append(cardRow({icon: 'list', title: 'Contexto no card ({sentence})', desc: 'Também vale para os marcadores {cloze-…}.', wide: true,
+    root.append(cardRow({icon: 'list', title: 'Contexto no card ({sentence})', desc: 'Também vale para os marcadores {cloze-…} e para {context-translation}, a tradução do contexto. Para fixar uma delas, use {sentence-translation} (só a frase) ou {paragraph-translation} (o contexto inteiro); as duas vêm do mesmo pedido à IA.', wide: true,
         control: select([
             {value: 'sentence', label: 'Só a frase (a mesma da tradução)'},
             {value: 'paragraph', label: 'O contexto inteiro (o mesmo enviado à IA)'},

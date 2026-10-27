@@ -222,12 +222,65 @@ function baseLanguage(tag) {
 // The instructions come first and the lookup's text last, each variable on a line of its own: the
 // provider then sends the instructions as the system message, the same for every lookup, which
 // its prompt cache reuses (see `_splitPrompts` in ai-provider.js).
+// The translator reads the whole paragraph, with the word's sentence between ⟦ and ⟧ (see
+// `markSentence`), and keeps those marks around that sentence's translation: one request gives
+// both the paragraph's translation and the sentence's (`splitContextTranslation`).
 export const CONTEXT_PROMPT =
+    'Translate the text into {{translationLanguage}}. ' +
+    'Wrap the translation of the word in double asterisks, like **this**. ' +
+    'When the text marks a sentence with ⟦ and ⟧, put the same marks around its translation. ' +
+    'Reply with the translation only.\n\n' +
+    'Text: {{sentence}}\n' +
+    "Word: '{{target}}'";
+
+/** The default context prompt before it translated the whole paragraph (for migration). */
+export const SENTENCE_CONTEXT_PROMPT =
     'Translate the text into {{translationLanguage}}. ' +
     'Wrap the translation of the word in double asterisks, like **this**. ' +
     'Reply with the translation only.\n\n' +
     'Text: {{sentence}}\n' +
     "Word: '{{target}}'";
+
+/** The marks around the word's sentence, in the text and in its translation. */
+const SENTENCE_OPEN = '⟦';
+const SENTENCE_CLOSE = '⟧';
+
+/**
+ * What the context translator reads: the paragraph (`context`) with the word's sentence between
+ * ⟦ and ⟧, the occurrence of the sentence that holds the word at `contextAt` (else its only one).
+ * The paragraph unmarked when the sentence is all of it or cannot be placed; the sentence alone
+ * when there is no paragraph.
+ * @param {{context?: string, sentence?: string, contextAt?: number|null, word?: string}} payload
+ */
+export function markSentence(payload) {
+    const context = String(payload.context || '');
+    const sentence = String(payload.sentence || '').trim();
+    if (!context) { return sentence; }
+    if (!sentence || sentence === context.trim()) { return context; }
+    const chars = [...context];
+    const piece = [...sentence];
+    const starts = [];
+    for (let i = 0; i + piece.length <= chars.length; i++) {
+        if (piece.every((c, k) => chars[i + k] === c)) { starts.push(i); }
+    }
+    const at = payload.contextAt;
+    const start = starts.find((s) => Number.isInteger(at) && s <= at && at < s + piece.length) ?? (starts.length === 1 ? starts[0] : null);
+    if (start === null) { return context; }
+    const end = start + piece.length;
+    return `${chars.slice(0, start).join('')}${SENTENCE_OPEN}${sentence}${SENTENCE_CLOSE}${chars.slice(end).join('')}`;
+}
+
+/**
+ * The translator's answer as shown and kept: `text` without the sentence marks (the paragraph's
+ * translation) and `sentence`, the translation between them, or '' when the answer has none (a
+ * custom prompt, or a paragraph of one sentence, whose translation is all of it).
+ * @param {string} answer
+ */
+export function splitContextTranslation(answer) {
+    const raw = String(answer || '');
+    const inner = raw.match(/⟦([\s\S]*?)⟧/u);
+    return {text: raw.replace(/[⟦⟧]/gu, '').trim(), sentence: inner ? inner[1].trim() : ''};
+}
 
 export const EXPLAIN_PROMPT =
     'Explain the word as it is used in the context. ' +

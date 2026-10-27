@@ -22,7 +22,8 @@ let shown = {id: null, updatedAt: null};
 const FIELDS = [
     ['dictionaryForm', 'Forma de dicionário', 'text'], ['translation', 'Tradução', 'text'],
     ['definition', 'Definição', 'area'], ['sentence', 'Frase', 'area'],
-    ['contextTranslation', 'Tradução da frase', 'area'], ['reading', 'Leitura', 'text'],
+    ['contextTranslation', 'Tradução do contexto', 'area'], ['sentenceTranslation', 'Tradução da frase', 'area'],
+    ['reading', 'Leitura', 'text'],
     ['transliteration', 'Transliteração', 'text'], ['ipa', 'IPA', 'text'], ['cefr', 'CEFR', 'cefr'],
     ['form', 'Forma na tela', 'list'], ['partOfSpeech', 'Classe gramatical', 'list'],
     ['synonyms', 'Sinônimos', 'list'], ['explanation', 'Explicação', 'area'],
@@ -33,7 +34,7 @@ const CEFR_LEVELS = ['', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 function fieldText(w, key, kind) {
     const value = w[key];
     if (kind === 'list') { return (Array.isArray(value) ? value : []).join(', '); }
-    if (key === 'contextTranslation') { return String(value || '').replace(/\*\*/g, ''); }
+    if (key === 'contextTranslation' || key === 'sentenceTranslation') { return String(value || '').replace(/\*\*/g, ''); }
     return String(value || '');
 }
 
@@ -58,7 +59,7 @@ export async function refreshWords() {
 function filtered() {
     const q = document.getElementById('words-search').value.trim().toLowerCase();
     const sort = document.getElementById('words-sort').value;
-    let out = words.filter((w) => !q || [w.word, w.translation, w.definition, w.sentence, w.contextTranslation].some((v) => String(v || '').toLowerCase().includes(q)));
+    let out = words.filter((w) => !q || [w.word, w.translation, w.definition, w.sentence, w.contextTranslation, w.sentenceTranslation].some((v) => String(v || '').toLowerCase().includes(q)));
     if (sort === 'oldest') { out = [...out].sort((a, b) => a.createdAt - b.createdAt); } else if (sort === 'az') { out = [...out].sort((a, b) => a.word.localeCompare(b.word)); } else { out = [...out].sort((a, b) => b.createdAt - a.createdAt); }
     return out;
 }

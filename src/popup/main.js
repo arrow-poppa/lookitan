@@ -7,7 +7,7 @@ import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress, promptText} from '../lib/ai/word-card.js';
+import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, markSentence, parseCard, parseCardProgress, promptText, splitContextTranslation} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {clozeRange, locateSelection, selectedSpan} from '../lib/ai/selection.js';
@@ -37,7 +37,8 @@ const responses = new AiResponseCache(undefined, {storage: localStorage});
  * the sentence: it only has to tell which meaning to picture.
  */
 function aiText(kind, payload) {
-    return (kind === 'context' || kind === 'images' ? payload.sentence : payload.context || payload.sentence) || payload.word;
+    if (kind === 'context') { return markSentence(payload) || payload.word; }
+    return (kind === 'images' ? payload.sentence : payload.context || payload.sentence) || payload.word;
 }
 
 /** The AI dictionary whose settings (provider, model, cancelling…) each kind of request follows. */
@@ -454,7 +455,7 @@ async function runContext(body, force = false) {
     const lookup = state;
     const options = optionsOf('context');
     const p = lookup.payload;
-    if (!p.sentence) { body.innerHTML = '<p class="hint">Sem frase de contexto nesta consulta.</p>'; return; }
+    if (!p.context && !p.sentence) { body.innerHTML = '<p class="hint">Sem frase de contexto nesta consulta.</p>'; return; }
     const prompt = contextPrompt(options.contextPrompt, settings, options);
     if (!prompt) { body.innerHTML = emptyPromptHint('prompt do Tradutor de contexto', 'Tradutor de contexto'); return; }
     body.innerHTML = '<div class="shimmer w80"></div><div class="shimmer w60"></div>';
@@ -463,12 +464,17 @@ async function runContext(body, force = false) {
         if (state !== lookup) { return; }
         lookup.keys.add(key);
         const text = await responses.run(key,
-            (signal, onChunk) => explain(options, p.word, p.sentence, {signal, prompt, onChunk}),
+            (signal, onChunk) => explain(options, p.word, aiText('context', p), {signal, prompt, onChunk}),
             (_d, full) => { if (state === lookup) { showTranslation(body, lookup, full); } },
             {force});
         if (state === lookup) {
-            lookup.contextTranslation = text;
-            showTranslation(body, lookup, text);
+            // One answer, two translations: the paragraph's, and the sentence's between its marks
+            // (all of it when the paragraph is that sentence).
+            const {text: paragraph, sentence} = splitContextTranslation(text);
+            const whole = !p.context || !p.sentence || p.sentence.trim() === p.context.trim();
+            lookup.contextTranslation = paragraph;
+            lookup.sentenceTranslation = sentence || (whole ? paragraph : '');
+            showTranslation(body, lookup, paragraph);
         }
     } catch (e) {
         if (state === lookup && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
@@ -482,7 +488,7 @@ async function runContext(body, force = false) {
 function showTranslation(body, lookup, text) {
     const hide = ai.hideContextTranslation === true && !lookup.contextRevealed;
     body.innerHTML = `<div class="ctx-line">${sentenceButton()}<div class="translation${hide ? ' hidden-tr' : ''}"${hide ? ' title="Clique para mostrar"' : ''}>${highlightStars(text)}</div></div>`;
-    bindSentence(body, lookup.payload.sentence);
+    bindSentence(body, lookup.payload.context || lookup.payload.sentence);
     body.querySelector('.hidden-tr')?.addEventListener('click', (ev) => {
         lookup.contextRevealed = true;
         ev.currentTarget.classList.remove('hidden-tr');
@@ -490,8 +496,9 @@ function showTranslation(body, lookup, text) {
     });
 }
 
+/** A context translation as shown: the word's translation marked, the sentence marks left out. */
 function highlightStars(text) {
-    return escapeHtml(text.trim()).replace(/\*\*([^*]+)\*\*/g, '<mark>$1</mark>');
+    return escapeHtml(text.replace(/[⟦⟧]/gu, '').trim()).replace(/\*\*([^*]+)\*\*/g, '<mark>$1</mark>');
 }
 
 // ------------------------------------------------------------------ pictures (the "Imagens" dictionary)
@@ -1169,6 +1176,7 @@ function noteContext(lookup = state, options = anki) {
         aiCard: lookup.aiCard || {},
         aiExplanation: lookup.explanation,
         contextTranslation: lookup.contextTranslation,
+        sentenceTranslation: lookup.sentenceTranslation,
         title: lookup.payload.app?.title,
         query: lookup.payload.word,
         popupSelection: popupSelection(),
@@ -1362,7 +1370,7 @@ async function render(payload) {
                 body.innerHTML = `<button class="ghost explain-btn">${icon('sparkle', 'sm')}Gerar</button>`;
                 body.querySelector('button').addEventListener('click', () => void runCard(body));
             }
-        } else if (d.kind === 'ai-context' && isConfigured(optionsOf('context')) && payload.sentence && payload.sentence.trim() !== payload.word) {
+        } else if (d.kind === 'ai-context' && isConfigured(optionsOf('context')) && (payload.context || payload.sentence || '').trim() && (payload.context || payload.sentence).trim() !== payload.word) {
             const body = section('Tradutor de contexto', {ai: true, onRegenerate: (b) => void runContext(b, true)});
             shown++;
             if (ai.autoTranslateContext) {

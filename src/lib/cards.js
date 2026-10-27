@@ -18,6 +18,10 @@ export function cardFromLookup(lookup, settings) {
         definition: ai.definition || '',
         explanation: lookup.explanation || '',
         contextTranslation: lookup.contextTranslation || '',
+        // The translation of the word's sentence alone, cut from the paragraph's (see
+        // splitContextTranslation); words saved before 2026-10-27 have only `contextTranslation`,
+        // which was the sentence's.
+        sentenceTranslation: lookup.sentenceTranslation || '',
         sentence: lookup.payload.sentence || '',
         context: lookup.payload.context || '',
         ipa: ai.ipa || '',
@@ -75,6 +79,7 @@ export function noteContextFromCard(card, dictionaryOrder = [], settings = {}) {
         },
         aiExplanation: card.explanation,
         contextTranslation: card.contextTranslation,
+        sentenceTranslation: card.sentenceTranslation || '',
         title: card.windowTitle,
         query: card.word,
         screenshot: async () => (card.image ? await api.wordImage(card.image, card.imageCrop) : null),
@@ -89,14 +94,17 @@ function csvCell(v) {
 
 export const CSV_COLUMNS = [
     ['word', 'Palavra'], ['dictionaryForm', 'Forma de dicionário'], ['translation', 'Tradução'],
-    ['definition', 'Definição'], ['sentence', 'Frase'], ['contextTranslation', 'Tradução da frase'],
+    ['definition', 'Definição'], ['sentence', 'Frase'], ['sentenceTranslation', 'Tradução da frase'],
     ['ipa', 'IPA'], ['cefr', 'CEFR'], ['partOfSpeech', 'Classe gramatical'], ['explanation', 'Explicação'],
     ['windowTitle', 'Janela'], ['createdAt', 'Data'],
 ];
 
 export function toCsv(cards) {
     const head = CSV_COLUMNS.map(([, label]) => csvCell(label)).join(',');
-    const rows = cards.map((c) => CSV_COLUMNS.map(([key]) => csvCell(key === 'createdAt' ? new Date(c.createdAt).toISOString() : c[key])).join(','));
+    // The sentence's translation goes with the sentence; an older word has only its contextTranslation.
+    const cell = (c, key) => (key === 'createdAt' ? new Date(c.createdAt).toISOString() :
+        key === 'sentenceTranslation' ? String(c.sentenceTranslation || c.contextTranslation || '').replace(/\*\*/g, '') : c[key]);
+    const rows = cards.map((c) => CSV_COLUMNS.map(([key]) => csvCell(cell(c, key))).join(','));
     return [head, ...rows].join('\r\n');
 }
 

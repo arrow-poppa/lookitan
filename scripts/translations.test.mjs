@@ -63,3 +63,32 @@ test('the OCR note corrects only clear misreadings, and the scripts\' examples a
     const prompt = cardPrompt(CARD_PROMPT, {ocrLanguage: 'zh-CN'}, {});
     assert(prompt.indexOf('"selection"') < prompt.indexOf('"ocrFix": "<the word as given>'), 'units first, then the OCR note');
 });
+
+test('the translator reads the paragraph with the word\'s sentence marked, and its answer gives both translations', async () => {
+    const {CONTEXT_PROMPT, SENTENCE_CONTEXT_PROMPT, markSentence, splitContextTranslation} = await import('../src/lib/ai/word-card.js');
+    const context = 'Go home. Then go home again. Rest.';
+    assert.equal(markSentence({context, sentence: 'Then go home again.', contextAt: 17}), 'Go home. ⟦Then go home again.⟧ Rest.');
+    const twice = 'Go home. Go home. Rest.';
+    assert.equal(markSentence({context: twice, sentence: 'Go home.', contextAt: 12}), 'Go home. ⟦Go home.⟧ Rest.', 'the sentence holding the word');
+    assert.equal(markSentence({context: twice, sentence: 'Go home.', contextAt: null}), twice, 'twice, no anchor: unmarked');
+    assert.equal(markSentence({context: 'Go home.', sentence: 'Go home.', contextAt: 3}), 'Go home.', 'one sentence: no marks needed');
+    assert.equal(markSentence({sentence: 'Go home.'}), 'Go home.', 'no paragraph: the sentence');
+    assert.equal(markSentence({context, sentence: 'Not in it.', contextAt: 3}), context, 'a sentence not in the paragraph: unmarked');
+    assert.equal(markSentence({context: '𠮷 a. 𠮷 b.', sentence: '𠮷 b.', contextAt: 5}), '𠮷 a. ⟦𠮷 b.⟧', 'code points');
+    assert.deepEqual(splitContextTranslation('A. ⟦B **c**.⟧ D.'), {text: 'A. B **c**. D.', sentence: 'B **c**.'});
+    assert.deepEqual(splitContextTranslation('A. B.'), {text: 'A. B.', sentence: ''});
+    assert.deepEqual(splitContextTranslation('A. ⟦B.'), {text: 'A. B.', sentence: ''}, 'a mark cut off while streaming is dropped');
+    assert(CONTEXT_PROMPT.includes('marks a sentence with ⟦ and ⟧, put the same marks around its translation'));
+    assert.equal(normalizeAiOptions({contextPrompt: SENTENCE_CONTEXT_PROMPT}).contextPrompt, CONTEXT_PROMPT, 'the earlier default moves to it');
+    assert.equal(normalizeAiOptions({contextPrompt: 'mine {{sentence}}'}).contextPrompt, 'mine {{sentence}}', 'an edited one stays');
+});
+
+test('saved words keep both translations; the CSV pairs the sentence with its own', async () => {
+    const lookup = {payload: {word: 'run', sentence: 'I run.', context: 'Hi. I run.', contextAt: 6},
+        contextTranslation: 'Oi. Eu **corro**.', sentenceTranslation: 'Eu **corro**.'};
+    const card = {...cardFromLookup(lookup, {ocrLanguage: 'en-US'}), createdAt: 0};
+    assert.deepEqual([card.contextTranslation, card.sentenceTranslation], ['Oi. Eu **corro**.', 'Eu **corro**.']);
+    assert(toCsv([card]).split('\r\n')[0].includes('Tradução da frase'));
+    assert(toCsv([card]).includes(',Eu corro.,'), 'the sentence\'s translation, without the stars');
+    assert(toCsv([{word: 'x', contextTranslation: 'Velha.', createdAt: 0}]).includes(',Velha.,'), 'an older word: its only translation');
+});

@@ -311,3 +311,23 @@ test('Yomitan glossary markers: per dictionary, first, no-dictionary, popup sele
         {kind: 'mdict', enabled: false, name: 'Off'}, {kind: 'mdict', enabled: true, name: oxford},
     ])], ['IA', oxford]);
 });
+
+test('{context-translation} follows "Contexto no card"; {sentence-translation} and {paragraph-translation} are fixed', async () => {
+    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); });
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {
+        C: {value: '{context-translation}'}, S: {value: '{sentence-translation}'}, P: {value: '{paragraph-translation}'},
+    }}];
+    const ctx = {word: 'run', sentence: 'I run.', context: 'Hi. I run.', contextTranslation: 'Oi. Eu **corro**.', sentenceTranslation: 'Eu **corro**.'};
+    let built = await notes.buildNote(ctx, options, null);
+    assert.deepEqual({...built.fields}, {C: 'Eu corro.', S: 'Eu corro.', P: 'Oi. Eu corro.'}, 'sentence, the default');
+    options.contextMode = 'paragraph';
+    built = await notes.buildNote(ctx, options, null);
+    assert.equal(built.fields.C, 'Oi. Eu corro.', 'paragraph');
+    built = await notes.buildNote({...ctx, context: ''}, options, null);
+    assert.equal(built.fields.C, 'Eu corro.', 'no paragraph: the sentence\'s, as {sentence} does');
+    options.contextMode = 'sentence';
+    built = await notes.buildNote({...ctx, sentenceTranslation: ''}, options, null);
+    assert.equal(built.fields.C, 'Oi. Eu corro.', 'no sentence cut out: the whole answer');
+    built = await notes.buildNote({word: 'run', sentence: 'I run.', contextTranslation: 'Eu corro.'}, options, null);
+    assert.deepEqual({...built.fields}, {C: 'Eu corro.', S: 'Eu corro.', P: 'Eu corro.'}, 'an older word, whose translation was the sentence\'s');
+});

@@ -48,7 +48,7 @@ export const MARKERS = [
     'glossary-plain-no-dictionary', 'glossary-first', 'glossary-first-brief', 'glossary-first-no-dictionary',
     'glossary-first-plain', 'sentence', 'cloze-prefix', 'cloze-body', 'cloze-suffix', 'dictionary',
     'screenshot', 'image', 'audio', 'sentence-audio', 'popup-selection-text', 'ai-card', 'ai-card-plain', 'ai-definition', 'ai-explanation', 'ai-explanation-plain',
-    'translation', 'context-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-transliteration', 'ai-form', 'ai-ocr-fix', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
+    'translation', 'context-translation', 'sentence-translation', 'paragraph-translation', 'cefr', 'part-of-speech', 'ai-reading', 'ai-transliteration', 'ai-form', 'ai-ocr-fix', 'ai-synonyms', 'ai-components', 'ai-components-plain', 'tags', 'document-title', 'search-query',
 ];
 
 /** Name of the AI word card when it is listed as a dictionary in glossary markers. */
@@ -290,6 +290,17 @@ function clozeOf(sentence, ctx) {
     return unit && sentence && sentence.toLowerCase().includes(unit.toLowerCase()) ? cloze(sentence, unit) : cloze(sentence, ctx.word);
 }
 
+/** A context translation as a field holds it: escaped, without the ** around the word. */
+function plainTranslation(text) {
+    return escapeHtml(String(text || '').replace(/\*\*/g, ''));
+}
+
+/** The translation of the word's sentence: cut from the translator's answer, else the whole
+ * answer (a paragraph of one sentence, a prompt without the sentence marks, an older word). */
+function sentenceTranslation(ctx) {
+    return ctx.sentenceTranslation || ctx.contextTranslation || '';
+}
+
 function cloze(sentence, word) {
     if (!sentence || !word) { return {prefix: '', body: word || '', suffix: ''}; }
     const i = sentence.toLowerCase().indexOf(word.toLowerCase());
@@ -308,7 +319,9 @@ function cloze(sentence, word) {
  * @property {{name: string, html: string}[]} [glossaries]
  * @property {{ipa?: string, cefr?: string, partOfSpeech?: string[], labels?: string[], definition?: string, translation?: string, reading?: string, transliteration?: string, form?: string[], ocrFix?: string, synonyms?: string[], components?: {part: string, reading: string, meaning: string}[]}} [aiCard]
  * @property {string} [aiExplanation]
- * @property {string} [contextTranslation]
+ * @property {string} [contextTranslation] The context translator's answer: the paragraph's translation
+ *   (the sentence's, for words saved before 2026-10-27).
+ * @property {string} [sentenceTranslation] The translation of the word's sentence alone, cut from it.
  * @property {() => Promise<string|null>} [screenshot] Base64 PNG of the capture.
  * @property {() => Promise<{data: string, extension: string}[]>} [images] The pictures checked in the
  *   pop-up's "Imagens" section, as base64 files, for {image}.
@@ -363,7 +376,10 @@ export async function buildNote(ctx, anki, conn) {
         'ai-explanation': renderMarkdown(ctx.aiExplanation || ''),
         'ai-explanation-plain': escapeHtml(markdownToText(ctx.aiExplanation || '')).replace(/\n/g, '<br>'),
         'translation': escapeHtml(ai.translation || ''),
-        'context-translation': escapeHtml((ctx.contextTranslation || '').replace(/\*\*/g, '')),
+        // {context-translation} follows "Contexto no card", as {sentence} does; the other two are fixed.
+        'context-translation': plainTranslation(anki.contextMode === 'paragraph' && ctx.context ? ctx.contextTranslation : sentenceTranslation(ctx)),
+        'sentence-translation': plainTranslation(sentenceTranslation(ctx)),
+        'paragraph-translation': plainTranslation(ctx.contextTranslation),
         'cefr': escapeHtml(ai.cefr || ''),
         'part-of-speech': escapeHtml((ai.partOfSpeech || []).join(', ')),
         'ai-reading': escapeHtml(ai.reading || ''),

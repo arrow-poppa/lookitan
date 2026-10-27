@@ -161,7 +161,7 @@ test('Anki glossary export retains all homographs once in each dictionary', asyn
     assert.equal(result[1].html, '<p>b:3</p>');
 });
 
-test('the word card and the explanation read the whole paragraph, the context translation only the sentence', async () => {
+test('the word card, the explanation and the context translation read the whole paragraph; the translator\'s marks the sentence', async () => {
     const texts = [];
     const view = await fixture({explain: async (_options, _word, text) => { texts.push(text); return '{"headword":"run","definition":"move quickly"}'; }});
     const paragraph = 'Run club. I run daily. It keeps me well.';
@@ -172,8 +172,31 @@ test('the word card and the explanation read the whole paragraph, the context tr
     await view.popup.runCard(card);
     await view.popup.runExplain(new Element());
     await view.popup.runContext(new Element());
-    assert.deepEqual(texts, [paragraph, paragraph, 'I run daily.']);
+    assert.deepEqual(texts, [paragraph, paragraph, 'Run club. ⟦I run daily.⟧ It keeps me well.']);
     assert(card.innerHTML.includes('Run club. I <mark>run</mark> daily.'), 'the word is marked where the OCR found it');
+});
+
+test('one translator answer gives the paragraph\'s translation, shown, and the sentence\'s, kept for Anki', async () => {
+    let calls = 0;
+    const answer = 'Clube de corrida. ⟦Eu **corro** todo dia.⟧ Isso me faz bem.';
+    const view = await fixture({explain: async () => { calls++; return answer; }});
+    Object.assign(view.lookup.payload, {context: 'Run club. I run daily. It keeps me well.', contextAt: 12});
+    view.ai.contextPrompt = 'translate';
+    const body = new Element();
+    await view.popup.runContext(body);
+    assert.equal(calls, 1, 'one request');
+    assert(body.innerHTML.includes('Clube de corrida. Eu <mark>corro</mark> todo dia. Isso me faz bem.'), 'the whole paragraph, no marks shown');
+    assert.equal(view.lookup.contextTranslation, 'Clube de corrida. Eu **corro** todo dia. Isso me faz bem.');
+    assert.equal(view.lookup.sentenceTranslation, 'Eu **corro** todo dia.');
+    const single = await fixture({explain: async () => 'Eu **corro** todo dia.'});
+    single.ai.contextPrompt = 'translate';
+    await single.popup.runContext(new Element());
+    assert.equal(single.lookup.sentenceTranslation, 'Eu **corro** todo dia.', 'no paragraph: the sentence is all of it');
+    const unmarked = await fixture({explain: async () => 'Clube de corrida. Eu **corro** todo dia.'});
+    Object.assign(unmarked.lookup.payload, {context: 'Run club. I run daily.', contextAt: 12});
+    unmarked.ai.contextPrompt = 'translate';
+    await unmarked.popup.runContext(new Element());
+    assert.equal(unmarked.lookup.sentenceTranslation, '', 'a reply without the marks gives no sentence; Anki then uses the paragraph\'s');
 });
 
 test('the card marks each piece of the longer unit it describes, safely, and the word when the unit is not found', async () => {
