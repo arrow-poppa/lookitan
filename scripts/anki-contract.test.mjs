@@ -173,6 +173,26 @@ test('the cloze holds the longer unit the AI card marked, when the sentence has 
     assert.equal(built.fields.Front, 'She [turned] the light off.', 'a split unit keeps the word');
 });
 
+test('the cloze is the occurrence looked up, in the sentence or the paragraph, and falls back when it cannot be placed', async () => {
+    const {options, notes} = await clientFixture(async () => { throw new Error('note construction must not use HTTP'); });
+    options.cardFormats = [{deck: 'D', model: 'Basic', fields: {Front: {value: '{cloze-prefix}[{cloze-body}]{cloze-suffix}', overwriteMode: 'coalesce'}}}];
+    const front = async (ctx) => (await notes.buildNote(ctx, options, null)).fields.Front;
+    const cat = 'The cat saw the cat.';
+    assert.equal(await front({word: 'cat', sentence: cat, context: cat, clozeAt: [16, 19]}), 'The cat saw the [cat].', 'the second cat');
+    assert.equal(await front({word: 'cat', sentence: cat}), 'The [cat] saw the cat.', 'no anchor: the first, as before');
+    const para = 'Go home. Go home. Then rest.';
+    assert.equal(await front({word: 'home', sentence: 'Go home.', context: para, clozeAt: [12, 16]}), 'Go [home].', 'the sentence that holds it');
+    options.contextMode = 'paragraph';
+    assert.equal(await front({word: 'home', sentence: 'Go home.', context: para, clozeAt: [12, 16]}), 'Go home. Go [home]. Then rest.', 'the paragraph');
+    options.contextMode = 'sentence';
+    const nyc = 'New York is big. I love New York.';
+    assert.equal(await front({word: 'York', clozeWord: 'New York', sentence: 'I love New York.', context: nyc, clozeAt: [24, 32]}), 'I love [New York].', 'a unit');
+    assert.equal(await front({word: 'York', clozeWord: 'New York', sentence: nyc, context: nyc, clozeAt: [24, 32]}), 'New York is big. I love [New York].',
+        'a repeated unit, the one looked up');
+    assert.equal(await front({word: 'run', sentence: 'I run daily.', context: 'Other text.', clozeAt: [0, 5]}), 'I [run] daily.', 'the range is not in the sentence: the word');
+    assert.equal(await front({word: '𠮷', sentence: '𠮷野 and 𠮷', context: '𠮷野 and 𠮷', clozeAt: [7, 8]}), '𠮷野 and [𠮷]', 'code points');
+});
+
 // Enough of DOMParser for cleanGlossaryHtml and htmlToText on simple, script-free entries.
 class FakeDOMParser {
     parseFromString(html) {

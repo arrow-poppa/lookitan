@@ -136,6 +136,61 @@ export function locateSelection(text, at, word, selection) {
 }
 
 /**
+ * Which of the word's occurrences in the text is the one at `at`, as [nth, of], when it occurs
+ * more than once; else null. An occurrence is a match that does not cut a word of a spaced script
+ * ("turn" in "turnover" is none); in unspaced scripts any match counts. Case is ignored, one code
+ * point at a time.
+ * @param {string} text
+ * @param {number|null|undefined} at
+ * @param {string} word
+ * @returns {[number, number]|null}
+ */
+export function occurrence(text, at, word) {
+    if (!text || !word || !Number.isInteger(at)) { return null; }
+    const chars = [...text];
+    const piece = [...word];
+    const anchor = [at, at + piece.length];
+    if (matchAt(chars, at, piece) !== anchor[1]) { return null; }
+    const all = occurrences(chars, piece, anchor);
+    const nth = all.findIndex(([s]) => s === at) + 1;
+    return all.length > 1 && nth ? [nth, all.length] : null;
+}
+
+/**
+ * What a cloze covers in the text, as [start, end) code points: the selection when it is one
+ * piece, else the word itself at `at`; null when neither is known.
+ * @param {string} text
+ * @param {number|null|undefined} at
+ * @param {string} word
+ * @param {[number, number][]|null|undefined} marks from locateSelection
+ */
+export function clozeRange(text, at, word, marks) {
+    if (!text) { return null; }
+    if (Array.isArray(marks) && marks.length === 1) { return marks[0]; }
+    return word ? anchorOf([...text], at, word) : null;
+}
+
+/**
+ * `range` (code points in `outer`) moved into `inner`, a piece of `outer` such as the sentence of
+ * a paragraph: the occurrence of `inner` that holds the range. Null when none does.
+ * @param {string} outer
+ * @param {string} inner
+ * @param {[number, number]|null|undefined} range
+ */
+export function rangeWithin(outer, inner, range) {
+    if (!outer || !inner || !Array.isArray(range)) { return null; }
+    if (outer === inner) { return range; }
+    const chars = [...outer];
+    const piece = [...inner];
+    for (let i = 0; i + piece.length <= chars.length; i++) {
+        if (i <= range[0] && range[1] <= i + piece.length && piece.every((c, k) => chars[i + k] === c)) {
+            return [range[0] - i, range[1] - i];
+        }
+    }
+    return null;
+}
+
+/**
  * The selection's text when it is one piece in the text (for a cloze), else ''.
  * @param {string} text
  * @param {[number, number][]|null} ranges from locateSelection

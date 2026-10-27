@@ -725,6 +725,31 @@ test('{audio} gets the word audio from a local database source, as an Anki sound
     assert.deepEqual(JSON.parse(JSON.stringify(view.calls.invokes[0])), ['audio_lookup', {path: 'C:/audio/android.db', term: '読む', reading: null, order: null}]);
 });
 
+test('only a unit found in the text places the Anki cloze; a proposed one that is not keeps the word looked up', async () => {
+    let answer = '{"headword":"New York","definition":"a city","selection":{"parts":["New York"],"type":"proper_noun"}}';
+    const view = await fixture({explain: async () => answer});
+    const context = 'New York is big. I love New York.';
+    view.lookup.payload = {word: 'York', sentence: 'I love New York.', context, contextAt: 28, entries: []};
+    view.options.enable = true;
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    await view.popup.runCard(new Element());
+    assert.equal(JSON.stringify(view.lookup.contextMarks), '[[24,32]]', 'the second New York, where the word is');
+    await view.popup.onAnkiClick();
+    let ctx = view.calls.notes.at(-1);
+    assert.equal(JSON.stringify([ctx.clozeAt, ctx.clozeWord, ctx.headword, ctx.word]), '[[24,32],"New York","New York","York"]');
+    answer = '{"headword":"Big Apple","definition":"a city","selection":{"parts":["Big Apple"]}}';
+    view.lookup.payload = {word: 'York', sentence: 'I love New York.', context, contextAt: 28, entries: [], recognition: null};
+    const body = new Element();
+    await view.popup.runCard(body, true);
+    assert.equal(view.lookup.contextMarks, null, 'proposed, not found: no marks');
+    assert.equal(JSON.stringify(view.lookup.aiCard.selection.parts), '["Big Apple"]', 'the proposal itself is kept');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">Big Apple</span>'), 'the title still matches the definition');
+    assert(body.innerHTML.includes('I love New <mark>York</mark>.'), 'the word is marked where the OCR found it');
+    await view.popup.onAnkiClick();
+    ctx = view.calls.notes.at(-1);
+    assert.equal(JSON.stringify([ctx.clozeAt, ctx.clozeWord]), '[[28,32],""]', 'the cloze is the word looked up, not the first York');
+});
+
 test('a counter beside the bookmark shows how many cards of the word were saved, and opens them', async () => {
     const words = [
         {id: 'a', word: 'run', dictionaryForm: 'run', translation: 'correr', sentence: 'I run daily.', createdAt: 1},

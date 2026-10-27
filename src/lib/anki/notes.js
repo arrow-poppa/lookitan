@@ -4,6 +4,7 @@
 import {AnkiConnect} from './anki-connect.js';
 import {generateAnkiNoteMediaFileName, getFieldMarkers} from './anki-util.js';
 import {markdownToText, renderMarkdown} from '../markdown.js';
+import {rangeWithin} from '../ai/selection.js';
 
 export function defaultAnkiOptions() {
     return {
@@ -276,10 +277,17 @@ function aiCardPlain(headword, ai, explanation, dictionaries = []) {
     return glossary ? `${text}<br>${glossary}` : text;
 }
 
-/** The cloze of `word` in `sentence`, or of the longer unit the AI card marked (`unit`, one piece
- * of the context) when the sentence has it. */
-function clozeOf(sentence, word, unit) {
-    return unit && sentence && sentence.toLowerCase().includes(unit.toLowerCase()) ? cloze(sentence, unit) : cloze(sentence, word);
+/** The cloze of the lookup in `sentence` (the sentence or the paragraph): where `ctx.clozeAt`
+ * places it in the paragraph, so a word or unit that is in the text twice is the one looked up;
+ * else the first match of the unit the AI card marked (`clozeWord`) or of the word. */
+function clozeOf(sentence, ctx) {
+    const at = rangeWithin(ctx.context || '', sentence, ctx.clozeAt);
+    if (at) {
+        const chars = [...sentence];
+        return {prefix: chars.slice(0, at[0]).join(''), body: chars.slice(at[0], at[1]).join(''), suffix: chars.slice(at[1]).join('')};
+    }
+    const unit = ctx.clozeWord;
+    return unit && sentence && sentence.toLowerCase().includes(unit.toLowerCase()) ? cloze(sentence, unit) : cloze(sentence, ctx.word);
 }
 
 function cloze(sentence, word) {
@@ -294,6 +302,7 @@ function cloze(sentence, word) {
  * @property {string} word Word as read on screen.
  * @property {string} [headword] Dictionary form.
  * @property {string} [clozeWord] The longer unit the AI card marked in the context, when it is one piece.
+ * @property {[number, number]|null} [clozeAt] What the cloze covers in `context`, in code points: that unit, else the word looked up.
  * @property {string} [sentence]
  * @property {string} [context] The paragraph around the word, used when contextMode is 'paragraph'.
  * @property {{name: string, html: string}[]} [glossaries]
@@ -327,7 +336,7 @@ export async function buildNote(ctx, anki, conn) {
     const defs = definitions(clean, ai, ctx.dictionaryOrder);
     const first = defs.slice(0, 1);
     const sentence = (anki.contextMode === 'paragraph' && ctx.context) || ctx.sentence || '';
-    const c = clozeOf(sentence, ctx.word, ctx.clozeWord);
+    const c = clozeOf(sentence, ctx);
     // The dictionaries' entries, for an AI card that carries them too.
     const cardDictionaries = anki.aiCardMode === 'dictionaries' ? defs.filter((d) => d.dictionary !== AI_GLOSSARY_NAME) : [];
     const values = {

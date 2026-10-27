@@ -4,8 +4,8 @@ import {resolve} from 'node:path';
 import test from 'node:test';
 import {AIProvider} from '../src/lib/ai/ai-provider.js';
 import {normalizeAiOptions} from '../src/lib/ai/defaults.js';
-import {locateSelection, parseSelection, selectedSpan, selectionText} from '../src/lib/ai/selection.js';
-import {CARD_PROMPT, EXPRESSIONS_PROMPT, OCR_ERRORS_PROMPT, cardHints, cardPrompt, parseCard, parseCardProgress} from '../src/lib/ai/word-card.js';
+import {clozeRange, locateSelection, occurrence, parseSelection, rangeWithin, selectedSpan, selectionText} from '../src/lib/ai/selection.js';
+import {CARD_PROMPT, EXPRESSIONS_PROMPT, OCR_ERRORS_PROMPT, cardHints, cardPrompt, parseCard, parseCardProgress, takesCardNotes} from '../src/lib/ai/word-card.js';
 import {imageWord} from '../src/lib/images.js';
 
 const fixtures = JSON.parse(await readFile(resolve(import.meta.dirname, 'fixtures/semantic-selection.json'), 'utf8'));
@@ -134,10 +134,64 @@ test('a word repeated in its context tells the AI which one is on screen', () =>
     assert.equal(split.systemPrompt, 'Rules.', 'the position goes with the lookup, never in the cached instructions');
 });
 
-test('the pictures search the unit the card described', () => {
+test('the pictures search the unit the card described, only when it was found in the text', () => {
     const card = {headword: 'Socrates Awards', selection: {parts: ['Socrates Awards']}};
-    assert.equal(imageWord('Socrates', card, {}), 'Socrates Awards');
-    assert.equal(imageWord('Socrates', card, {imageUseCardWord: false}), 'Socrates');
-    assert.equal(imageWord('runs', {headword: 'run', selection: null}, {}), 'runs', 'no unit: the word as read');
-    assert.equal(imageWord('tabe', {headword: 'x', ocrFix: 'tabe → table', selection: {parts: ['x']}}, {}), 'table', 'the OCR fix first');
+    assert.equal(imageWord('Socrates', card, {}, true), 'Socrates Awards');
+    assert.equal(imageWord('Socrates', card, {imageUseCardWord: false}, true), 'Socrates');
+    assert.equal(imageWord('Socrates', {headword: 'Nobel Prize', selection: {parts: ['Nobel Prize']}}, {}, false), 'Socrates',
+        'a unit the AI proposed but that is not in the text: the word');
+    assert.equal(imageWord('Socrates', card, {}), 'Socrates', 'not found unless said so');
+    assert.equal(imageWord('runs', {headword: 'run', selection: null}, {}, false), 'runs', 'no unit: the word as read');
+    assert.equal(imageWord('tabe', {headword: 'x', ocrFix: 'tabe → table', selection: {parts: ['x']}}, {}, true), 'table', 'the OCR fix first');
+});
+
+test('a custom card prompt that asks for the card JSON gets the notes; one that asks for them itself, or for no JSON, does not', () => {
+    const settings = {ocrLanguage: 'en-US'};
+    const json = "Word: '{{target}}'\nContext: '{{sentence}}'\nReply with JSON only: {\"headword\": its dictionary form, \"definition\": a short definition}";
+    assert(takesCardNotes(json) && takesCardNotes(CARD_PROMPT));
+    const sent = cardPrompt(json, settings, {});
+    assert(sent.startsWith(json), "the user's prompt comes first, unchanged");
+    assert.equal(sent.split('Examples:').length, 2, 'the expressions note once');
+    assert(sent.includes('"ocrFix"'), 'and the OCR note');
+    assert.equal(cardPrompt(json, settings, {cardExpressions: false, cardOcrFix: false}), json, 'both off: as written');
+    const free = "Explain '{{target}}' as used in '{{sentence}}', in two sentences.";
+    assert(!takesCardNotes(free));
+    assert.equal(cardPrompt(free, settings, {}), free, 'no card JSON asked: as written');
+    const own = `${json.slice(0, -1)}, "selection": the phrase it belongs to, or null, "ocrFix": what OCR misread}`;
+    assert.equal(cardPrompt(own, settings, {}), own, 'a prompt asking for "selection" and "ocrFix" itself gets neither note');
+    const ownSelection = `${CARD_PROMPT.slice(0, -1)}, "selection": mine}`;
+    const withOcr = cardPrompt(ownSelection, settings, {});
+    assert(!withOcr.includes('Examples:') && withOcr.includes('"ocrFix"'), 'each note is skipped on its own');
+});
+
+test('occurrences of the word are whole words in spaced scripts, any match in unspaced ones', () => {
+    const turn = 'The turnover rose. Then turn it off.';
+    assert.equal(occurrence(turn, at(turn, 'turn', 10), 'turn'), null, '"turn" in "turnover" is not the word');
+    assert.equal(cardHints({word: 'turn', context: turn, contextAt: at(turn, 'turn', 10), candidates: []}), '');
+    const twice = 'Turn it on. Then turn it off.';
+    assert.deepEqual(occurrence(twice, at(twice, 'turn'), 'turn'), [2, 2], 'case is ignored');
+    const dotted = 'İ go and go.';
+    assert.deepEqual(occurrence(dotted, 2, 'go'), [1, 2], 'a letter whose lower case is longer does not shift the count');
+    const ar = 'قرأ الكتاب ثم كتاب آخر';
+    assert.equal(occurrence(ar, at(ar, 'كتاب', 10), 'كتاب'), null, 'كتاب inside الكتاب is not another occurrence');
+    const run = 'جماعةالضفادع جماعة';
+    assert.deepEqual(occurrence(run, 0, 'جماعة'), [1, 2], 'the word on screen counts even when cut out of a run');
+    const zh = '大学的学生在学习。';
+    assert.deepEqual(occurrence(zh, at(zh, '学', 3), '学'), [2, 3], 'Chinese has no word boundaries to test');
+    assert.equal(occurrence(turn, 3, 'turn'), null, 'not at the word: nothing');
+    assert.equal(occurrence('', 0, 'x'), null);
+});
+
+test('the cloze range is the unit when it is one piece, else the word where the OCR found it', () => {
+    const text = 'The cat saw the cat.';
+    assert.deepEqual(clozeRange(text, 16, 'cat', null), [16, 19]);
+    assert.deepEqual(clozeRange(text, 12, 'the', [[12, 19]]), [12, 19]);
+    assert.deepEqual(clozeRange(text, 4, 'cat', [[4, 7], [16, 19]]), [4, 7], 'a split unit: the word');
+    assert.equal(clozeRange(text, null, 'cat', null), null, 'twice and no anchor');
+    assert.equal(clozeRange('', 0, 'cat', null), null);
+    const para = 'Go home. Go home. Then rest.';
+    assert.deepEqual(rangeWithin(para, 'Go home.', [12, 16]), [3, 7], 'the second sentence holds the second "home"');
+    assert.deepEqual(rangeWithin(para, para, [12, 16]), [12, 16]);
+    assert.equal(rangeWithin(para, 'Then rest.', [12, 16]), null, 'a sentence without it');
+    assert.equal(rangeWithin(para, 'Go home.', null), null);
 });

@@ -10,7 +10,7 @@ import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
-import {locateSelection, selectedSpan} from '../lib/ai/selection.js';
+import {clozeRange, locateSelection, selectedSpan} from '../lib/ai/selection.js';
 import {invoke} from '@tauri-apps/api/core';
 import {audioFile, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
@@ -103,7 +103,8 @@ function markRanges(text, ranges) {
 }
 
 /** Where the AI card's unit is in the lookup's context ("Socrates Awards", "turned" + "off"), or
- * null to mark the word itself. */
+ * null to mark the word itself. The card's `selection` is only what the AI proposed; these ranges,
+ * kept as `lookup.contextMarks`, are what was found, and only they place anything. */
 function selectionRanges(p, card) {
     return card?.selection ? locateSelection(p.context || p.sentence || '', p.context ? p.contextAt : null, p.word, card.selection) : null;
 }
@@ -325,7 +326,7 @@ function renderCard(body, card, pending = false) {
         ${card.definition ? `<p class="def">${escapeHtml(card.definition)}</p>` : ''}
         ${cardExtrasHtml(card, ai.cardComponents !== false)}
         ${pending ? '<div class="hint" role="status">Gerando…</div>' : `<button class="ghost explain-btn explain-word">${icon('sparkle', 'sm')}Explicar</button><button class="ghost icon explain-reset" title="Gerar explicação de novo" aria-label="Gerar explicação de novo">${icon('refresh', 'sm')}</button><div class="explanation ai-text" hidden></div>`}
-        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div dir="auto">${markContext(p, selectionRanges(p, card))}</div></div></details>` : ''}`;
+        ${!pending && (p.context || p.sentence) ? `<details class="ctx"><summary>Contexto</summary><div class="body ctx-line">${sentenceButton()}<div dir="auto">${markContext(p, state.contextMarks)}</div></div></details>` : ''}`;
     bindSentence(body, p.context || p.sentence);
     const speaker = body.querySelector('.speak');
     speaker?.addEventListener('click', () => void playWord(state, headword));
@@ -392,6 +393,7 @@ async function runCard(body, force = false) {
     // The pictures wait for the card while it is made, to search the word it corrected.
     let cardDone;
     lookup.cardDone = new Promise((done) => { cardDone = done; });
+    lookup.contextMarks = null;
     lookup.aiPending = true;
     void refreshAnkiButton();
     body.innerHTML = shimmer();
@@ -412,6 +414,7 @@ async function runCard(body, force = false) {
         const card = parseCard(text);
         if (card) {
             lookup.aiCard = card;
+            lookup.contextMarks = selectionRanges(lookup.payload, card);
             renderCard(body, card);
         } else {
             lookup.explanation = text;
@@ -486,7 +489,7 @@ function imagePromptKey(options, word) {
 async function imageQuery(lookup, options, force) {
     // The word the AI card corrected, once a card being made is done; else the OCR's.
     if (options.imageUseCardWord !== false && lookup.aiPending && lookup.cardDone) { await lookup.cardDone; }
-    const word = imageWord(lookup.payload.word, lookup.aiCard, options);
+    const word = imageWord(lookup.payload.word, lookup.aiCard, options, Boolean(lookup.contextMarks));
     if (options.imageQueryUseAi === false || !isConfigured(options)) { return word; }
     const {system, user} = imagePrompts(options, settings);
     const key = await aiKey('images', imagePromptKey(options, word), lookup, options);
@@ -1136,7 +1139,8 @@ function noteContext(lookup = state, options = anki) {
     return {
         word: lookup.payload.word,
         headword: lookup.aiCard?.headword || lookup.payload.entries?.[0]?.headword,
-        clozeWord: selectedSpan(lookup.payload.context || lookup.payload.sentence || '', selectionRanges(lookup.payload, lookup.aiCard)),
+        clozeWord: selectedSpan(lookup.payload.context || lookup.payload.sentence || '', lookup.contextMarks),
+        clozeAt: lookup.payload.context ? clozeRange(lookup.payload.context, lookup.payload.contextAt, lookup.payload.word, lookup.contextMarks) : null,
         sentence: lookup.payload.sentence,
         context: lookup.payload.context,
         glossaries: lookup.glossaries || [],

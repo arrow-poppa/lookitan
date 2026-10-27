@@ -4,7 +4,7 @@
 // transliteration, and, when switched on, the word's components and the longer unit it belongs to)
 // and the context translator.
 
-import {parseSelection} from './selection.js';
+import {occurrence, parseSelection} from './selection.js';
 
 /** Default instruction for the card's "translation" key (the "Prompt da tradução da palavra"). */
 export const WORD_TRANSLATION_PROMPT = 'the translation of the word in this context into {{translationLanguage}}';
@@ -236,25 +236,6 @@ function ocrRun(payload) {
     return chars.slice(start, end).join('').replace(/^[^\p{L}\p{M}\p{N}]+|[^\p{L}\p{M}\p{N}]+$/gu, '');
 }
 
-/** Which of the word's occurrences in its context is the one on screen, as [nth, of], when it
- * occurs more than once (the AI could otherwise describe or select another one); else null. */
-function occurrence(payload) {
-    const {context, contextAt: at, word} = payload;
-    if (!context || !Number.isInteger(at) || !word) { return null; }
-    const chars = [...context.toLowerCase()];
-    const piece = [...word.toLowerCase()];
-    if (chars.length !== [...context].length) { return null; }
-    let nth = 0;
-    let of = 0;
-    for (let i = 0; i + piece.length <= chars.length; i++) {
-        if (piece.every((c, k) => chars[i + k] === c)) {
-            of++;
-            if (i === at) { nth = of; }
-        }
-    }
-    return of > 1 && nth ? [nth, of] : null;
-}
-
 const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth'];
 
 /**
@@ -284,7 +265,7 @@ export function cardHints(payload) {
             `"${chars.slice(cut).join('')}" at the start of the next, so the word may end or begin at that break`);
     }
     if (forms.length) { hints.push(`the word analyzer's dictionary forms: ${forms.map((f) => `"${f}"`).join(', ')}`); }
-    const nth = occurrence(payload);
+    const nth = occurrence(payload.context, payload.contextAt, word);
     const place = nth ? `The word on screen is the ${ORDINALS[nth[0] - 1] || `${nth[0]}th`} of the ${nth[1]} times '{{target}}' is in the context.` : '';
     const line = hints.length ? `Hints for '{{target}}', which may be wrong: ${hints.join('; ')}.` : '';
     return [place, line].filter(Boolean).join(' ');
@@ -299,15 +280,26 @@ export function fillLanguages(template, settings) {
 }
 
 /**
+ * Whether a card prompt asks for the card's JSON, so the notes that add keys to it (the longer
+ * unit's "selection", the OCR fix) fit it: the default's {{…Field}} markers, or a "headword" key
+ * in the user's own prompt.
+ * @param {string} template
+ */
+export function takesCardNotes(template) {
+    return /\{\{\w+Field\}\}/.test(template) || /["']headword["']/.test(template);
+}
+
+/**
  * The word-card prompt as sent. {{translationField}} becomes the "translation" key with the word
  * translation prompt, or nothing when the word translation is turned off, so the model spends no
  * tokens on it. Likewise {{readingField}} gets the reading prompt only in Chinese and Japanese,
  * {{componentsField}} the components prompt only when they are switched on, and {{formField}} the
  * form prompt, plus the transliteration prompt in a script other than Latin; their variables follow
- * the OCR language. A prompt with these markers is followed by the note on longer units, unless
- * "Reconhecer expressões" (`cardExpressions`) is off, and then by the OCR errors note, unless
- * "Corrigir erros de OCR com IA" (`cardOcrFix`) is off, on a paragraph of its own, with the examples of the OCR language's script. A card prompt without a marker is sent as
- * written.
+ * the OCR language. A prompt that asks for the card's JSON (`takesCardNotes`) is followed by the
+ * note on longer units, unless it asks for "selection" itself or "Reconhecer expressões"
+ * (`cardExpressions`) is off, and then by the OCR errors note, unless it asks for "ocrFix" itself
+ * or "Corrigir erros de OCR com IA" (`cardOcrFix`) is off, each on a paragraph of its own; the OCR
+ * note has the examples of the OCR language's script. Any other card prompt is sent as written.
  * @param {string} template
  * @param {{showWordTranslation?: boolean, ocrLanguage?: string}} settings
  * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, ocrErrorsPrompt?: string, expressionsPrompt?: string, cardComponents?: boolean, cardOcrFix?: boolean, cardExpressions?: boolean}} [ai]
@@ -322,9 +314,10 @@ export function cardPrompt(template, settings, ai = {}) {
         .replaceAll('{{componentReading}}', COMPONENT_READINGS[language] || '')}`;
     const form = `, "form": ${promptOr(ai.formPrompt, FORM_PROMPT)}` +
         (TRANSLITERATED.has(language) ? `, "transliteration": ${promptOr(ai.transliterationPrompt, TRANSLITERATION_PROMPT)}` : '');
-    const marked = /\{\{\w+Field\}\}/.test(template);
-    const expressions = ai.cardExpressions !== false && marked ? `\n\n${promptOr(ai.expressionsPrompt, EXPRESSIONS_PROMPT)}` : '';
-    const note = expressions + (ai.cardOcrFix !== false && marked ?
+    const notes = takesCardNotes(template);
+    const expressions = ai.cardExpressions !== false && notes && !template.includes('"selection"') ?
+        `\n\n${promptOr(ai.expressionsPrompt, EXPRESSIONS_PROMPT)}` : '';
+    const note = expressions + (ai.cardOcrFix !== false && notes && !template.includes('"ocrFix"') ?
         `\n\n${ocrNote(ai.ocrErrorsPrompt, OCR_ERRORS_PROMPT, settings)}` : '');
     return fillLanguages(template
         .replaceAll(TRANSLATION_FIELD, field)

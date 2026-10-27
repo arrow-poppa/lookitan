@@ -5,7 +5,7 @@ import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {DEFAULT_PROMPT, aiOptionsFor} from '../lib/ai/defaults.js';
 import {DEFAULT_MODELS, explain} from '../lib/ai/explain.js';
-import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPRESSIONS_PROMPT, FORM_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages} from '../lib/ai/word-card.js';
+import {CARD_PROMPT, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPRESSIONS_PROMPT, FORM_PROMPT, OCR_ERRORS_PROMPT, READING_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT, fillLanguages, takesCardNotes} from '../lib/ai/word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT, cleanQuery, imagePrompts, searchImages} from '../lib/images.js';
 import {icon} from '../lib/icons.js';
 import {store, save} from './store.js';
@@ -171,6 +171,11 @@ function languageRows() {
     ];
 }
 
+/** For the card's notes: a card prompt that does not ask for the card's JSON is sent as written. */
+function cardNotesWarning() {
+    return takesCardNotes(store.ai.cardPrompt || '') ? '' : ' O seu prompt do card não pede o JSON do card (nem os marcadores {{…Field}} nem a chave "headword"), então esta nota não é enviada.';
+}
+
 function aiControl(path, label, control) {
     control.setAttribute('data-setting', `ai.${path}`);
     control.setAttribute('id', `ai-${path.replaceAll('.', '-')}`);
@@ -320,9 +325,9 @@ function renderAiWord(root) {
                 control: toggle(s.hideWordTranslation, (v) => { s.hideWordTranslation = v; save(); })}) : null,
             cardRow({icon: 'book', title: 'Componentes', desc: 'As partes da palavra, em qualquer idioma: cada caractere no chinês e no japonês (com a leitura), raízes, afixos ou as palavras de um composto nos outros. Também vão para o Anki em {ai-card} e {ai-components}. Desligado, a IA nem gera os componentes, o que gasta menos tokens.',
                 control: aiControl('cardComponents', 'Componentes', toggle(ai.cardComponents !== false, (v) => { ai.cardComponents = v; save(); }))}),
-            cardRow({icon: 'book', title: 'Reconhecer expressões', desc: 'Quando a palavra faz parte de uma unidade maior no contexto (um nome como "Socrates Awards", um verbo como "turned … off", uma expressão idiomática, um composto), o card explica a unidade inteira e marca as partes dela no contexto. Desligado, o card explica só a palavra, e o pedido fica menor.',
+            cardRow({icon: 'book', title: 'Reconhecer expressões', desc: 'Quando a palavra faz parte de uma unidade maior no contexto (um nome como "Socrates Awards", um verbo como "turned … off", uma expressão idiomática, um composto), o card explica a unidade inteira e marca as partes dela no contexto. Desligado, o card explica só a palavra, e o pedido fica menor.' + cardNotesWarning(),
                 control: aiControl('cardExpressions', 'Reconhecer expressões', toggle(ai.cardExpressions !== false, (v) => { ai.cardExpressions = v; save(); renderDetail(); }))}),
-            cardRow({icon: 'sparkle', title: 'Corrigir erros de OCR com IA', desc: 'A IA sabe que a palavra veio do OCR: se ela não fizer sentido no contexto (um caractere trocado, uma letra perdida), a IA explica a palavra que o texto tem e mostra o que corrigiu ("OCR: 進 → 盡"). Desligado, a IA explica exatamente o que o OCR leu, e o pedido fica menor.',
+            cardRow({icon: 'sparkle', title: 'Corrigir erros de OCR com IA', desc: 'A IA sabe que a palavra veio do OCR: se ela não fizer sentido no contexto (um caractere trocado, uma letra perdida), a IA explica a palavra que o texto tem e mostra o que corrigiu ("OCR: 進 → 盡"). Desligado, a IA explica exatamente o que o OCR leu, e o pedido fica menor.' + cardNotesWarning(),
                 control: aiControl('cardOcrFix', 'Corrigir erros de OCR com IA', toggle(ai.cardOcrFix !== false, (v) => { ai.cardOcrFix = v; save(); renderDetail(); }))}),
             cardRow({icon: 'sparkle', title: 'Gerar o card automaticamente ao abrir o popup', desc: 'Desligado: o card só é gerado quando você clica em Gerar.',
                 control: aiControl('autoGenerateOnLookup', 'Gerar o card automaticamente ao abrir o popup', toggle(ai.autoGenerateOnLookup, (v) => { ai.autoGenerateOnLookup = v; save(); }))}),
