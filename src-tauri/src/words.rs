@@ -1169,66 +1169,65 @@ mod tests {
         assert_eq!(p.line_break, Some(1), "勉 ends the upper line; the AI is told the word runs across the break");
         assert_eq!((p.x0, p.x1), (100.0, 160.0), "the piece on the pointer's line");
         assert_eq!(p.context_at, 4, "where the whole word starts, not the piece on the pointer's line");
-        assert_eq!(pick(&lines, 185.0, 110.0, Some(&seg)).unwrap().context_at, 4, "the same from the upper piece");
+        assert_eq!(pick(&lines, 145.0, 110.0, Some(&seg)).unwrap().context_at, 4, "the same from 勉, on the upper line");
         let groups: Vec<Option<u32>> = boxes.iter().map(|b| b.group).collect();
         assert!(groups[2].is_some() && groups[2] == groups[3], "the two pieces of 勉強しています are one group");
         assert_eq!([groups[0], groups[1], groups[4]], [None, None, None], "words on one line have none");
         assert_eq!(super::word_boxes(&lines, None).len(), 3, "without an analyzer, a box per run, and the 。");
     }
 
-    /// 進めて read down two columns, as in "…左へと進" / "めて表記を…": 進 ends the right column and めて
-    /// starts the next one to the left.
-    fn split_columns(left_x: f32) -> ([OcrLine; 2], Words) {
-        let lines = [column("左へと進", 200.0, 100.0), column("めて表記。", left_x, 100.0)];
-        let seg = Words(vec![("左", vec![]), ("へ", vec![]), ("と", vec![]), ("進", vec![]), ("進めて", vec!["進める"]), ("めて", vec![]),
-            ("表記", vec![]), ("。", vec![])]);
-        (lines, seg)
+    /// 進めて read down two columns of the same length, as on the user's page: "また行を右から左へと進"
+    /// ends with 進 and "めて表記を行っていた。" starts with めて, ten pixels to its left (`left_x` 170).
+    fn split_columns(left_x: f32) -> [OcrLine; 2] {
+        [column("また行を右から左へと進", 200.0, 100.0), column("めて表記を行っていた。", left_x, 100.0)]
     }
 
     #[test]
     fn a_word_running_down_into_the_next_column_is_one_word_with_a_box_in_each() {
-        // The mock analyzer takes its words in order: in "左へと進めて表記。" it finds 進 nowhere
-        // before 進めて, so the paragraph's words are 左 へ と 進めて 表記 。.
-        let (lines, _) = split_columns(170.0);
-        let seg = Words(vec![("左", vec![]), ("へ", vec![]), ("と", vec![]), ("進めて", vec!["進める"]), ("表記", vec![]), ("。", vec![])]);
+        let lines = split_columns(170.0);
+        let seg = Words(vec![("また", vec![]), ("行", vec![]), ("を", vec![]), ("右", vec![]), ("から", vec![]), ("左", vec![]), ("へ", vec![]),
+            ("と", vec![]), ("進めて", vec!["進める"]), ("表記", vec![]), ("を", vec![]), ("行って", vec![]), ("いた", vec![]), ("。", vec![])]);
         let boxes = super::word_boxes(&lines, Some(&seg));
         let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
-        assert_eq!(texts, ["左", "へ", "と", "進", "めて", "表記", "。"]);
-        let (shin, mete) = (&boxes[3], &boxes[4]);
+        assert_eq!(texts, ["また", "行", "を", "右", "から", "左", "へ", "と", "進", "めて", "表記", "を", "行って", "いた", "。"]);
+        let (shin, mete) = (&boxes[8], &boxes[9]);
         assert!(shin.group.is_some() && shin.group == mete.group, "進 and めて are one word");
-        assert!(boxes.iter().enumerate().all(|(i, b)| i == 3 || i == 4 || b.group.is_none()), "no other box shares it");
-        assert_eq!((shin.x0, shin.y0, shin.x1, shin.y1), (200.0, 160.0, 220.0, 180.0), "進 at the foot of the right column");
+        assert!(boxes.iter().enumerate().all(|(i, b)| i == 8 || i == 9 || b.group.is_none()), "no other box shares it");
+        assert_eq!((shin.x0, shin.y0, shin.x1, shin.y1), (200.0, 300.0, 220.0, 320.0), "進 at the foot of the right column");
         assert_eq!((mete.x0, mete.y0, mete.x1, mete.y1), (170.0, 100.0, 190.0, 140.0), "めて at the head of the left one");
         assert!(shin.x0 >= mete.x1, "two boxes, nothing drawn between the columns");
-        for (x, y) in [(210.0, 170.0), (180.0, 110.0), (180.0, 130.0)] {
+        for (x, y) in [(210.0, 310.0), (180.0, 110.0), (180.0, 130.0)] {
             let p = pick(&lines, x, y, Some(&seg)).unwrap();
             assert_eq!(p.word, "進めて", "from ({x}, {y})");
             assert_eq!(p.candidates[0], "進める");
-            assert_eq!(p.context, "左へと進めて表記。", "the columns in reading order");
-            assert_eq!(p.context_at, 3, "where 進めて starts, whichever piece is under the pointer");
+            assert_eq!(p.context, "また行を右から左へと進めて表記を行っていた。", "the columns in reading order");
+            assert_eq!(p.context_at, 10, "where 進めて starts, whichever piece is under the pointer");
             assert_eq!(p.line_break, Some(1));
             assert_eq!(p.sentence_lines, [0, 1], "the screenshot frames both columns");
             assert!(p.is_under(x, y));
         }
-        let p = pick(&lines, 210.0, 170.0, Some(&seg)).unwrap();
-        assert_eq!((p.x0, p.y0, p.x1, p.y1), (200.0, 160.0, 220.0, 180.0), "the pop-up is placed by the piece under the pointer");
+        let p = pick(&lines, 210.0, 310.0, Some(&seg)).unwrap();
+        assert_eq!((p.x0, p.y0, p.x1, p.y1), (200.0, 300.0, 220.0, 320.0), "the pop-up is placed by the piece under the pointer");
         assert!(!p.is_under(180.0, 110.0), "the box under the pointer is the piece, not both columns");
         let p = pick(&lines, 180.0, 150.0, Some(&seg)).unwrap();
-        assert_eq!((p.word.as_str(), p.context_at), ("表記", 6), "the next word is apart");
-        assert!(!pick(&lines, 240.0, 170.0, Some(&seg)).is_some_and(|p| p.is_under(240.0, 170.0)), "beside the column is off the word");
+        assert_eq!((p.word.as_str(), p.context_at), ("表記", 13), "the next word is apart");
+        assert!(!pick(&lines, 240.0, 310.0, Some(&seg)).is_some_and(|p| p.is_under(240.0, 310.0)), "beside the column is off the word");
     }
 
     #[test]
     fn columns_of_two_paragraphs_are_never_one_word() {
-        // The left column is far from the right one: two paragraphs, analyzed apart.
-        let (lines, seg) = split_columns(60.0);
+        // The left column is far from the right one: two paragraphs, analyzed apart. The mock takes
+        // its words in order, so めて and 表記 come first for the left column's text.
+        let lines = [column("また右へと進", 200.0, 100.0), column("めて表記。", 60.0, 100.0)];
+        let seg = Words(vec![("めて", vec![]), ("表記", vec![]), ("また", vec![]), ("右", vec![]), ("へ", vec![]), ("と", vec![]),
+            ("進", vec![]), ("。", vec![])]);
         let boxes = super::word_boxes(&lines, Some(&seg));
         let texts: Vec<&str> = boxes.iter().map(|b| b.text.as_str()).collect();
-        assert_eq!(texts, ["左", "へ", "と", "進", "めて", "表記", "。"]);
+        assert_eq!(texts, ["また", "右", "へ", "と", "進", "めて", "表記", "。"]);
         assert!(boxes.iter().all(|b| b.group.is_none()));
         let p = pick(&lines, 70.0, 110.0, Some(&seg)).unwrap();
         assert_eq!((p.word.as_str(), p.context.as_str(), p.context_at, p.line_break), ("めて", "めて表記。", 0, None));
-        assert_eq!(pick(&lines, 210.0, 170.0, Some(&seg)).unwrap().word, "進");
+        assert_eq!(pick(&lines, 210.0, 210.0, Some(&seg)).unwrap().word, "進");
     }
 
     #[test]
