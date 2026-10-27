@@ -7,7 +7,7 @@ import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
-import {cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress} from '../lib/ai/word-card.js';
+import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, parseCard, parseCardProgress, promptText} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup} from '../lib/cards.js';
 import {clozeRange, locateSelection, selectedSpan} from '../lib/ai/selection.js';
@@ -343,9 +343,23 @@ function renderCard(body, card, pending = false) {
     }
 }
 
+/** Said in a section whose own prompt the user emptied: nothing is asked of the AI then. */
+function emptyPromptHint(what, where) {
+    return `<p class="hint">O ${what} está vazio, então nada é pedido à IA. Para voltar a usá-lo, clique em Restaurar padrão em Dicionários › ${where}.</p>`;
+}
+
+/** The explanation prompt as sent ("Explicar"); '' when the user emptied it. */
+function explainPrompt(options) {
+    return fillLanguages(promptText(options.customPrompt, EXPLAIN_PROMPT), settings);
+}
+
 async function runExplain(target, force = false) {
     if (!target) { return; }
     target.hidden = false;
+    if (!explainPrompt(ai)) {
+        target.innerHTML = emptyPromptHint('prompt da explicação', 'IA — palavra no contexto');
+        return;
+    }
     target.innerHTML = shimmer();
     const lookup = state;
     const options = ai;
@@ -356,7 +370,7 @@ async function runExplain(target, force = false) {
     void refreshAnkiButton();
     const current = () => state === lookup && lookup.explainRequest === request;
     try {
-        const prompt = fillLanguages(options.customPrompt, settings);
+        const prompt = explainPrompt(options);
         const key = await aiKey('explain', prompt, lookup, options);
         if (!current()) { return; }
         lookup.keys.add(key);
@@ -377,9 +391,10 @@ async function runExplain(target, force = false) {
 }
 
 /** The word card's prompt for a lookup: the card prompt and, after the word, the word analyzer's
- * hints (a prompt without {{target}} is sent as written). */
+ * hints (a prompt without {{target}} is sent as written); '' when the card prompt is empty. */
 function cardRequestPrompt(options, payload) {
     const prompt = cardPrompt(options.cardPrompt, settings, options);
+    if (!prompt) { return ''; }
     const hints = cardHints(payload);
     return hints && prompt.includes('{{target}}') ? `${prompt}\n${hints}` : prompt;
 }
@@ -387,6 +402,11 @@ function cardRequestPrompt(options, payload) {
 async function runCard(body, force = false) {
     const lookup = state;
     const options = ai;
+    // An empty card prompt asks for no card: nothing is sent, and the pictures do not wait for one.
+    if (!cardRequestPrompt(options, lookup.payload)) {
+        body.innerHTML = emptyPromptHint('prompt do card', 'IA — palavra no contexto');
+        return;
+    }
     const request = {};
     lookup.cardRequest = request;
     const current = () => state === lookup && lookup.cardRequest === request;
@@ -435,9 +455,10 @@ async function runContext(body, force = false) {
     const options = optionsOf('context');
     const p = lookup.payload;
     if (!p.sentence) { body.innerHTML = '<p class="hint">Sem frase de contexto nesta consulta.</p>'; return; }
+    const prompt = contextPrompt(options.contextPrompt, settings, options);
+    if (!prompt) { body.innerHTML = emptyPromptHint('prompt do Tradutor de contexto', 'Tradutor de contexto'); return; }
     body.innerHTML = '<div class="shimmer w80"></div><div class="shimmer w60"></div>';
     try {
-        const prompt = contextPrompt(options.contextPrompt, settings, options);
         const key = await aiKey('context', prompt, lookup, options);
         if (state !== lookup) { return; }
         lookup.keys.add(key);
@@ -490,8 +511,9 @@ async function imageQuery(lookup, options, force) {
     // The word the AI card corrected, once a card being made is done; else the OCR's.
     if (options.imageUseCardWord !== false && lookup.aiPending && lookup.cardDone) { await lookup.cardDone; }
     const word = imageWord(lookup.payload.word, lookup.aiCard, options, Boolean(lookup.contextMarks));
-    if (options.imageQueryUseAi === false || !isConfigured(options)) { return word; }
     const {system, user} = imagePrompts(options, settings);
+    // An empty image query prompt asks the AI nothing: the word itself is searched.
+    if (options.imageQueryUseAi === false || !user || !isConfigured(options)) { return word; }
     const key = await aiKey('images', imagePromptKey(options, word), lookup, options);
     lookup.keys.add(key);
     try {
@@ -1296,7 +1318,7 @@ async function render(payload) {
         const keep = new Set(await Promise.all([
             aiKey('card', cardRequestPrompt(ai, payload)),
             aiKey('context', contextPrompt(ai.contextPrompt, settings, ai)),
-            aiKey('explain', fillLanguages(ai.customPrompt, settings)),
+            aiKey('explain', explainPrompt(ai)),
             aiKey('images', imagePromptKey(optionsOf('images'), payload.word)),
         ]));
         if (sequence !== renderSequence) { return; }

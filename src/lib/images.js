@@ -7,7 +7,7 @@
 // (`turl`), its title (`t`) and the page it is on (`purl`). Migaku keeps only `murl`; the pop-up
 // shows `turl`, which is small and always served, and the viewer and Anki get `murl`.
 
-import {fillLanguages, languageName} from './ai/word-card.js';
+import {fillLanguages, languageName, promptText} from './ai/word-card.js';
 
 /** Pictures shown per lookup, as in Migaku's pop-up. */
 export const IMAGE_COUNT = 10;
@@ -29,12 +29,13 @@ export const IMAGE_QUERY_PROMPT = 'Word: {{target}} ({{wordLanguage}})\nContext:
 
 /**
  * The image query prompts as sent. {{target}} and {{sentence}} are filled by the AI provider, in
- * both prompts.
+ * both prompts. A prompt the user emptied is '' (see `promptText`): an empty system prompt sends
+ * none, and an empty user prompt asks the AI nothing, so the word itself is searched.
  * @param {{imageQuerySystemPrompt?: string, imageQueryPrompt?: string}} ai
  * @param {{ocrLanguage?: string, definitionLanguage?: string, translationLanguage?: string}} settings
  */
 export function imagePrompts(ai, settings) {
-    const fill = (text, fallback) => fillLanguages(typeof text === 'string' && text.trim() ? text : fallback, settings)
+    const fill = (text, fallback) => fillLanguages(promptText(text, fallback), settings)
         .replaceAll('{{wordLanguage}}', languageName(settings.ocrLanguage || 'en-US'));
     return {
         system: fill(ai.imageQuerySystemPrompt, IMAGE_QUERY_SYSTEM_PROMPT),

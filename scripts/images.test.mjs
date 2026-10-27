@@ -74,7 +74,7 @@ test('the image query has its own system and user prompts, with the word languag
     assert.deepEqual(own, {system: `Answer in ${languageName('pt-BR')}.`, user: `[{{target}}] ${languageName('ja-JP')}`});
 });
 
-test('image options default to on-click pictures with an AI query, and empty prompts restore the defaults', () => {
+test('image options default to on-click pictures with an AI query, and emptied prompts stay empty', () => {
     const base = defaultAiOptions();
     assert.equal(base.autoShowImages, false);
     assert.equal(base.imageQueryUseAi, true);
@@ -84,8 +84,11 @@ test('image options default to on-click pictures with an AI query, and empty pro
     const saved = normalizeAiOptions({autoShowImages: true, imageQueryUseAi: false, imageQueryPrompt: '  ', imageQuerySystemPrompt: 'mine'});
     assert.equal(saved.autoShowImages, true);
     assert.equal(saved.imageQueryUseAi, false);
-    assert.equal(saved.imageQueryPrompt, IMAGE_QUERY_PROMPT);
+    assert.equal(saved.imageQueryPrompt, '  ', 'an emptied prompt is the user\'s choice, not the default');
     assert.equal(saved.imageQuerySystemPrompt, 'mine');
+    assert.deepEqual(imagePrompts({imageQuerySystemPrompt: '', imageQueryPrompt: ' \n '}, {ocrLanguage: 'en-US'}), {system: '', user: ''},
+        'empty prompts send nothing, never the defaults');
+    assert.equal(normalizeAiOptions({imageQueryPrompt: null}).imageQueryPrompt, IMAGE_QUERY_PROMPT, 'a broken value gets the default');
     assert.equal(normalizeAiOptions({autoShowImages: 'yes'}).autoShowImages, false);
 });
 

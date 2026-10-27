@@ -176,6 +176,19 @@ function cardNotesWarning() {
     return takesCardNotes(store.ai.cardPrompt || '') ? '' : ' O seu prompt do card não pede o JSON do card (nem os marcadores {{…Field}} nem a chave "headword"), então esta nota não é enviada.';
 }
 
+/** "Recuperar": puts back the user's own expressions prompt, kept aside when its switch went
+ * (`expressionsPromptBackup`, defaults.js). */
+function recoverExpressionsButton() {
+    const b = el('button', {class: 'ghost'}, 'Recuperar');
+    b.addEventListener('click', () => {
+        store.ai.expressionsPrompt = store.ai.expressionsPromptBackup;
+        delete store.ai.expressionsPromptBackup;
+        save();
+        renderDetail();
+    });
+    return b;
+}
+
 function aiControl(path, label, control) {
     control.setAttribute('data-setting', `ai.${path}`);
     control.setAttribute('id', `ai-${path.replaceAll('.', '-')}`);
@@ -275,7 +288,11 @@ function providerSection(ai = store.ai, prefix = '') {
     return wrap;
 }
 
-function promptCard(title, desc, get, set, fallback, setting = null) {
+/** What an empty prompt does, said under every prompt (`promptText` in word-card.js). */
+const EMPTY_PROMPT = 'Deixe vazio para não enviar estas instruções. Use Restaurar padrão para recuperá-las.';
+
+function promptCard(title, desc, get, set, fallback, setting = null, empty = EMPTY_PROMPT) {
+    desc = `${desc} ${empty}`;
     const area = textArea(get(), (v) => { set(v); save(); }, 5);
     if (setting) { aiControl(setting, title, area); }
     const reset = el('button', {class: 'ghost', html: `${icon('refresh', 'sm')}Restaurar padrão`});
@@ -325,8 +342,6 @@ function renderAiWord(root) {
                 control: toggle(s.hideWordTranslation, (v) => { s.hideWordTranslation = v; save(); })}) : null,
             cardRow({icon: 'book', title: 'Componentes', desc: 'As partes da palavra, em qualquer idioma: cada caractere no chinês e no japonês (com a leitura), raízes, afixos ou as palavras de um composto nos outros. Também vão para o Anki em {ai-card} e {ai-components}. Desligado, a IA nem gera os componentes, o que gasta menos tokens.',
                 control: aiControl('cardComponents', 'Componentes', toggle(ai.cardComponents !== false, (v) => { ai.cardComponents = v; save(); }))}),
-            cardRow({icon: 'book', title: 'Reconhecer expressões', desc: 'Quando a palavra faz parte de uma unidade maior no contexto (um nome como "Socrates Awards", um verbo como "turned … off", uma expressão idiomática, um composto), o card explica a unidade inteira e marca as partes dela no contexto. Desligado, o card explica só a palavra, e o pedido fica menor.' + cardNotesWarning(),
-                control: aiControl('cardExpressions', 'Reconhecer expressões', toggle(ai.cardExpressions !== false, (v) => { ai.cardExpressions = v; save(); renderDetail(); }))}),
             cardRow({icon: 'sparkle', title: 'Corrigir erros de OCR com IA', desc: 'A IA sabe que a palavra veio do OCR: se ela não fizer sentido no contexto (um caractere trocado, uma letra perdida), a IA explica a palavra que o texto tem e mostra o que corrigiu ("OCR: 進 → 盡"). Desligado, a IA explica exatamente o que o OCR leu, e o pedido fica menor.' + cardNotesWarning(),
                 control: aiControl('cardOcrFix', 'Corrigir erros de OCR com IA', toggle(ai.cardOcrFix !== false, (v) => { ai.cardOcrFix = v; save(); renderDetail(); }))}),
             cardRow({icon: 'sparkle', title: 'Gerar o card automaticamente ao abrir o popup', desc: 'Desligado: o card só é gerado quando você clica em Gerar.',
@@ -337,15 +352,20 @@ function renderAiWord(root) {
         providerSection(),
         el('h3', {}, 'Prompts'),
         el('div', {class: 'group'},
-            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada; ${escapeHtml('{{readingField}}')} pede a leitura só no chinês (pinyin) e no japonês (kana); ${escapeHtml('{{componentsField}}')} pede os componentes só com a opção Componentes ligada; ${escapeHtml('{{formField}}')} pede os traços da forma e, nas escritas não latinas, a transliteração.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt'),
+            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada; ${escapeHtml('{{readingField}}')} pede a leitura só no chinês (pinyin) e no japonês (kana); ${escapeHtml('{{componentsField}}')} pede os componentes só com a opção Componentes ligada; ${escapeHtml('{{formField}}')} pede os traços da forma e, nas escritas não latinas, a transliteração.`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt',
+                'Vazio, o card não é pedido à IA, e o popup avisa. Use Restaurar padrão para voltar a usá-lo.'),
             promptCard('Prompt da tradução da palavra', `O que a IA põe no campo "translation" do card: a melhor tradução e, separadas por vírgula, até duas outras com o mesmo sentido no contexto ("terminou, concluiu"), só quando houver. Só é enviado com a tradução da palavra ligada. Variáveis: ${vars}.`, () => ai.wordTranslationPrompt, (v) => { ai.wordTranslationPrompt = v; }, WORD_TRANSLATION_PROMPT, 'wordTranslationPrompt'),
             promptCard('Prompt da leitura', `O que a IA põe no campo "reading" do card. Só é enviado no chinês e no japonês. ${escapeHtml('{{readingSystem}}')} vira "pinyin with tone marks" no chinês e "hiragana" no japonês.`, () => ai.readingPrompt, (v) => { ai.readingPrompt = v; }, READING_PROMPT, 'readingPrompt'),
             promptCard('Prompt da forma', `O que a IA põe no campo "form" do card: os traços gramaticais da palavra como está na tela (pessoa, número, gênero, tempo verbal…), que aparecem como etiquetas antes da classe gramatical e vão para o Anki em {ai-form} e {tags}. Variáveis: ${vars}.`, () => ai.formPrompt, (v) => { ai.formPrompt = v; }, FORM_PROMPT, 'formPrompt'),
             promptCard('Prompt da transliteração', 'O que a IA põe no campo "transliteration" do card: a palavra como está na tela, em letras latinas (como o "fa-bāḍat" do Lookupper). Só é enviado nos idiomas de escrita não latina, menos o chinês e o japonês, que têm a leitura. Vai para o Anki em {ai-transliteration}.', () => ai.transliterationPrompt, (v) => { ai.transliterationPrompt = v; }, TRANSLITERATION_PROMPT, 'transliterationPrompt'),
-            ai.cardExpressions === false ? null : promptCard('Prompt das expressões', 'Vai no fim do prompt do card, antes da nota de erros do OCR: diz à IA quando explicar a unidade maior de que a palavra faz parte e como devolver as partes dela ("selection"), que o Lookitan procura no contexto para marcá-las. Os cinco exemplos ficam no texto fixo, que o provedor guarda em cache. Sem variáveis.', () => ai.expressionsPrompt, (v) => { ai.expressionsPrompt = v; }, EXPRESSIONS_PROMPT, 'expressionsPrompt'),
+            promptCard('Prompt das expressões', 'Vai no fim do prompt do card, antes da nota de erros do OCR: diz à IA quando explicar a unidade maior de que a palavra faz parte e como devolver as partes dela ("selection"), que o Lookitan procura no contexto para marcá-las. Os cinco exemplos ficam no texto fixo, que o provedor guarda em cache. Sem variáveis.' + cardNotesWarning(), () => ai.expressionsPrompt, (v) => { ai.expressionsPrompt = v; }, EXPRESSIONS_PROMPT, 'expressionsPrompt',
+                'Deixe este campo vazio para não enviar as instruções de reconhecimento de expressões. Clique em Restaurar padrão para reativá-las.'),
+            ai.expressionsPromptBackup ? cardRow({icon: 'refresh', title: 'O seu prompt das expressões', desc: 'Quando o interruptor "Reconhecer expressões" saiu, o seu prompt próprio foi guardado aqui, sem ser enviado, porque o interruptor estava desligado. "Recuperar" o põe de volta no campo acima.',
+                control: recoverExpressionsButton()}) : null,
             ai.cardOcrFix === false ? null : promptCard('Prompt de erros do OCR', `Vai no fim do prompt do card, em todos os idiomas: a palavra e o contexto vêm do OCR, que troca ou perde caracteres, e a IA usa o contexto para achar a palavra que o texto tem e explica essa. Quando corrige, ela diz o que corrigiu ("ocrFix"), que aparece como uma etiqueta "OCR: 進 → 盡" no card. ${escapeHtml('{{ocrErrors}}')} vira os erros típicos da escrita do idioma do OCR: letras e prefixos perdidos no árabe, caracteres parecidos e palavra cortada no lugar errado no chinês e no japonês, rn/m e acentos perdidos nos latinos…`, () => ai.ocrErrorsPrompt, (v) => { ai.ocrErrorsPrompt = v; }, OCR_ERRORS_PROMPT, 'ocrErrorsPrompt'),
             promptCard('Prompt dos componentes', `O que a IA põe no campo "components" do card. Só é enviado com Componentes ligado. ${escapeHtml('{{componentParts}}')} vira o que são as partes no idioma (caracteres no chinês e no japonês, sílabas com hanja no coreano, raízes e afixos nos outros) e ${escapeHtml('{{componentReading}}')} o campo de leitura de cada parte (pinyin, kana ou hanja; vazio nos outros idiomas). Variáveis: ${vars}.`, () => ai.componentsPrompt, (v) => { ai.componentsPrompt = v; }, COMPONENTS_PROMPT, 'componentsPrompt'),
-            promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT, 'customPrompt'),
+            promptCard('Prompt da explicação (botão Explicar)', `Prompt personalizado da sua fork. Variáveis: ${vars}.`, () => ai.customPrompt, (v) => { ai.customPrompt = v; }, DEFAULT_PROMPT, 'customPrompt',
+                'Vazio, o botão Explicar não pede nada à IA. Use Restaurar padrão para voltar a usá-lo.'),
             el('div', {class: 'card-row stack'},
                 el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado no card e na explicação. Opcional.'))),
                 aiControl('systemPrompt', 'System prompt', textArea(ai.systemPrompt, (v) => { ai.systemPrompt = v; save(); }, 3)))),
@@ -369,7 +389,8 @@ function renderAiContext(root) {
                 control: aiControl('hideContextTranslation', 'Ocultar a tradução', toggle(ai.hideContextTranslation === true, (v) => { ai.hideContextTranslation = v; save(); }))}),
             cardRow({icon: 'sparkle', title: 'Corrigir erros de OCR com IA', desc: 'A IA sabe que a frase e a palavra vieram do OCR: traduz o que o texto quis dizer e destaca a palavra mesmo que ela tenha sido lida errado. Desligado, ela traduz exatamente o que o OCR leu, e o pedido fica menor.',
                 control: aiControl('contextOcrFix', 'Corrigir erros de OCR com IA', toggle(ai.contextOcrFix !== false, (v) => { ai.contextOcrFix = v; save(); renderDetail(); }))}),
-            promptCard('Prompt da tradução', `A tradução da palavra deve vir entre **asteriscos duplos** para ser destacada. Variáveis: ${vars}.`, () => ai.contextPrompt, (v) => { ai.contextPrompt = v; }, CONTEXT_PROMPT, 'contextPrompt'),
+            promptCard('Prompt da tradução', `A tradução da palavra deve vir entre **asteriscos duplos** para ser destacada. Variáveis: ${vars}.`, () => ai.contextPrompt, (v) => { ai.contextPrompt = v; }, CONTEXT_PROMPT, 'contextPrompt',
+                'Vazio, o Tradutor de contexto não pede nada à IA, e o popup avisa. Use Restaurar padrão para voltar a usá-lo.'),
             ai.contextOcrFix === false ? null : promptCard('Prompt de erros do OCR', `O aviso que vai no fim do prompt da tradução, com o interruptor acima ligado. ${escapeHtml('{{ocrErrors}}')} vira os erros típicos da escrita do idioma do OCR, como no card da palavra.`, () => ai.contextOcrPrompt, (v) => { ai.contextOcrPrompt = v; }, CONTEXT_OCR_PROMPT, 'contextOcrPrompt'),
             el('div', {class: 'card-row stack'},
                 el('div', {class: 'head'}, el('span', {class: 'ico', html: icon('settings')}), el('div', {class: 'txt'}, el('div', {class: 't'}, 'System prompt'), el('div', {class: 'd'}, 'Enviado na tradução da frase. Opcional.'))),
@@ -425,9 +446,11 @@ function renderAiImages(root) {
         el('h3', {}, 'Image query (termo de busca)'),
         el('div', {class: 'group'},
             promptCard('System prompt', `As regras do termo de busca. Substitui o system prompt geral só neste pedido. Variáveis: ${vars}.`,
-                () => ai.imageQuerySystemPrompt, (v) => { ai.imageQuerySystemPrompt = v; }, IMAGE_QUERY_SYSTEM_PROMPT, 'imageQuerySystemPrompt'),
+                () => ai.imageQuerySystemPrompt, (v) => { ai.imageQuerySystemPrompt = v; }, IMAGE_QUERY_SYSTEM_PROMPT, 'imageQuerySystemPrompt',
+                'Vazio, o pedido vai sem system prompt. Use Restaurar padrão para recuperá-lo.'),
             promptCard('User prompt', `A mensagem com a palavra. A primeira linha da resposta vira a busca. Variáveis: ${vars}.`,
-                () => ai.imageQueryPrompt, (v) => { ai.imageQueryPrompt = v; }, IMAGE_QUERY_PROMPT, 'imageQueryPrompt')),
+                () => ai.imageQueryPrompt, (v) => { ai.imageQueryPrompt = v; }, IMAGE_QUERY_PROMPT, 'imageQueryPrompt',
+                'Vazio, a IA não é usada: as imagens buscam a própria palavra. Use Restaurar padrão para voltar a usá-la.')),
         el('h3', {}, 'Provedor de IA (sua chave, seu modelo)'),
         el('p', {class: 'muted'}, 'Só para o termo de busca das imagens. Começa como uma cópia do provedor de "IA — palavra no contexto".'),
         providerSection(ai.sectionProviders['ai-images'], 'sectionProviders.ai-images.'),

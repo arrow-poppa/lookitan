@@ -76,9 +76,6 @@ function baseAiOptions() {
         // not ask for them.
         cardComponents: true,
         cardOcrFix: true,
-        // The card describes the longer unit the word belongs to ("Socrates Awards", "turn off")
-        // and marks it in the context.
-        cardExpressions: true,
         contextOcrFix: true,
         // The pictures search the word the AI card corrected from the OCR.
         imageUseCardWord: true,
@@ -120,7 +117,7 @@ export function normalizeAiOptions(stored) {
         return defaultAiOptions();
     }
     const out = {...base, ...stored};
-    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'cardComponents', 'cardOcrFix', 'cardExpressions', 'contextOcrFix', 'imageUseCardWord']) {
+    for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'cardComponents', 'cardOcrFix', 'contextOcrFix', 'imageUseCardWord']) {
         if (typeof out[key] !== 'boolean') { out[key] = base[key]; }
     }
     // One switch used to start both the word card and the context translation: until the
@@ -134,8 +131,21 @@ export function normalizeAiOptions(stored) {
     const own = isObject(stored.sectionProviders) ? stored.sectionProviders : {};
     out.sectionProviders = Object.fromEntries(SECTION_PROVIDERS.map((id) => [id, providerFields(isObject(own[id]) ? own[id] : out, base)]));
     for (const key of ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'readingPrompt', 'componentsPrompt', 'formPrompt', 'transliterationPrompt', 'ocrErrorsPrompt', 'expressionsPrompt', 'contextOcrPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt']) {
-        if (typeof out[key] !== 'string' || out[key].trim() === '') { out[key] = base[key]; }
+        // An empty prompt is the user's choice: its instructions are not sent (see `promptText`).
+        // Only a missing or broken one gets the default; "Restaurar padrão" writes it back.
+        if (typeof out[key] !== 'string') { out[key] = base[key]; }
     }
+    // "Reconhecer expressões" (`cardExpressions`) was a switch until 2026-10-27; an empty
+    // "Prompt das expressões" does its work now. Switched off, the prompt becomes empty, so the
+    // note stays off; a prompt the user had written is kept in `expressionsPromptBackup`, never
+    // sent, for the "Recuperar o meu prompt" button.
+    if (stored.cardExpressions === false) {
+        const own = out.expressionsPrompt.trim();
+        if (own && own !== EXPRESSIONS_PROMPT) { out.expressionsPromptBackup = out.expressionsPrompt; }
+        out.expressionsPrompt = '';
+    }
+    delete out.cardExpressions;
+    if (typeof out.expressionsPromptBackup !== 'string' || !out.expressionsPromptBackup.trim()) { delete out.expressionsPromptBackup; }
     // The old default explanation and context prompts mixed the word into their instructions; the
     // new ones put the lookup's text last, so the instructions can be cached.
     if (out.customPrompt.trim() === LEGACY_EXPLAIN_PROMPT) { out.customPrompt = EXPLAIN_PROMPT; }

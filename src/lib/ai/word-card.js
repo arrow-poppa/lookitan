@@ -175,9 +175,10 @@ export function ocrErrorsFor(tag) {
     return OCR_ERRORS[language] || (TRANSLITERATED.has(language) ? OTHER_SCRIPT_ERRORS : LATIN_ERRORS);
 }
 
-/** `prompt` (an OCR note) with {{ocrErrors}} filled for the OCR language, or `fallback` when empty. */
+/** `prompt` (an OCR note) with {{ocrErrors}} filled for the OCR language: `fallback` when the
+ * setting is missing, '' (no note) when the user emptied it (see `promptText`). */
 export function ocrNote(prompt, fallback, settings) {
-    return promptOr(prompt, fallback).replaceAll('{{ocrErrors}}', ocrErrorsFor(settings.ocrLanguage));
+    return promptText(prompt, fallback).replaceAll('{{ocrErrors}}', ocrErrorsFor(settings.ocrLanguage));
 }
 
 /** {{readingSystem}}: the languages with a reading, and how it is written. */
@@ -201,9 +202,16 @@ const COMPONENT_READINGS = {
     ko: '"hanja": the hanja of a Sino-Korean syllable, otherwise "", ',
 };
 
-/** A user's prompt, or the default when it is empty. */
-function promptOr(value, fallback) {
-    return typeof value === 'string' && value.trim() !== '' ? value.trim() : fallback;
+/**
+ * A prompt setting as sent: the user's text, trimmed, or `fallback` (the default) only when the
+ * setting is missing or not a string. Text the user emptied, or left as spaces, is '': its
+ * instructions are not sent, and "Restaurar padrão" brings the default back. Every editable AI
+ * prompt goes through here (and `normalizeAiOptions` keeps an empty one empty).
+ * @param {unknown} value
+ * @param {string} fallback
+ */
+export function promptText(value, fallback) {
+    return typeof value === 'string' ? value.trim() : fallback;
 }
 
 /** The base language of a BCP 47 tag ("zh-Hant-TW" -> "zh"). */
@@ -250,15 +258,18 @@ export function languageName(tag) {
 
 /**
  * The context translator's prompt as sent: its languages filled and, unless its "Corrigir erros de
- * OCR com IA" (`contextOcrFix`) is off, its OCR note after it, on a paragraph of its own (fixed
- * text, so it stays in the cached system message).
+ * OCR com IA" (`contextOcrFix`) is off or its OCR note is empty, that note after it, on a paragraph
+ * of its own (fixed text, so it stays in the cached system message). '' when the translator's own
+ * prompt is empty: nothing is asked then (see `promptText`).
  * @param {string} template
  * @param {{ocrLanguage?: string, translationLanguage?: string}} settings
  * @param {{contextOcrFix?: boolean, contextOcrPrompt?: string}} [ai]
  */
 export function contextPrompt(template, settings, ai = {}) {
-    const note = ai.contextOcrFix !== false ? `\n\n${ocrNote(ai.contextOcrPrompt, CONTEXT_OCR_PROMPT, settings)}` : '';
-    return fillLanguages(template + note, settings);
+    const main = promptText(template, CONTEXT_PROMPT);
+    if (!main) { return ''; }
+    const ocr = ai.contextOcrFix !== false ? ocrNote(ai.contextOcrPrompt, CONTEXT_OCR_PROMPT, settings) : '';
+    return fillLanguages(ocr ? `${main}\n\n${ocr}` : main, settings);
 }
 
 /** Scripts written without spaces, where the run around a word is a whole clause. */
@@ -336,30 +347,37 @@ export function takesCardNotes(template) {
  * {{componentsField}} the components prompt only when they are switched on, and {{formField}} the
  * form prompt, plus the transliteration prompt in a script other than Latin; their variables follow
  * the OCR language. A prompt that asks for the card's JSON (`takesCardNotes`) is followed by the
- * note on longer units, unless it asks for "selection" itself or "Reconhecer expressões"
- * (`cardExpressions`) is off, and then by the OCR errors note, unless it asks for "ocrFix" itself
- * or "Corrigir erros de OCR com IA" (`cardOcrFix`) is off, each on a paragraph of its own; the OCR
- * note has the examples of the OCR language's script. Any other card prompt is sent as written.
+ * note on longer units, unless it asks for "selection" itself, and then by the OCR errors note,
+ * unless it asks for "ocrFix" itself or "Corrigir erros de OCR com IA" (`cardOcrFix`) is off, each
+ * on a paragraph of its own; the OCR note has the examples of the OCR language's script. Any other
+ * card prompt is sent as written. A key or note whose prompt the user emptied is left out (its
+ * marker becomes nothing, so the JSON list stays well formed), and an empty card prompt gives '':
+ * no card is asked for (see `promptText`).
  * @param {string} template
  * @param {{showWordTranslation?: boolean, ocrLanguage?: string}} settings
- * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, ocrErrorsPrompt?: string, expressionsPrompt?: string, cardComponents?: boolean, cardOcrFix?: boolean, cardExpressions?: boolean}} [ai]
+ * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, ocrErrorsPrompt?: string, expressionsPrompt?: string, cardComponents?: boolean, cardOcrFix?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
-    const field = settings.showWordTranslation === false ? '' : `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}`;
+    const main = promptText(template, CARD_PROMPT);
+    if (!main) { return ''; }
     const language = baseLanguage(settings.ocrLanguage);
-    const reading = READING_SYSTEMS[language] ?
-        `, "reading": ${promptOr(ai.readingPrompt, READING_PROMPT).replaceAll('{{readingSystem}}', READING_SYSTEMS[language])}` : '';
-    const components = ai.cardComponents === false ? '' : `, "components": ${promptOr(ai.componentsPrompt, COMPONENTS_PROMPT)
+    // Each key is asked only while its prompt has text (and its switch, where it has one, is on).
+    const key = (name, value, fallback) => {
+        const text = promptText(value, fallback);
+        return text ? `, "${name}": ${text}` : '';
+    };
+    const field = settings.showWordTranslation === false ? '' : key('translation', ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT);
+    const reading = READING_SYSTEMS[language] ? key('reading', ai.readingPrompt, READING_PROMPT).replaceAll('{{readingSystem}}', READING_SYSTEMS[language]) : '';
+    const components = ai.cardComponents === false ? '' : key('components', ai.componentsPrompt, COMPONENTS_PROMPT)
         .replaceAll('{{componentParts}}', COMPONENT_PARTS[language] || OTHER_PARTS)
-        .replaceAll('{{componentReading}}', COMPONENT_READINGS[language] || '')}`;
-    const form = `, "form": ${promptOr(ai.formPrompt, FORM_PROMPT)}` +
-        (TRANSLITERATED.has(language) ? `, "transliteration": ${promptOr(ai.transliterationPrompt, TRANSLITERATION_PROMPT)}` : '');
-    const notes = takesCardNotes(template);
-    const expressions = ai.cardExpressions !== false && notes && !template.includes('"selection"') ?
-        `\n\n${promptOr(ai.expressionsPrompt, EXPRESSIONS_PROMPT)}` : '';
-    const note = expressions + (ai.cardOcrFix !== false && notes && !template.includes('"ocrFix"') ?
-        `\n\n${ocrNote(ai.ocrErrorsPrompt, OCR_ERRORS_PROMPT, settings)}` : '');
-    return fillLanguages(template
+        .replaceAll('{{componentReading}}', COMPONENT_READINGS[language] || '');
+    const form = key('form', ai.formPrompt, FORM_PROMPT) +
+        (TRANSLITERATED.has(language) ? key('transliteration', ai.transliterationPrompt, TRANSLITERATION_PROMPT) : '');
+    const notes = takesCardNotes(main);
+    const expressions = notes && !main.includes('"selection"') ? promptText(ai.expressionsPrompt, EXPRESSIONS_PROMPT) : '';
+    const ocr = ai.cardOcrFix !== false && notes && !main.includes('"ocrFix"') ? ocrNote(ai.ocrErrorsPrompt, OCR_ERRORS_PROMPT, settings) : '';
+    const note = [expressions, ocr].filter(Boolean).map((n) => `\n\n${n}`).join('');
+    return fillLanguages(main
         .replaceAll(TRANSLATION_FIELD, field)
         .replaceAll(READING_FIELD, reading)
         .replaceAll(COMPONENTS_FIELD, components)

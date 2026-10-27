@@ -112,17 +112,43 @@ test('the card prompt teaches exactly the five production examples, in the cache
     assert.equal(other.systemPrompt, split.systemPrompt, 'the same instructions for every lookup');
 });
 
-test('the expressions note follows its switch and its own prompt, and leaves a prompt without markers alone', () => {
+test('the expressions note follows its own prompt: emptied, nothing of it is sent; restored, its five examples come back', () => {
     const settings = {ocrLanguage: 'en-US'};
-    assert(!cardPrompt(CARD_PROMPT, settings, {cardExpressions: false}).includes('"selection"'));
-    assert(cardPrompt(CARD_PROMPT, settings, {expressionsPrompt: 'My unit rules.'}).includes('\n\nMy unit rules.'));
+    const off = cardPrompt(CARD_PROMPT, settings, {expressionsPrompt: ''});
+    assert(!off.includes('"selection"') && !off.includes('Examples:') && !off.includes('Socrates'), 'no instructions, no examples');
+    assert.equal(cardPrompt(CARD_PROMPT, settings, {expressionsPrompt: ' \n  '}), off, 'spaces only: the same');
+    const restored = cardPrompt(CARD_PROMPT, settings, {expressionsPrompt: EXPRESSIONS_PROMPT});
+    assert.deepEqual(restored.slice(restored.indexOf('Examples:')).match(/^\d\. /gm), ['1. ', '2. ', '3. ', '4. ', '5. ']);
+    assert.equal(cardPrompt(CARD_PROMPT, settings, {}), restored, 'missing: the default');
+    const mine = cardPrompt(CARD_PROMPT, settings, {expressionsPrompt: 'My unit rules.'});
+    assert.equal(mine.split('My unit rules.').length, 2, 'the user\'s own, once');
+    assert(!mine.includes('Examples:'));
     assert.equal(cardPrompt("Describe '{{target}}' in '{{sentence}}'.", settings, {}), "Describe '{{target}}' in '{{sentence}}'.");
     const ai = normalizeAiOptions({cardPrompt: 'mine {{translationField}}', cardPromptVersion: 3});
-    assert.equal(ai.cardExpressions, true);
+    assert(!('cardExpressions' in ai), 'the switch is gone');
     assert.equal(ai.expressionsPrompt, EXPRESSIONS_PROMPT);
     assert.equal(ai.cardPrompt, 'mine {{translationField}}', 'a saved prompt is not rewritten; the note is added when it is sent');
     assert.equal(cardPrompt(ai.cardPrompt, settings, ai).split('Examples:').length, 2, 'the examples once');
-    assert.equal(normalizeAiOptions({cardExpressions: false}).cardExpressions, false);
+    assert.equal(normalizeAiOptions({expressionsPrompt: ''}).expressionsPrompt, '', 'an emptied prompt stays empty');
+    assert.equal(parseCard('{"headword":"turn off","selection":{"parts":["turned","off"]}}').selection.parts.length, 2,
+        'a selection a custom prompt asks for is still read');
+});
+
+test('the old "Reconhecer expressões" switch, off, becomes an empty expressions prompt; a prompt of the user\'s own is kept aside', () => {
+    const settings = {ocrLanguage: 'en-US'};
+    const fromDefault = normalizeAiOptions({cardExpressions: false, expressionsPrompt: EXPRESSIONS_PROMPT});
+    assert.equal(fromDefault.expressionsPrompt, '', 'off stays off');
+    assert(!('cardExpressions' in fromDefault) && !('expressionsPromptBackup' in fromDefault), 'nothing to keep: it was the default');
+    assert(!cardPrompt(CARD_PROMPT, settings, fromDefault).includes('Examples:'));
+    assert.equal(normalizeAiOptions({cardExpressions: false}).expressionsPrompt, '', 'off with no prompt saved');
+    const own = normalizeAiOptions({cardExpressions: false, expressionsPrompt: 'My unit rules.'});
+    assert.equal(own.expressionsPrompt, '');
+    assert.equal(own.expressionsPromptBackup, 'My unit rules.', 'kept, never sent');
+    assert(!cardPrompt(CARD_PROMPT, settings, own).includes('My unit rules.'));
+    const on = normalizeAiOptions({cardExpressions: true, expressionsPrompt: 'My unit rules.'});
+    assert.equal(on.expressionsPrompt, 'My unit rules.', 'on: as it was');
+    assert(!('expressionsPromptBackup' in on));
+    assert.deepEqual(normalizeAiOptions(own), own, 'the same after saving and loading again');
 });
 
 test('a word repeated in its context tells the AI which one is on screen', () => {
@@ -156,7 +182,7 @@ test('a custom card prompt that asks for the card JSON gets the notes; one that 
     assert(sent.startsWith(json), "the user's prompt comes first, unchanged");
     assert.equal(sent.split('Examples:').length, 2, 'the expressions note once');
     assert(sent.includes('"ocrFix"'), 'and the OCR note');
-    assert.equal(cardPrompt(json, settings, {cardExpressions: false, cardOcrFix: false}), json, 'both off: as written');
+    assert.equal(cardPrompt(json, settings, {expressionsPrompt: '', cardOcrFix: false}), json, 'both off: as written');
     const free = "Explain '{{target}}' as used in '{{sentence}}', in two sentences.";
     assert(!takesCardNotes(free));
     assert.equal(cardPrompt(free, settings, {}), free, 'no card JSON asked: as written');

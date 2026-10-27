@@ -25,12 +25,13 @@ test('a card prompt saved with the components gets the form once, after them', a
     assert.equal(normalizeAiOptions({cardPrompt: old, cardPromptVersion: 3}).cardPrompt, old, 'taken out after the migration, it stays out');
 });
 
-test('"Corrigir erros de OCR com IA" starts on, and an empty prompt is its default', async () => {
+test('"Corrigir erros de OCR com IA" starts on; a missing prompt is the default, an emptied one stays empty', async () => {
     const {OCR_ERRORS_PROMPT} = await import('../src/lib/ai/word-card.js');
     assert.equal(normalizeAiOptions({}).cardOcrFix, true);
     assert.equal(normalizeAiOptions({cardOcrFix: false}).cardOcrFix, false);
     assert.equal(normalizeAiOptions({cardOcrFix: 'no'}).cardOcrFix, true);
-    assert.equal(normalizeAiOptions({ocrErrorsPrompt: '  '}).ocrErrorsPrompt, OCR_ERRORS_PROMPT);
+    assert.equal(normalizeAiOptions({}).ocrErrorsPrompt, OCR_ERRORS_PROMPT);
+    assert.equal(normalizeAiOptions({ocrErrorsPrompt: '  '}).ocrErrorsPrompt, '  ', 'kept as saved; nothing is sent');
     assert(!('arabicOcrPrompt' in normalizeAiOptions({arabicOcrPrompt: 'old'})));
 });
 
@@ -152,4 +153,48 @@ test('the explanation has its own language, which starts as the translation lang
     assert(fillLanguages(CONTEXT_PROMPT, settings).includes(`into ${portuguese}.`));
     // Settings from before the split have no explanation language: the translation's is used.
     assert(fillLanguages(EXPLAIN_PROMPT, {translationLanguage: 'pt-BR'}).includes(`Write in ${portuguese}.`));
+});
+
+test('every editable prompt: missing or broken gets the default, emptied or spaces stay as saved, the user\'s own stays', async () => {
+    const base = defaultAiOptions();
+    const keys = ['customPrompt', 'cardPrompt', 'contextPrompt', 'wordTranslationPrompt', 'readingPrompt', 'componentsPrompt', 'formPrompt',
+        'transliterationPrompt', 'ocrErrorsPrompt', 'expressionsPrompt', 'contextOcrPrompt', 'imageQuerySystemPrompt', 'imageQueryPrompt'];
+    for (const key of keys) {
+        assert.equal(typeof base[key], 'string', key);
+        assert.equal(normalizeAiOptions({})[key], base[key], `${key}: missing`);
+        for (const broken of [undefined, null, 3, {}]) { assert.equal(normalizeAiOptions({[key]: broken})[key], base[key], `${key}: ${broken}`); }
+        assert.equal(normalizeAiOptions({[key]: ''})[key], '', `${key}: emptied`);
+        assert.equal(normalizeAiOptions({[key]: ' \n '})[key], ' \n ', `${key}: spaces`);
+        assert.equal(normalizeAiOptions({[key]: 'Mine.'})[key], 'Mine.', `${key}: the user's`);
+        const saved = JSON.parse(JSON.stringify(normalizeAiOptions({[key]: ''})));
+        assert.equal(normalizeAiOptions(saved)[key], '', `${key}: still empty after saving and loading`);
+    }
+    assert.equal(normalizeAiOptions({systemPrompt: ''}).systemPrompt, '', 'an empty system prompt is no custom system prompt');
+});
+
+test('emptied optional prompts leave their keys out and the JSON list well formed', async () => {
+    const {CARD_PROMPT, CONTEXT_PROMPT, cardPrompt, contextPrompt} = await import('../src/lib/ai/word-card.js');
+    const zh = {ocrLanguage: 'zh-CN'};
+    const ar = {ocrLanguage: 'ar-SA'};
+    const all = cardPrompt(CARD_PROMPT, zh, {});
+    for (const name of ['translation', 'reading', 'components', 'form']) { assert(all.includes(`"${name}": `), name); }
+    assert(cardPrompt(CARD_PROMPT, ar, {}).includes('"transliteration": '));
+    const none = {wordTranslationPrompt: '', readingPrompt: '', componentsPrompt: ' ', formPrompt: '', transliterationPrompt: '', expressionsPrompt: '', ocrErrorsPrompt: ''};
+    for (const [settings, label] of [[zh, 'zh'], [ar, 'ar']]) {
+        const sent = cardPrompt(CARD_PROMPT, settings, none);
+        for (const name of ['translation', 'reading', 'components', 'form', 'transliteration', 'selection', 'ocrFix']) {
+            assert(!sent.includes(`"${name}"`), `${label}: no ${name}`);
+        }
+        assert(sent.endsWith(' in the same language, or []]}'), `${label}: the list closes after the synonyms, which have no prompt of their own`);
+        assert(!/\{\{\w+\}\}/.test(sent.replace(/\{\{(target|sentence)\}\}/g, '')), `${label}: every marker filled`);
+        assert(!/,\s*[,}]/.test(sent), `${label}: no empty item in the list`);
+    }
+    assert(cardPrompt(CARD_PROMPT, zh, {...none, cardOcrFix: true, ocrErrorsPrompt: 'Mind OCR: {{ocrErrors}}.'}).endsWith('mixes simplified and traditional forms.'),
+        'the OCR note when it has text and its switch is on');
+    assert(!cardPrompt(CARD_PROMPT, zh, {...none, cardOcrFix: false, ocrErrorsPrompt: 'Mind OCR.'}).includes('Mind OCR'), 'its switch still turns it off');
+    assert(!cardPrompt(CARD_PROMPT, zh, {cardComponents: false}).includes('"components"'), 'and the components switch');
+    assert.equal(cardPrompt('', zh, {}), '', 'an emptied card prompt asks nothing, with no notes on their own');
+    assert.equal(contextPrompt('  ', zh, {}), '', 'an emptied translator prompt asks nothing, with no OCR note on its own');
+    const noNote = contextPrompt(CONTEXT_PROMPT, zh, {contextOcrPrompt: ''});
+    assert(!noNote.includes('OCR') && noNote.includes('**this**'), 'an emptied context OCR note is left out; the translation still asked');
 });

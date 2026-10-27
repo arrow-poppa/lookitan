@@ -655,6 +655,61 @@ test('pictures come on a click, searched with the AI query made by their own pro
     assert(body.innerHTML.includes('Busca: to run'));
 });
 
+test('an emptied image query prompt asks the AI nothing and searches the word; an emptied system prompt sends none', async () => {
+    const empty = await imagesFixture({explain: async () => 'to run'});
+    empty.view.ai.imageQueryPrompt = '   ';
+    empty.body.querySelector('button').listeners.click();
+    await empty.settle();
+    assert.equal(empty.requests.length, 0, 'no AI request');
+    assert.deepEqual(empty.searches, ['corre'], 'the word itself is searched');
+    const noSystem = await imagesFixture({explain: async () => 'to run'});
+    noSystem.view.ai.imageQuerySystemPrompt = '';
+    noSystem.body.querySelector('button').listeners.click();
+    await noSystem.settle();
+    assert.equal(noSystem.requests.length, 1);
+    assert.equal(noSystem.requests[0].system, '', 'no system prompt, not the default one');
+    assert.deepEqual(noSystem.searches, ['to run']);
+});
+
+test('an emptied card, explanation or translator prompt asks the AI nothing and says so; the others go on', async () => {
+    const prompts = [];
+    const view = await fixture({explain: async (_options, _word, _text, request) => { prompts.push(request.prompt); return '{"headword":"run","definition":"move"}'; }});
+    Object.assign(view.ai, {cardPrompt: '', customPrompt: ' ', contextPrompt: 'Translate {{sentence}} with **{{target}}**.'});
+    const card = new Element();
+    await view.popup.runCard(card);
+    assert.equal(prompts.length, 0, 'no card request');
+    assert(card.innerHTML.includes('prompt do card está vazio') && card.innerHTML.includes('Restaurar padrão'));
+    const explanation = new Element();
+    await view.popup.runExplain(explanation);
+    assert.equal(prompts.length, 0, 'no explanation request');
+    assert(explanation.innerHTML.includes('prompt da explicação está vazio'));
+    const context = new Element();
+    await view.popup.runContext(context);
+    assert.equal(prompts.length, 1, 'the translator still works');
+    view.ai.contextPrompt = '';
+    const noContext = new Element();
+    await view.popup.runContext(noContext);
+    assert.equal(prompts.length, 1, 'no translator request');
+    assert(noContext.innerHTML.includes('prompt do Tradutor de contexto está vazio'));
+    view.ai.cardPrompt = CARD_PROMPT;
+    await view.popup.runCard(new Element());
+    assert.equal(prompts.length, 2, 'restored, the card is asked again');
+});
+
+test('emptying a supplementary prompt changes the request sent, so an earlier answer is not reused', async () => {
+    const prompts = [];
+    const view = await fixture({explain: async (_options, _word, _text, request) => { prompts.push(request.prompt); return '{"headword":"run","definition":"move"}'; }});
+    view.ai.cardPrompt = CARD_PROMPT;
+    await view.popup.runCard(new Element());
+    view.ai.expressionsPrompt = '';
+    view.ai.formPrompt = '';
+    await view.popup.runCard(new Element());
+    assert.equal(prompts.length, 2, 'asked again, not answered from the cache');
+    assert(prompts[0].includes('Examples:') && prompts[0].includes('"form"'));
+    assert(!prompts[1].includes('Examples:') && !prompts[1].includes('"form"'), 'the emptied instructions are absent from the request');
+    assert(prompts[1].includes('"definition"'), 'the rest of the card is still asked');
+});
+
 test('with automatic pictures on they load at once, and a failed AI query searches the word itself', async () => {
     const {body, searches, settle} = await imagesFixture({autoShowImages: true, explain: async () => { throw new Error('quota'); }});
     await settle();
