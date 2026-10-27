@@ -134,15 +134,18 @@ test('a word repeated in its context tells the AI which one is on screen', () =>
     assert.equal(split.systemPrompt, 'Rules.', 'the position goes with the lookup, never in the cached instructions');
 });
 
-test('the pictures search the unit the card described, only when it was found in the text', () => {
-    const card = {headword: 'Socrates Awards', selection: {parts: ['Socrates Awards']}};
-    assert.equal(imageWord('Socrates', card, {}, true), 'Socrates Awards');
-    assert.equal(imageWord('Socrates', card, {imageUseCardWord: false}, true), 'Socrates');
-    assert.equal(imageWord('Socrates', {headword: 'Nobel Prize', selection: {parts: ['Nobel Prize']}}, {}, false), 'Socrates',
-        'a unit the AI proposed but that is not in the text: the word');
-    assert.equal(imageWord('Socrates', card, {}), 'Socrates', 'not found unless said so');
-    assert.equal(imageWord('runs', {headword: 'run', selection: null}, {}, false), 'runs', 'no unit: the word as read');
-    assert.equal(imageWord('tabe', {headword: 'x', ocrFix: 'tabe → table', selection: {parts: ['x']}}, {}, true), 'table', 'the OCR fix first');
+test('the pictures search the unit found in the text, else the OCR fix, else the word as read', () => {
+    const unit = {headword: 'Socrates Awards', selection: {parts: ['Socrates Awards']}};
+    const fix = {headword: 'table', ocrFix: 'tabe → table', selection: null};
+    const both = {headword: 'turn off', ocrFix: 'tumed → turned', selection: {parts: ['turned', 'off']}};
+    const proposed = {headword: 'Nobel Prize', ocrFix: 'Socrales → Socrates', selection: {parts: ['Nobel Prize']}};
+    assert.equal(imageWord('Socrates', unit, {}, true), 'Socrates Awards', 'a unit found');
+    assert.equal(imageWord('tabe', fix, {}, false), 'table', 'an OCR fix only');
+    assert.equal(imageWord('tumed', both, {}, true), 'turn off', 'a unit found wins over the fix; its headword carries the fix');
+    assert.equal(imageWord('Socrales', proposed, {}, false), 'Socrates', 'a unit not found is never used; the fix is');
+    assert.equal(imageWord('Socrates', unit, {}), 'Socrates', 'not found unless said so');
+    assert.equal(imageWord('tumed', both, {imageUseCardWord: false}, true), 'tumed', 'switched off: the word as read');
+    assert.equal(imageWord('runs', {headword: 'run', selection: null}, {}, false), 'runs', 'neither: the word as read');
 });
 
 test('a custom card prompt that asks for the card JSON gets the notes; one that asks for them itself, or for no JSON, does not', () => {

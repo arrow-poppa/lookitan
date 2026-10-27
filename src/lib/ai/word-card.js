@@ -6,8 +6,23 @@
 
 import {occurrence, parseSelection} from './selection.js';
 
-/** Default instruction for the card's "translation" key (the "Prompt da tradução da palavra"). */
-export const WORD_TRANSLATION_PROMPT = 'the translation of the word in this context into {{translationLanguage}}';
+/** Default instruction for the card's "translation" key (the "Prompt da tradução da palavra"): of
+ * what the card describes, the word or the longer unit it belongs to. */
+export const WORD_TRANSLATION_PROMPT = 'the single best translation into {{translationLanguage}} of what you describe, as it is meant in this context';
+
+/** The first default word translation prompt (for migration). */
+export const LEGACY_WORD_TRANSLATION_PROMPT = 'the translation of the word in this context into {{translationLanguage}}';
+
+/** The card's "translationAlternatives" key, after "translation" while the word translation is on:
+ * other wordings of the same meaning, never other senses, so an empty list is the usual answer. */
+export const TRANSLATION_ALTERNATIVES_KEY =
+    ', "translationAlternatives": [up to two other natural translations into {{translationLanguage}} with exactly this meaning in this context, ' +
+    'never other senses nor the main translation again; [] when there are none]';
+
+/** At most this many alternatives are kept besides the main translation. */
+const MAX_ALTERNATIVES = 2;
+/** Characters kept of one translation. */
+const MAX_TRANSLATION = 80;
 
 /** Where the card prompt receives the translation key; empty when the word translation is off. */
 export const TRANSLATION_FIELD = '{{translationField}}';
@@ -23,15 +38,31 @@ export const COMPONENTS_FIELD = '{{componentsField}}';
 export const FORM_FIELD = '{{formField}}';
 
 /** The synonyms key of the card prompt, for every language. */
-export const SYNONYMS_KEY = ', "synonyms": [up to three synonyms of the word in this sense, in the same language, or []]';
+export const SYNONYMS_KEY = ', "synonyms": [up to three synonyms of the headword in this sense, in the same language, or []]';
 
 /** What was added to the card prompt after the translation's marker, for migration. */
 export const SYNONYMS_READING_AND_COMPONENTS = SYNONYMS_KEY + READING_FIELD + COMPONENTS_FIELD;
 
 /** The translation clause of the card prompt before it had its own field (for migration). */
-export const LEGACY_TRANSLATION_FIELD = `, "translation": ${WORD_TRANSLATION_PROMPT}`;
+export const LEGACY_TRANSLATION_FIELD = `, "translation": ${LEGACY_WORD_TRANSLATION_PROMPT}`;
 
+// Every key but "form" (and "transliteration", in formField) describes what the card describes:
+// the word, or the longer unit it belongs to (see EXPRESSIONS_PROMPT), so the headword, IPA,
+// definition, translations and synonyms agree with each other.
 export const CARD_PROMPT =
+    "Word: '{{target}}'\n" +
+    "Context: '{{sentence}}'\n\n" +
+    'Describe the word exactly as it is used in this context. Reply with JSON only (no markdown, no code fence) with these keys:\n' +
+    '{"headword": the dictionary form of what you describe, ' +
+    '"ipa": IPA transcription of the headword without slashes, ' +
+    '"cefr": CEFR level (A1, A2, B1, B2, C1 or C2) or "", ' +
+    '"partOfSpeech": ["noun", ...], ' +
+    '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
+    '"definition": a one or two sentence definition in {{definitionLanguage}} of its meaning here' +
+    TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + FORM_FIELD + '}';
+
+/** The default card prompt until 2026-10-27, which spoke only of "the word" (for migration). */
+export const LEGACY_CARD_PROMPT =
     "Word: '{{target}}'\n" +
     "Context: '{{sentence}}'\n\n" +
     'Describe the word exactly as it is used in this context. Reply with JSON only (no markdown, no code fence) with these keys:\n' +
@@ -41,7 +72,8 @@ export const CARD_PROMPT =
     '"partOfSpeech": ["noun", ...], ' +
     '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
     '"definition": a one or two sentence definition in {{definitionLanguage}}' +
-    TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + FORM_FIELD + '}';
+    TRANSLATION_FIELD + ', "synonyms": [up to three synonyms of the word in this sense, in the same language, or []]' +
+    READING_FIELD + COMPONENTS_FIELD + FORM_FIELD + '}';
 
 /** Default instruction for the card's "reading" key (the "Prompt da leitura"). */
 export const READING_PROMPT = 'the reading of the headword in {{readingSystem}}';
@@ -71,8 +103,20 @@ const TRANSLITERATED = new Set(['ar', 'fa', 'ur', 'ps', 'he', 'yi', 'ru', 'uk', 
 
 /** Default note that ends the card prompt (the "Prompt de erros do OCR"): the word and its context
  * come from OCR, which misreads characters in ways typical of each script ({{ocrErrors}}), so the
- * card describes the word the page meant and says what it corrected in "ocrFix". */
+ * card describes the word the page meant and says what it corrected in "ocrFix". Conservative: an
+ * unfamiliar word is far more often rare, slang or a name than a misreading, and a longer unit or a
+ * word's morphemes are not misreadings at all (those are "selection" and "components"). */
 export const OCR_ERRORS_PROMPT =
+    'The word and the context were read from the screen by OCR, which may misread characters: {{ocrErrors}}. ' +
+    'Correct the word only when the context and its spelling clearly point to one specific misreading of characters. ' +
+    'Then describe the word the text has (its dictionary form as the headword, and its form as it is in the text) ' +
+    'and add the key "ocrFix": "<the word as given> → <the word you described>". ' +
+    'Keep rare or archaic words, names, slang, dialectal or informal spellings, inflected forms and technical terms as they are. ' +
+    'A longer unit the word belongs to, a word cut at another place and the parts of a word are not misreadings. ' +
+    'When unsure, describe the word as given and leave "ocrFix" out.';
+
+/** The first default OCR note (for migration). */
+export const LEGACY_OCR_ERRORS_PROMPT =
     'The word and the context were read from the screen by OCR, which may misread characters: {{ocrErrors}}. ' +
     'If the word as given is not a real word or does not fit the context, use the context to find the word the text most likely has, ' +
     'describe that word (its dictionary form as the headword, and its form as it is in the text), ' +
@@ -106,16 +150,16 @@ export const EXPRESSIONS_PROMPT =
     '4. Context "وبكتابهم", word "وبكتابهم": no "selection", headword "كتاب"; و + ب + كتاب + هم are its morphemes, not separate words.\n' +
     '5. Context "Esse filme é massa!", word "massa": no "selection", headword "massa", the informal sense "very good, cool", label "informal".';
 
-/** {{ocrErrors}}: how OCR misreads each script. */
+/** {{ocrErrors}}: how OCR misreads characters in each script. Only misread characters: where a
+ * word starts and ends is the word analyzer's guess, which the card's "selection" corrects. */
 const ARABIC_ERRORS = 'in Arabic script it often drops letters, such as a prefix (ال، ل، ب، ك، و، ف) or a small letter inside the word ' +
     '(e.g. "تابة" in "واجهة بسيطة تابة النص العربي" is "لكتابة")';
 const CYRILLIC_ERRORS = 'it confuses similar Cyrillic letters, or Cyrillic and Latin ones (e.g. и/н, ш/щ, е/ё, р/p), and may drop or add a letter';
 const OCR_ERRORS = {
     ar: ARABIC_ERRORS, fa: ARABIC_ERRORS, ur: ARABIC_ERRORS, ps: ARABIC_ERRORS, ug: ARABIC_ERRORS, sd: ARABIC_ERRORS,
-    zh: 'it confuses similar characters (e.g. 進/盡, 己/已, 未/末, 人/入), mixes simplified and traditional forms, ' +
-        'and may cut the word in the wrong place (e.g. 進 alone where the text has 更進)',
-    ja: 'it confuses similar characters (e.g. 己/已, 未/末, シ/ツ, ソ/ン, カ/力, ロ/口, ー/一) and may cut the word in the wrong place',
-    ko: 'it confuses similar syllables (e.g. 을/올, 는/눈, 이/어) and may drop or misplace spaces',
+    zh: 'it confuses similar characters (e.g. 進/盡, 己/已, 未/末, 人/入) and mixes simplified and traditional forms',
+    ja: 'it confuses similar characters (e.g. 己/已, 未/末, シ/ツ, ソ/ン, カ/力, ロ/口, ー/一)',
+    ko: 'it confuses similar syllables (e.g. 을/올, 는/눈, 이/어)',
     ru: CYRILLIC_ERRORS, uk: CYRILLIC_ERRORS, be: CYRILLIC_ERRORS, bg: CYRILLIC_ERRORS, mk: CYRILLIC_ERRORS, sr: CYRILLIC_ERRORS, kk: CYRILLIC_ERRORS,
     el: 'it confuses Greek letters with similar Latin ones (e.g. ν/v, ρ/p, η/n) and drops accents',
 };
@@ -305,7 +349,9 @@ export function takesCardNotes(template) {
  * @param {{wordTranslationPrompt?: string, readingPrompt?: string, componentsPrompt?: string, formPrompt?: string, transliterationPrompt?: string, ocrErrorsPrompt?: string, expressionsPrompt?: string, cardComponents?: boolean, cardOcrFix?: boolean, cardExpressions?: boolean}} [ai]
  */
 export function cardPrompt(template, settings, ai = {}) {
-    const field = settings.showWordTranslation === false ? '' : `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}`;
+    const alternatives = template.includes('"translationAlternatives"') ? '' : TRANSLATION_ALTERNATIVES_KEY;
+    const field = settings.showWordTranslation === false ? '' :
+        `, "translation": ${promptOr(ai.wordTranslationPrompt, WORD_TRANSLATION_PROMPT)}${alternatives}`;
     const language = baseLanguage(settings.ocrLanguage);
     const reading = READING_SYSTEMS[language] ?
         `, "reading": ${promptOr(ai.readingPrompt, READING_PROMPT).replaceAll('{{readingSystem}}', READING_SYSTEMS[language])}` : '';
@@ -324,6 +370,39 @@ export function cardPrompt(template, settings, ai = {}) {
         .replaceAll(READING_FIELD, reading)
         .replaceAll(COMPONENTS_FIELD, components)
         .replaceAll(FORM_FIELD, form) + note, settings);
+}
+
+/** One translation as kept: spaces collapsed, cut to MAX_TRANSLATION characters. */
+function cleanTranslation(value) {
+    return [...String(value).replace(/\s+/gu, ' ').trim()].slice(0, MAX_TRANSLATION).join('');
+}
+
+/** The reply's other translations: strings only, none repeating the main one or each other (case
+ * and spacing aside), at most MAX_ALTERNATIVES. */
+function alternativeList(value, main) {
+    if (!Array.isArray(value)) { return []; }
+    const seen = new Set([main.toLocaleLowerCase()]);
+    const out = [];
+    for (const item of value) {
+        const text = typeof item === 'string' ? cleanTranslation(item) : '';
+        const key = text.toLocaleLowerCase();
+        if (text && !seen.has(key) && out.length < MAX_ALTERNATIVES) {
+            seen.add(key);
+            out.push(text);
+        }
+    }
+    return out;
+}
+
+/**
+ * The card's translations as one line, the main one first ("terminou, concluiu"): what the pop-up,
+ * saved words, Anki and the exports show.
+ * @param {{translation?: string, translationAlternatives?: string[]}|null|undefined} card
+ */
+export function translationText(card) {
+    const main = String(card?.translation || '').trim();
+    const others = Array.isArray(card?.translationAlternatives) ? card.translationAlternatives.map((t) => String(t).trim()) : [];
+    return (main ? [main, ...others] : others).filter(Boolean).join(', ');
 }
 
 /** The components of a reply: objects with a part, its reading or hanja and its meaning. */
@@ -353,7 +432,8 @@ export function parseCard(text) {
             partOfSpeech: list(obj.partOfSpeech),
             labels: list(obj.labels),
             definition: String(obj.definition || ''),
-            translation: String(obj.translation || ''),
+            translation: cleanTranslation(obj.translation || ''),
+            translationAlternatives: alternativeList(obj.translationAlternatives, cleanTranslation(obj.translation || '')),
             reading: String(obj.reading || ''),
             transliteration: String(obj.transliteration || ''),
             form: list(obj.form),

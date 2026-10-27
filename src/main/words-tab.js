@@ -5,6 +5,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {api, escapeHtml} from '../lib/api.js';
 import {createConnection, buildNote, glossaryDictionaryNames, isFormatReady} from '../lib/anki/notes.js';
 import {noteContextFromCard, toCsv, toQuizlet} from '../lib/cards.js';
+import {translationText} from '../lib/ai/word-card.js';
 import {icon} from '../lib/icons.js';
 import {store} from './store.js';
 import {el} from './ui.js';
@@ -21,6 +22,7 @@ let shown = {id: null, updatedAt: null};
  */
 const FIELDS = [
     ['dictionaryForm', 'Forma de dicionário', 'text'], ['translation', 'Tradução', 'text'],
+    ['translationAlternatives', 'Outras traduções', 'list'],
     ['definition', 'Definição', 'area'], ['sentence', 'Frase', 'area'],
     ['contextTranslation', 'Tradução da frase', 'area'], ['reading', 'Leitura', 'text'],
     ['transliteration', 'Transliteração', 'text'], ['ipa', 'IPA', 'text'], ['cefr', 'CEFR', 'cefr'],
@@ -78,7 +80,7 @@ function renderList() {
             el('div', {class: 'w'}, el('bdi', {}, w.word),
                 w.cefr ? el('span', {class: 'cefr-badge'}, w.cefr) : null,
                 w.ankiNoteId ? el('span', {class: 'faint', style: 'margin-left:8px', html: icon('cards', 'sm'), title: 'No Anki'}) : null),
-            el('div', {class: 'tr'}, w.translation || w.definition || ''));
+            el('div', {class: 'tr'}, translationText(w) || w.definition || ''));
         item.addEventListener('click', () => { selectedId = w.id; renderList(); });
         list.append(item);
     }

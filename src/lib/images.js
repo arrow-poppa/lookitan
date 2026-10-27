@@ -43,11 +43,12 @@ export function imagePrompts(ai, settings) {
 }
 
 /**
- * The word the pictures look for: as the OCR read it or, unless "Usar a palavra corrigida pelo
- * card" (`imageUseCardWord`) is off, the word the AI word card corrected it to (`ocrFix`, "read →
- * corrected"), or the longer unit it described ("Socrates Awards" for "Socrates"), by its
- * headword, when its pieces were found in the context (`unitFound`): a unit the AI proposed but
- * that is not in the text falls back to the word. No second AI request is made for it.
+ * The word the pictures look for. Unless "Usar a palavra corrigida pelo card" (`imageUseCardWord`)
+ * is off, in this order: the longer unit the AI word card described ("Socrates Awards" for
+ * "Socrates"), by its headword, which also carries any OCR fix, when its pieces were found in the
+ * context (`unitFound`); else the word the card corrected the OCR to (`ocrFix`, "read →
+ * corrected"); else, and always with the switch off, the word as the OCR read it. A unit the AI
+ * proposed but that is not in the text is never used. No second AI request is made for it.
  * @param {string} word
  * @param {{ocrFix?: string, headword?: string, selection?: object|null}|null|undefined} card
  * @param {{imageUseCardWord?: boolean}} ai
@@ -55,10 +56,10 @@ export function imagePrompts(ai, settings) {
  */
 export function imageWord(word, card, ai, unitFound = false) {
     if (ai.imageUseCardWord === false) { return word; }
+    const unit = card?.selection && unitFound ? String(card.headword || '').trim() : '';
     const fix = String(card?.ocrFix || '');
     const corrected = fix.includes('→') ? fix.slice(fix.lastIndexOf('→') + 1).trim() : '';
-    const unit = card?.selection && unitFound ? String(card.headword || '').trim() : '';
-    return corrected || unit || word;
+    return unit || corrected || word;
 }
 
 /**
