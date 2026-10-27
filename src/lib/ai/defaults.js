@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FORM_FIELD, FORM_PROMPT, LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, SENTENCE_CONTEXT_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FORM_FIELD, FORM_PROMPT, LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, SENTENCE_CONTEXT_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -179,8 +179,10 @@ export function normalizeAiOptions(stored) {
     // The later default of that day, before the meaning in context came first (the intended one,
     // for an anomalous wording) and the synonyms followed that meaning, moves to it the same way.
     // So does the one of the same day before the headword's spelling and {{displayField}}; an
-    // edited prompt gets no display form unless the user adds the marker or asks for the key.
-    if ([LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT].includes(out.cardPrompt.trim())) { out.cardPrompt = CARD_PROMPT; }
+    // edited prompt gets no display form unless the user adds the marker or asks for the key. And
+    // the one with them, before the definition explained the word rather than the context and the
+    // synonyms were told to stay in the text's language.
+    if ([LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT].includes(out.cardPrompt.trim())) { out.cardPrompt = CARD_PROMPT; }
     if ([LEGACY_WORD_TRANSLATION_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT].includes(out.wordTranslationPrompt.trim())) {
         out.wordTranslationPrompt = WORD_TRANSLATION_PROMPT;
     }

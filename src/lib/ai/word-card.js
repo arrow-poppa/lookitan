@@ -107,6 +107,13 @@ export function validDisplayHeadword(card, tag) {
  * (the intended one, when the card infers it; see CONTEXT_RULE), not for the headword's other
  * senses. */
 export const SYNONYMS_KEY =
+    ', "synonyms": [up to three natural synonyms or near-synonyms in the language of the word and its context, ' +
+    'never in the definition or translation language, with the meaning you give here ' +
+    '(the intended one, when you inferred it), not of other senses of the headword; [] when there are none]';
+
+/** The synonyms key of 2026-10-27 that said only "in the same language", which models sometimes
+ * read as the definition's (for migration). */
+const SAME_LANGUAGE_SYNONYMS_KEY =
     ', "synonyms": [up to three natural synonyms or near-synonyms in the same language with the meaning you give here ' +
     '(the intended one, when you inferred it), not of other senses of the headword; [] when there are none]';
 
@@ -121,6 +128,16 @@ export const SYNONYMS_READING_AND_COMPONENTS = SYNONYMS_KEY + READING_FIELD + CO
  * inferred, while the headword, form and components stay those of what is written. Universal, with
  * no example, so it stays short; test cases are in scripts/fixtures/contextual-meaning.json. */
 export const CONTEXT_RULE =
+    'Describe the word as it is used in this context: its meaning here, not every dictionary sense. ' +
+    'Explain what the word means, not the context: do not retell or explain the sentence. ' +
+    'If the wording is anomalous (e.g. a mistranslation) and the context clearly points to a different intended meaning, ' +
+    'give that meaning in the translation, definition and synonyms, and say briefly in the definition that it is inferred ' +
+    'and what the words literally mean; keep the headword, form and components of what is written. ' +
+    'Hedge an uncertain inference. Polysemy, figurative use, slang and dialect are not anomalies, and a mismatch of meaning is not an OCR error.';
+
+/** CONTEXT_RULE before it said to explain the word, not the context, which cards sometimes retold
+ * (for migration). */
+const EARLIER_CONTEXT_RULE =
     'Describe the word as it is used in this context: its meaning here, not every dictionary sense. ' +
     'If the wording is anomalous (e.g. a mistranslation) and the context clearly points to a different intended meaning, ' +
     'give that meaning in the translation, definition and synonyms, and say briefly in the definition that it is inferred ' +
@@ -143,22 +160,38 @@ export const CARD_PROMPT =
     '"cefr": CEFR level (A1, A2, B1, B2, C1 or C2) or "", ' +
     '"partOfSpeech": ["noun", ...], ' +
     '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
-    '"definition": a one or two sentence definition in {{definitionLanguage}} of its meaning here' +
+    '"definition": a one or two sentence definition in {{definitionLanguage}} of its meaning here (what the word means, not what the context says)' +
     TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + FORM_FIELD + '}';
+
+/** The default card prompt of 2026-10-27 with {{displayField}}, before the definition was told to
+ * explain the word and not the context and the synonyms to stay in the text's language (for
+ * migration). */
+export const DISPLAY_CARD_PROMPT =
+    "Word: '{{target}}'\n" +
+    "Context: '{{sentence}}'\n\n" +
+    EARLIER_CONTEXT_RULE + ' Reply with JSON only (no markdown, no code fence) with these keys:\n' +
+    '{"headword": the dictionary form of what you describe, spelled as dictionaries of the language spell it, ' +
+    'with the letters and marks of that spelling and no added stress or length marks' + DISPLAY_FIELD + ', ' +
+    '"ipa": IPA transcription of the headword without slashes, ' +
+    '"cefr": CEFR level (A1, A2, B1, B2, C1 or C2) or "", ' +
+    '"partOfSpeech": ["noun", ...], ' +
+    '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
+    '"definition": a one or two sentence definition in {{definitionLanguage}} of its meaning here' +
+    TRANSLATION_FIELD + SAME_LANGUAGE_SYNONYMS_KEY + READING_FIELD + COMPONENTS_FIELD + FORM_FIELD + '}';
 
 /** The default card prompt of 2026-10-27 with the context rule, before {{displayField}} and the
  * headword's spelling (for migration). */
 export const CONTEXT_CARD_PROMPT =
     "Word: '{{target}}'\n" +
     "Context: '{{sentence}}'\n\n" +
-    CONTEXT_RULE + ' Reply with JSON only (no markdown, no code fence) with these keys:\n' +
+    EARLIER_CONTEXT_RULE + ' Reply with JSON only (no markdown, no code fence) with these keys:\n' +
     '{"headword": the dictionary form of what you describe, ' +
     '"ipa": IPA transcription of the headword without slashes, ' +
     '"cefr": CEFR level (A1, A2, B1, B2, C1 or C2) or "", ' +
     '"partOfSpeech": ["noun", ...], ' +
     '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
     '"definition": a one or two sentence definition in {{definitionLanguage}} of its meaning here' +
-    TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + FORM_FIELD + '}';
+    TRANSLATION_FIELD + SAME_LANGUAGE_SYNONYMS_KEY + READING_FIELD + COMPONENTS_FIELD + FORM_FIELD + '}';
 
 /** The default card prompt of 2026-10-27 that described the unit, before the context rule and the
  * synonyms of the meaning given (for migration). */

@@ -5,7 +5,7 @@ import test from 'node:test';
 import {AIProvider} from '../src/lib/ai/ai-provider.js';
 import {normalizeAiOptions} from '../src/lib/ai/defaults.js';
 import {locateSelection} from '../src/lib/ai/selection.js';
-import {CARD_PROMPT, CONTEXT_RULE, EXPRESSIONS_PROMPT, HEADWORD_SYNONYMS_KEY, LEGACY_CARD_PROMPT, SYNONYMS_KEY, UNIT_CARD_PROMPT,
+import {CARD_PROMPT, CONTEXT_CARD_PROMPT, CONTEXT_RULE, DISPLAY_CARD_PROMPT, EXPRESSIONS_PROMPT, HEADWORD_SYNONYMS_KEY, LEGACY_CARD_PROMPT, SYNONYMS_KEY, UNIT_CARD_PROMPT,
     cardHints, cardPrompt, parseCard, parseCardProgress} from '../src/lib/ai/word-card.js';
 import {cardFromLookup, noteContextFromCard} from '../src/lib/cards.js';
 
@@ -35,6 +35,14 @@ test('the default card puts the meaning in context first, and its synonyms follo
     assert(!/[가-힣]/.test(prompt.replace(/\(e\.g\. 을\/올, 는\/눈, 이\/어\)/, '')), 'no Korean example beyond the OCR note\'s');
 });
 
+test('the definition explains the word, not the context, and the synonyms stay in the text\'s language', () => {
+    const prompt = sent({ocrLanguage: 'ru-RU', definitionLanguage: 'pt-BR'});
+    assert(CONTEXT_RULE.includes('Explain what the word means, not the context: do not retell or explain the sentence.'));
+    assert(prompt.includes('"definition": a one or two sentence definition in Brazilian Portuguese of its meaning here (what the word means, not what the context says)'));
+    assert(prompt.includes('"synonyms": [up to three natural synonyms or near-synonyms in the language of the word and its context, never in the definition or translation language,'));
+    assert(!DISPLAY_CARD_PROMPT.includes('not the context') && DISPLAY_CARD_PROMPT.includes('in the same language with the meaning'), 'the previous default kept as it was, for migration');
+});
+
 test('the rule and the synonyms key are fixed text, cached in the system message; the lookup goes after', () => {
     const payload = {word: '종류이다', context: cases[0].context, contextAt: at(cases[0].context, '종류이다'), candidates: ['종류', '종류이다'], analyzer: 'kiwi'};
     const template = `${sent()}\n${cardHints(payload)}`;
@@ -47,7 +55,7 @@ test('the rule and the synonyms key are fixed text, cached in the system message
 });
 
 test('earlier default card prompts move to the new one; edited and emptied ones stay', () => {
-    for (const old of [LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, `  ${UNIT_CARD_PROMPT}\n`]) {
+    for (const old of [LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT, `  ${UNIT_CARD_PROMPT}\n`]) {
         assert.equal(normalizeAiOptions({cardPrompt: old, cardPromptVersion: 3}).cardPrompt, CARD_PROMPT);
     }
     const edited = `${UNIT_CARD_PROMPT} Be brief.`;

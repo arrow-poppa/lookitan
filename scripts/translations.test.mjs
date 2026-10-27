@@ -31,7 +31,7 @@ test('a translation with alternatives is one string, kept as it came everywhere'
 test('every key of the default card describes the unit; the form stays the word on screen', () => {
     const prompt = cardPrompt(CARD_PROMPT, {ocrLanguage: 'en-US'}, {});
     for (const part of ['"headword": the dictionary form of what you describe', '"ipa": IPA transcription of the headword',
-        'near-synonyms in the same language with the meaning you give here', 'of what you describe, as it is meant in this context']) {
+        'near-synonyms in the language of the word and its context, never in the definition or translation language', 'of what you describe, as it is meant in this context']) {
         assert(prompt.includes(part), part);
     }
     assert(prompt.includes('"form": [the grammatical features of the word as written in the context'));
