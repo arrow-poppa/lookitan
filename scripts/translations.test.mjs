@@ -12,7 +12,7 @@ test('the translation prompt asks for the best translation and up to two others 
     assert(WORD_TRANSLATION_PROMPT.includes('separated by commas, up to two other natural translations with exactly this meaning'));
     assert(WORD_TRANSLATION_PROMPT.includes('never other senses'));
     assert(!prompt.includes('translationAlternatives'), 'no other key');
-    assert(!cardPrompt(CARD_PROMPT, {...settings, showWordTranslation: false}, {}).includes('translation'), 'off: no translation asked');
+    assert(!cardPrompt(CARD_PROMPT, {...settings, showWordTranslation: false}, {}).includes('"translation"'), 'off: no translation asked');
     assert(cardPrompt(CARD_PROMPT, settings, {wordTranslationPrompt: 'one word in {{translationLanguage}}'}).includes('"translation": one word in Brazilian Portuguese,'),
         'the user\'s own translation prompt is sent as written');
 });
@@ -31,7 +31,7 @@ test('a translation with alternatives is one string, kept as it came everywhere'
 test('every key of the default card describes the unit; the form stays the word on screen', () => {
     const prompt = cardPrompt(CARD_PROMPT, {ocrLanguage: 'en-US'}, {});
     for (const part of ['"headword": the dictionary form of what you describe', '"ipa": IPA transcription of the headword',
-        'synonyms of the headword in this sense', 'of what you describe, as it is meant in this context']) {
+        'near-synonyms in the same language with the meaning you give here', 'of what you describe, as it is meant in this context']) {
         assert(prompt.includes(part), part);
     }
     assert(prompt.includes('"form": [the grammatical features of the word as written in the context'));

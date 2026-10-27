@@ -137,6 +137,10 @@ pub struct LookupPayload {
     /// (an analyzer joined it there), for the AI's hints.
     pub line_break: Option<usize>,
     pub candidates: Vec<String>,
+    /// What found the word (`Pick::analyzer`; for typed text, the analyzer whose dictionary forms
+    /// lead `candidates`), for the AI's hints; not sent when unknown.
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub analyzer: &'static str,
     pub entries: Vec<EntryRef>,
     pub engine: String,
     pub ocr_ms: u64,
@@ -405,12 +409,15 @@ fn lookup_words(state: &AppState, candidates: &[String]) -> Vec<EntryRef> {
 }
 
 /// Forms to look up for typed text: the dictionary forms of its first word when the language has
-/// an analyzer (食べた → 食べる), then, for an unspaced script, its prefixes, longest first.
-fn manual_candidates(text: &str, analyzer: Option<&dyn segment::Segment>) -> Vec<String> {
+/// an analyzer (食べた → 食べる), then, for an unspaced script, its prefixes, longest first; and
+/// the analyzer's name when it gave those forms.
+fn manual_candidates(text: &str, analyzer: Option<&dyn segment::Segment>) -> (Vec<String>, &'static str) {
     let text = text.trim();
     let mut out: Vec<String> = Vec::new();
+    let mut by = "";
     if let Some(seg) = analyzer.filter(|s| text.chars().next().is_some_and(|c| s.handles(c))) {
         if let Some(w) = seg.words(text).into_iter().find(|w| w.kind != segment::Kind::Punct).filter(|w| w.start == 0) {
+            if !w.lemmas.is_empty() { by = seg.name(); }
             out.extend(w.lemmas);
         }
     }
@@ -423,7 +430,7 @@ fn manual_candidates(text: &str, analyzer: Option<&dyn segment::Segment>) -> Vec
     for form in rest {
         if !out.contains(&form) { out.push(form); }
     }
-    out
+    (out, by)
 }
 
 pub fn scan(app: &AppHandle) {
@@ -619,6 +626,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 context: pick.context,
                 context_at: Some(pick.context_at),
                 line_break: pick.line_break,
+                analyzer: pick.analyzer,
                 candidates: pick.candidates,
                 engine,
                 ocr_ms,
@@ -1587,13 +1595,14 @@ async fn update_dictionary(app: AppHandle, id: String, enabled: Option<bool>, mo
 #[tauri::command]
 fn lookup_text(state: tauri::State<'_, AppState>, text: String, sentence: Option<String>, context: Option<String>) -> LookupPayload {
     let analyzer = segment::current(&state.settings.read().ocr_language);
-    let candidates = manual_candidates(&text, analyzer.as_deref().map(|a| a as &dyn segment::Segment));
+    let (candidates, analyzer) = manual_candidates(&text, analyzer.as_deref().map(|a| a as &dyn segment::Segment));
     let entries = lookup_words(&state, &candidates);
     LookupPayload {
         word: text.trim().to_string(),
         sentence: sentence.unwrap_or_default(),
         context: context.unwrap_or_default(),
         candidates,
+        analyzer,
         entries,
         manual: true,
         ..Default::default()
@@ -1627,6 +1636,7 @@ fn overlay_pick(app: AppHandle, state: tauri::State<'_, AppState>, x: f64, y: f6
         context: pick.context,
         context_at: Some(pick.context_at),
         line_break: pick.line_break,
+        analyzer: pick.analyzer,
         candidates: pick.candidates,
         engine,
         ocr_ms,

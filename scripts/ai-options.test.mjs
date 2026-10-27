@@ -67,20 +67,20 @@ test('the card gets the word analyzer\'s hints with the word, after the cached i
     const context = 'واجهة بسيطة و حلحه الرسام';
     const at = [...context].indexOf('ح');
     const cut = cardHints({word: 'حل', context, contextAt: at, candidates: ['حل']});
-    assert.equal(cut, `Hints for '{{target}}', which may be wrong: the OCR read it inside "حلحه".`);
+    assert.equal(cut, `Hints for '{{target}}': the OCR read it inside "حلحه".`);
     const ja = cardHints({word: '食べさせられなかった', context: '彼は食べさせられなかった。', contextAt: 2,
         candidates: ['食べる', '食べさせられなかった', '食べさせられなかっ', '食べさせられなか']});
-    assert.equal(ja, `Hints for '{{target}}', which may be wrong: the word analyzer's dictionary forms: "食べる".`,
+    assert.equal(ja, `Hints for '{{target}}': the word analyzer's dictionary forms: "食べる".`,
         'no run in unspaced text, and the prefixes after the word are not forms of it');
     assert.equal(cardHints({word: '更進', context: '勸君更進一杯酒', contextAt: 2, candidates: ['更進', '更']}), '', 'jieba gives no dictionary form');
     assert.equal(cardHints({word: '盡為', context: '無故人盡為政心閑', contextAt: 3, lineBreak: 1, candidates: ['盡為', '盡']}),
-        `Hints for '{{target}}', which may be wrong: the word analyzer joined "盡" at the end of one line or column with "為" at the start of the next, so the word may end or begin at that break.`,
+        `Hints for '{{target}}': the word analyzer joined "盡" at the end of one line or column with "為" at the start of the next, so the word may end or begin at that break.`,
         'a word joined across a column break');
     assert.equal(cardHints({word: 'run', context: 'I run, daily.', contextAt: 2, candidates: ['run']}), '', 'nothing to add');
     const {AIProvider} = await import('../src/lib/ai/ai-provider.js');
     const split = Object.create(AIProvider.prototype)._splitPrompts('حل', context, `Instructions.\nContext: '{{sentence}}'\nWord: '{{target}}'\n${cut}`, '', undefined);
     assert.equal(split.systemPrompt, 'Instructions.');
-    assert(split.prompt.endsWith(`Word: 'حل'\nHints for 'حل', which may be wrong: the OCR read it inside "حلحه".`));
+    assert(split.prompt.endsWith(`Word: 'حل'\nHints for 'حل': the OCR read it inside "حلحه".`));
 });
 
 test('explanation stays manual for new and existing AI settings without autoExplain', () => {
@@ -185,7 +185,7 @@ test('emptied optional prompts leave their keys out and the JSON list well forme
         for (const name of ['translation', 'reading', 'components', 'form', 'transliteration', 'selection', 'ocrFix']) {
             assert(!sent.includes(`"${name}"`), `${label}: no ${name}`);
         }
-        assert(sent.endsWith(' in the same language, or []]}'), `${label}: the list closes after the synonyms, which have no prompt of their own`);
+        assert(sent.endsWith('; [] when there are none]}'), `${label}: the list closes after the synonyms, which have no prompt of their own`);
         assert(!/\{\{\w+\}\}/.test(sent.replace(/\{\{(target|sentence)\}\}/g, '')), `${label}: every marker filled`);
         assert(!/,\s*[,}]/.test(sent), `${label}: no empty item in the list`);
     }

@@ -73,6 +73,11 @@ pub trait Segment: Send + Sync {
     fn words(&self, text: &str) -> Vec<Word>;
     /// Whether a word with this character is found through the analyzer.
     fn handles(&self, c: char) -> bool;
+    /// Which analyzer this is, for the AI card's hints (word-card.js `cardHints`): "sudachi",
+    /// "jieba", "kiwi", "mecab-ko-dic" or "arabic-heuristic".
+    fn name(&self) -> &'static str {
+        ""
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -263,6 +268,15 @@ impl Segment for Analyzer {
 
     fn handles(&self, c: char) -> bool {
         self.lang.handles(c)
+    }
+
+    fn name(&self) -> &'static str {
+        match self.engine {
+            Engine::Sudachi(_) => "sudachi",
+            Engine::Jieba(_) => "jieba",
+            Engine::Kiwi(_) => "kiwi",
+            Engine::Lindera(_) => "mecab-ko-dic",
+        }
     }
 }
 

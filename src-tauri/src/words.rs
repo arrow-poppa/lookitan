@@ -24,6 +24,10 @@ pub struct Pick {
     /// come before the break: the cut may be wrong there, so the AI is told (word-card.js
     /// `cardHints`).
     pub line_break: Option<usize>,
+    /// What found the word, for the AI's hints: the analyzer's `Segment::name`, or "generic" for
+    /// the scanner's own rules (the run without spaces, or in unspaced scripts the run from the
+    /// pointer).
+    pub analyzer: &'static str,
     /// Indices of the lines the sentence spans, for the "sentence" screenshot.
     #[serde(skip)]
     pub sentence_lines: Vec<usize>,
@@ -441,7 +445,7 @@ fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: 
     let Context { sentence, sentence_lines, context, context_at } = context_in(lines, para, idx, |_| whole);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break, x0, y0, x1, y1, vertical: false, angle: 0.0 })
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break, analyzer: seg.name(), x0, y0, x1, y1, vertical: false, angle: 0.0 })
 }
 
 /// The word under the pointer, found through `seg` when it reads that word's script.
@@ -554,7 +558,7 @@ fn pick_upright(lines: &[OcrLine], para: &[usize], line_idx: usize, px: f32, py:
     let Context { sentence, sentence_lines, context, context_at } = context_of(lines, para, line_idx, span);
     let (y0, y1) = text_rows(line);
     let (x0, x1) = span_x(line, start, end);
-    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break: None, x0, y0, x1, y1, vertical: false, angle: 0.0 })
+    Some(Pick { word, candidates, sentence, sentence_lines, context, context_at, line_break: None, analyzer: "generic", x0, y0, x1, y1, vertical: false, angle: 0.0 })
 }
 
 fn dist(l: &OcrLine, x: f32, y: f32) -> f32 {
@@ -1129,6 +1133,10 @@ mod tests {
         fn handles(&self, c: char) -> bool {
             crate::ocr::is_unspaced_script(c)
         }
+
+        fn name(&self) -> &'static str {
+            "test-analyzer"
+        }
     }
 
     fn japanese() -> Words {
@@ -1148,8 +1156,11 @@ mod tests {
         assert_eq!(p.sentence, "日本語を勉強しています。");
         assert!(p.is_under(155.0, 110.0));
         assert_eq!(p.line_break, None, "on one line");
-        // Without an analyzer, the longest match runs from the pointer.
-        assert_eq!(pick(&lines, 155.0, 110.0, None).unwrap().word, "強しています");
+        assert_eq!(p.analyzer, "test-analyzer", "the AI is told which analyzer found it");
+        // Without an analyzer, the longest match runs from the pointer, by the scanner's own rules.
+        let p = pick(&lines, 155.0, 110.0, None).unwrap();
+        assert_eq!(p.word, "強しています");
+        assert_eq!(p.analyzer, "generic");
     }
 
     #[test]

@@ -1,0 +1,151 @@
+{
+  "about": "Test data only, never sent to a model: for each context, the reply a card that follows CONTEXT_RULE and SYNONYMS_KEY should give, written by hand (not model output). The tests check that Lookitan parses, keeps and shows such replies and that the prompt asks for them; they prove nothing about a real model's answers. 'anomaly': the wording is a mistranslation the context sees through; 'ordinary': a normal word, phrase or idiom; 'negative': nothing to infer.",
+  "cases": [
+    {
+      "id": "ko-anomaly-kind", "language": "ko-KR", "kind": "anomaly",
+      "context": "사랑은 오래 참습니다, 사랑은 종류이다. 사랑은 시기하지 않습니다.", "word": "종류이다",
+      "reply": {"headword": "종류", "partOfSpeech": ["noun"], "labels": [],
+        "definition": "Here most likely meant as 'is kind, gentle': 종류이다 literally means 'is a type', which looks like a mistranslation of English 'kind'; this meaning is inferred from the passage.",
+        "translation": "é gentil, é bondoso, é amável", "synonyms": ["다정하다", "상냥하다", "친절하다"],
+        "form": ["copula 이다, plain declarative"], "transliteration": "jongnyu-ida",
+        "components": [{"part": "종", "hanja": "種", "meaning": "seed, sort"}, {"part": "류", "hanja": "類", "meaning": "class"}, {"part": "이다", "hanja": "", "meaning": "to be (copula)"}]},
+      "expect": {"headword": "종류", "inferred": true, "synonyms": ["다정하다", "상냥하다", "친절하다"], "avoidSynonyms": ["유형", "부류", "갈래"],
+        "notInText": ["친절하다"]}
+    },
+    {
+      "id": "ko-ordinary-type", "language": "ko-KR", "kind": "ordinary",
+      "context": "이 가게에는 여러 종류의 빵이 있다.", "word": "종류의",
+      "reply": {"headword": "종류", "partOfSpeech": ["noun"], "definition": "A kind or sort of something.",
+        "translation": "tipo, espécie", "synonyms": ["유형", "부류"], "form": ["genitive particle 의"]},
+      "expect": {"headword": "종류", "synonyms": ["유형", "부류"], "avoidSynonyms": ["친절하다"]}
+    },
+    {
+      "id": "ko-ordinary-copula", "language": "ko-KR", "kind": "ordinary",
+      "context": "그는 그때 학생이었다.", "word": "학생이었다",
+      "reply": {"headword": "학생", "partOfSpeech": ["noun"], "definition": "A student; here with the past copula, 'was a student'.",
+        "translation": "era estudante", "synonyms": ["학도"], "form": ["copula 이다, past, plain declarative"]},
+      "expect": {"headword": "학생", "synonyms": ["학도"]}
+    },
+    {
+      "id": "en-polysemy-run", "language": "en-US", "kind": "ordinary",
+      "context": "He runs a small business in town.", "word": "runs",
+      "reply": {"headword": "run", "partOfSpeech": ["verb"], "definition": "To manage or operate an organization.",
+        "translation": "administra, gerencia", "synonyms": ["manages", "operates"], "form": ["third person singular, present"]},
+      "expect": {"headword": "run", "synonyms": ["manages", "operates"], "avoidSynonyms": ["jogs", "sprints"]}
+    },
+    {
+      "id": "de-separable", "language": "de-DE", "kind": "ordinary",
+      "context": "Mach bitte den Fernseher aus, wir essen.", "word": "Mach",
+      "reply": {"headword": "ausmachen", "partOfSpeech": ["verb"], "definition": "To switch off a device.",
+        "translation": "desligar", "synonyms": ["ausschalten", "abschalten"], "form": ["imperative, singular"],
+        "selection": {"parts": ["Mach", "aus"], "type": "separable_verb"}},
+      "expect": {"headword": "ausmachen", "synonyms": ["ausschalten", "abschalten"], "avoidSynonyms": ["tun", "herstellen"], "selection": ["Mach", "aus"]}
+    },
+    {
+      "id": "pt-informal", "language": "pt-BR", "kind": "ordinary",
+      "context": "A festa de ontem foi massa demais!", "word": "massa",
+      "reply": {"headword": "massa", "partOfSpeech": ["adjective"], "labels": ["informal"], "definition": "Very good, great (informal, Brazil).",
+        "translation": "great, awesome", "synonyms": ["legal", "bacana", "show"]},
+      "expect": {"headword": "massa", "synonyms": ["legal", "bacana", "show"], "avoidSynonyms": ["pasta", "volume"]}
+    },
+    {
+      "id": "ja-yabai-positive", "language": "ja-JP", "kind": "ordinary",
+      "context": "このラーメン、やばいくらいうまい！", "word": "やばい",
+      "reply": {"headword": "やばい", "partOfSpeech": ["adjective"], "labels": ["slang"], "definition": "Amazing, incredible (slang, positive here).",
+        "translation": "incrível", "synonyms": ["すごい", "最高"], "reading": "やばい"},
+      "expect": {"headword": "やばい", "synonyms": ["すごい", "最高"], "avoidSynonyms": ["危ない", "危険"]}
+    },
+    {
+      "id": "ja-inflection", "language": "ja-JP", "kind": "ordinary",
+      "context": "計画を少しずつ進めていった。", "word": "進めて",
+      "reply": {"headword": "進める", "partOfSpeech": ["verb"], "definition": "To move a plan or task forward.",
+        "translation": "avançar, levar adiante", "synonyms": ["推し進める", "推進する"], "reading": "すすめる", "form": ["te-form"]},
+      "expect": {"headword": "進める", "synonyms": ["推し進める", "推進する"]}
+    },
+    {
+      "id": "zh-slang", "language": "zh-CN", "kind": "ordinary",
+      "context": "考试快到了，他却开始摆烂了。", "word": "摆烂",
+      "reply": {"headword": "摆烂", "partOfSpeech": ["verb"], "labels": ["slang"], "definition": "To stop trying and let things get worse on purpose.",
+        "translation": "chutar o balde, largar de mão", "synonyms": ["躺平", "破罐子破摔"], "reading": "bǎilàn"},
+      "expect": {"headword": "摆烂", "synonyms": ["躺平", "破罐子破摔"]}
+    },
+    {
+      "id": "zh-segmentation", "language": "zh-CN", "kind": "ordinary",
+      "context": "她每天晚上都学习英语。", "word": "学",
+      "reply": {"headword": "学习", "partOfSpeech": ["verb"], "definition": "To study, to learn.",
+        "translation": "estudar, aprender", "synonyms": ["念书", "求学"], "reading": "xuéxí", "selection": {"parts": ["学习"], "type": "compound"}},
+      "expect": {"headword": "学习", "synonyms": ["念书", "求学"], "selection": ["学习"]}
+    },
+    {
+      "id": "ar-clitics", "language": "ar-SA", "kind": "ordinary",
+      "context": "وبكتابهم عرفوا الطريق.", "word": "وبكتابهم",
+      "reply": {"headword": "كتاب", "partOfSpeech": ["noun"], "definition": "Book; here 'and by their book'.",
+        "translation": "e com o livro deles", "synonyms": ["مؤلف", "مصنف"], "transliteration": "wa-bi-kitābihim", "form": ["prefixes و and ب, suffix هم"]},
+      "expect": {"headword": "كتاب", "synonyms": ["مؤلف", "مصنف"]}
+    },
+    {
+      "id": "ar-dialect", "language": "ar-EG", "kind": "ordinary",
+      "context": "أنا عايز أروح البيت دلوقتي.", "word": "عايز",
+      "reply": {"headword": "عايز", "partOfSpeech": ["adjective"], "labels": ["Egyptian"], "definition": "Wanting (Egyptian Arabic).",
+        "translation": "quero", "synonyms": ["عاوز", "بدي"], "transliteration": "ʿāyiz"},
+      "expect": {"headword": "عايز", "synonyms": ["عاوز", "بدي"]}
+    },
+    {
+      "id": "ru-idiom", "language": "ru-RU", "kind": "ordinary",
+      "context": "Весь день он бил баклуши.", "word": "баклуши",
+      "reply": {"headword": "бить баклуши", "partOfSpeech": ["verb"], "labels": ["idiom"], "definition": "To idle, to do nothing.",
+        "translation": "ficar à toa", "synonyms": ["бездельничать", "лодырничать"], "transliteration": "bil baklushi",
+        "selection": {"parts": ["бил баклуши"], "type": "idiom"}},
+      "expect": {"headword": "бить баклуши", "synonyms": ["бездельничать", "лодырничать"], "selection": ["бил баклуши"]}
+    },
+    {
+      "id": "uk-idiom", "language": "uk-UA", "kind": "ordinary",
+      "context": "Коли її похвалили, вона спекла раків.", "word": "раків",
+      "reply": {"headword": "спекти раків", "partOfSpeech": ["verb"], "labels": ["idiom"], "definition": "To blush deeply.",
+        "translation": "ficar vermelha", "synonyms": ["почервоніти", "зашарітися"], "transliteration": "spekla rakiv",
+        "selection": {"parts": ["спекла раків"], "type": "idiom"}},
+      "expect": {"headword": "спекти раків", "synonyms": ["почервоніти", "зашарітися"], "avoidSynonyms": ["спекти"], "selection": ["спекла раків"]}
+    },
+    {
+      "id": "el-idiom", "language": "el-GR", "kind": "ordinary",
+      "context": "Στο τέλος τα έκανε θάλασσα με τη δουλειά.", "word": "θάλασσα",
+      "reply": {"headword": "τα κάνω θάλασσα", "partOfSpeech": ["verb"], "labels": ["idiom"], "definition": "To make a mess of something.",
+        "translation": "fazer uma bagunça, estragar tudo", "synonyms": ["τα κάνω μαντάρα", "τα θαλασσώνω"], "transliteration": "ta ékane thálassa",
+        "selection": {"parts": ["τα έκανε θάλασσα"], "type": "idiom"}},
+      "expect": {"headword": "τα κάνω θάλασσα", "synonyms": ["τα κάνω μαντάρα", "τα θαλασσώνω"], "avoidSynonyms": ["πέλαγος", "ωκεανός"], "selection": ["τα έκανε θάλασσα"]}
+    },
+    {
+      "id": "en-literal", "language": "en-US", "kind": "negative",
+      "context": "She ate an apple after lunch.", "word": "apple",
+      "reply": {"headword": "apple", "partOfSpeech": ["noun"], "definition": "A round fruit with firm white flesh.", "translation": "maçã", "synonyms": []},
+      "expect": {"headword": "apple", "synonyms": []}
+    },
+    {
+      "id": "en-rare", "language": "en-US", "kind": "negative",
+      "context": "The mob threatened to defenestrate the governor.", "word": "defenestrate",
+      "reply": {"headword": "defenestrate", "partOfSpeech": ["verb"], "labels": ["rare"], "definition": "To throw someone out of a window.",
+        "translation": "defenestrar", "synonyms": []},
+      "expect": {"headword": "defenestrate", "synonyms": []}
+    },
+    {
+      "id": "en-name", "language": "en-US", "kind": "negative",
+      "context": "Kafka wrote most of his stories at night.", "word": "Kafka",
+      "reply": {"headword": "Kafka", "partOfSpeech": ["proper noun"], "definition": "Franz Kafka, the writer.", "translation": "Kafka", "synonyms": []},
+      "expect": {"headword": "Kafka", "synonyms": []}
+    },
+    {
+      "id": "ko-weak-context", "language": "ko-KR", "kind": "negative",
+      "context": "그것은 종류이다.", "word": "종류이다",
+      "reply": {"headword": "종류", "partOfSpeech": ["noun"], "definition": "Is a kind or type; the sentence is too short to tell what it is a kind of.",
+        "translation": "é um tipo", "synonyms": ["유형", "부류"], "form": ["copula 이다, plain declarative"]},
+      "expect": {"headword": "종류", "synonyms": ["유형", "부류"], "avoidSynonyms": ["친절하다", "다정하다"]}
+    },
+    {
+      "id": "en-uncertain", "language": "en-US", "kind": "negative",
+      "context": "The meeting was very fruitful for the bananas.", "word": "fruitful",
+      "reply": {"headword": "fruitful", "partOfSpeech": ["adjective"], "definition": "Productive, giving good results; the context is odd, and no other meaning is clearly intended.",
+        "translation": "produtivo, proveitoso", "synonyms": ["productive", "worthwhile"]},
+      "expect": {"headword": "fruitful", "synonyms": ["productive", "worthwhile"]}
+    }
+  ]
+}

@@ -181,6 +181,10 @@ impl Segment for Arabic {
     fn handles(&self, c: char) -> bool {
         is_arabic_letter(c)
     }
+
+    fn name(&self) -> &'static str {
+        "arabic-heuristic"
+    }
 }
 
 /// Punctuation that ends a word even with no space after it.

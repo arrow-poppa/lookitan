@@ -33,11 +33,29 @@ export const COMPONENTS_FIELD = '{{componentsField}}';
  * other than Latin, its transliteration). */
 export const FORM_FIELD = '{{formField}}';
 
-/** The synonyms key of the card prompt, for every language. */
-export const SYNONYMS_KEY = ', "synonyms": [up to three synonyms of the headword in this sense, in the same language, or []]';
+/** The synonyms key of the card prompt, for every language: words for the meaning the card gives
+ * (the intended one, when the card infers it; see CONTEXT_RULE), not for the headword's other
+ * senses. */
+export const SYNONYMS_KEY =
+    ', "synonyms": [up to three natural synonyms or near-synonyms in the same language with the meaning you give here ' +
+    '(the intended one, when you inferred it), not of other senses of the headword; [] when there are none]';
+
+/** The synonyms key until 2026-10-27, synonyms of the headword (for migration). */
+export const HEADWORD_SYNONYMS_KEY = ', "synonyms": [up to three synonyms of the headword in this sense, in the same language, or []]';
 
 /** What was added to the card prompt after the translation's marker, for migration. */
 export const SYNONYMS_READING_AND_COMPONENTS = SYNONYMS_KEY + READING_FIELD + COMPONENTS_FIELD;
+
+/** The card's first instruction: the meaning in this context comes first, and an anomalous wording
+ * (a mistranslation the context sees through) is described by its intended meaning, said to be
+ * inferred, while the headword, form and components stay those of what is written. Universal, with
+ * no example, so it stays short; test cases are in scripts/fixtures/contextual-meaning.json. */
+export const CONTEXT_RULE =
+    'Describe the word as it is used in this context: its meaning here, not every dictionary sense. ' +
+    'If the wording is anomalous (e.g. a mistranslation) and the context clearly points to a different intended meaning, ' +
+    'give that meaning in the translation, definition and synonyms, and say briefly in the definition that it is inferred ' +
+    'and what the words literally mean; keep the headword, form and components of what is written. ' +
+    'Hedge an uncertain inference. Polysemy, figurative use, slang and dialect are not anomalies, and a mismatch of meaning is not an OCR error.';
 
 /** The translation clause of the card prompt before it had its own field (for migration). */
 export const LEGACY_TRANSLATION_FIELD = `, "translation": ${LEGACY_WORD_TRANSLATION_PROMPT}`;
@@ -48,7 +66,7 @@ export const LEGACY_TRANSLATION_FIELD = `, "translation": ${LEGACY_WORD_TRANSLAT
 export const CARD_PROMPT =
     "Word: '{{target}}'\n" +
     "Context: '{{sentence}}'\n\n" +
-    'Describe the word exactly as it is used in this context. Reply with JSON only (no markdown, no code fence) with these keys:\n' +
+    CONTEXT_RULE + ' Reply with JSON only (no markdown, no code fence) with these keys:\n' +
     '{"headword": the dictionary form of what you describe, ' +
     '"ipa": IPA transcription of the headword without slashes, ' +
     '"cefr": CEFR level (A1, A2, B1, B2, C1 or C2) or "", ' +
@@ -56,6 +74,20 @@ export const CARD_PROMPT =
     '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
     '"definition": a one or two sentence definition in {{definitionLanguage}} of its meaning here' +
     TRANSLATION_FIELD + SYNONYMS_READING_AND_COMPONENTS + FORM_FIELD + '}';
+
+/** The default card prompt of 2026-10-27 that described the unit, before the context rule and the
+ * synonyms of the meaning given (for migration). */
+export const UNIT_CARD_PROMPT =
+    "Word: '{{target}}'\n" +
+    "Context: '{{sentence}}'\n\n" +
+    'Describe the word exactly as it is used in this context. Reply with JSON only (no markdown, no code fence) with these keys:\n' +
+    '{"headword": the dictionary form of what you describe, ' +
+    '"ipa": IPA transcription of the headword without slashes, ' +
+    '"cefr": CEFR level (A1, A2, B1, B2, C1 or C2) or "", ' +
+    '"partOfSpeech": ["noun", ...], ' +
+    '"labels": [usage, register or domain labels, e.g. "informal", "programming"], ' +
+    '"definition": a one or two sentence definition in {{definitionLanguage}} of its meaning here' +
+    TRANSLATION_FIELD + HEADWORD_SYNONYMS_KEY + READING_FIELD + COMPONENTS_FIELD + FORM_FIELD + '}';
 
 /** The default card prompt until 2026-10-27, which spoke only of "the word" (for migration). */
 export const LEGACY_CARD_PROMPT =
@@ -342,36 +374,75 @@ function ocrRun(payload) {
 
 const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth'];
 
+/** The analyzers that give dictionary forms (`payload.analyzer`, from `Segment::name` in Rust), as
+ * the hints name them. */
+const MORPHOLOGICAL = {sudachi: 'Sudachi', kiwi: 'Kiwi', 'mecab-ko-dic': 'mecab-ko-dic'};
+
+/** Whether the user's dictionaries have CC-CEDICT's entry for `word` itself among the lookup's
+ * entries (a dictionary whose name says CC-CEDICT, matched by the word as written). */
+function cedictHas(payload, word) {
+    return (payload.entries || []).some((e) => /cc-?cedict/i.test(String(e.dictName || '')) && (e.matched === word || e.headword === word));
+}
+
 /**
- * The word analyzer's hints for the word card, as one line of the lookup's data: the run the OCR
- * read when the analyzer cut the word out of a longer one, where it joined the word across a line
- * or column break (the text has none there, so the cut may be wrong), and the dictionary forms it found
- * (Sudachi, Kiwi): the candidates before the word itself, since after it come its prefixes, which
- * the dictionaries try in unspaced scripts and are not forms of it. Before them, when the word is
- * in the context more than once, which of its occurrences is the one on screen, so the AI
- * describes and selects that one. The line holds {{target}}, so it goes with the word after the cached
- * instructions (see `_splitPrompts`). Empty when there is nothing to add.
- * @param {{word?: string, context?: string, contextAt?: number|null, lineBreak?: number|null, candidates?: string[]}} payload
+ * The word analyzer's hints for the word card, as one line of the lookup's data, each saying what
+ * kind of evidence it is, from which analyzer (`payload.analyzer`), with no confidence invented:
+ * - Sudachi, Kiwi, mecab-ko-dic: their dictionary forms, the candidates before the word itself
+ *   (after it come its prefixes, which the dictionaries try in unspaced scripts and are not forms
+ *   of it), as lemma candidates of the written form, not its meaning here nor an OCR correction.
+ * - jieba: the word is its segmentation (boundaries, not a lemma), and CC-CEDICT's entry for it
+ *   when the user's dictionaries returned one; a missing entry is not mentioned.
+ * - The Arabic splitter, when it cut the word out of a run the OCR read without a space: that its
+ *   cut is heuristic.
+ * - The scanner's own rules ("generic") in an unspaced script, where the run from the pointer is a
+ *   guess; in spaced scripts the spaces make the word and no hint is needed.
+ * - Any analyzer: the run the OCR read when the word was cut out of a longer one, and where it
+ *   joined the word across a line or column break (the text has none there, so the cut may be
+ *   wrong).
+ * Before them, when the word is in the context more than once, which of its occurrences is the one
+ * on screen, so the AI describes and selects that one. A payload without `analyzer` (typed text, an
+ * older build) gets the dictionary forms as the word analyzer's. The line holds {{target}}, so it
+ * goes with the word after the cached instructions (see `_splitPrompts`). Empty when there is
+ * nothing to add.
+ * @param {{word?: string, context?: string, contextAt?: number|null, lineBreak?: number|null, candidates?: string[], analyzer?: string, entries?: {dictName?: string, headword?: string, matched?: string}[]}} payload
  */
 export function cardHints(payload) {
     const word = String(payload.word || '');
+    const analyzer = String(payload.analyzer || '');
     const run = ocrRun(payload);
     const candidates = (payload.candidates || []).map(String);
     const own = candidates.indexOf(word);
     const lemmas = own >= 0 ? candidates.slice(0, own) : [];
     const forms = [...new Set(lemmas.filter((c) => c && c !== word && c !== run))].slice(0, 3);
+    const quoted = (list) => list.map((f) => `"${f}"`).join(', ');
     const hints = [];
-    if (run && run !== word) { hints.push(`the OCR read it inside "${run}"`); }
+    if (run && run !== word) {
+        hints.push(analyzer === 'arabic-heuristic'
+            ? `the OCR read it inside "${run}", and the cut there was estimated heuristically and may be wrong: check the unit against the whole word and the sentence`
+            : `the OCR read it inside "${run}"`);
+    }
     const chars = [...word];
     const cut = payload.lineBreak;
     if (typeof cut === 'number' && cut > 0 && cut < chars.length) {
         hints.push(`the word analyzer joined "${chars.slice(0, cut).join('')}" at the end of one line or column with ` +
             `"${chars.slice(cut).join('')}" at the start of the next, so the word may end or begin at that break`);
     }
-    if (forms.length) { hints.push(`the word analyzer's dictionary forms: ${forms.map((f) => `"${f}"`).join(', ')}`); }
+    if (forms.length && MORPHOLOGICAL[analyzer]) {
+        hints.push(`morphological lemma candidates (${MORPHOLOGICAL[analyzer]}): ${quoted(forms)}, of the form as written, ` +
+            'not its meaning in this context nor an OCR correction');
+    } else if (forms.length && !analyzer) {
+        hints.push(`the word analyzer's dictionary forms: ${quoted(forms)}`);
+    }
+    if (analyzer === 'jieba') {
+        hints.push(`jieba segmented it as a word, a guess at word boundaries (not a lemma nor an OCR correction)` +
+            (cedictHas(payload, word) ? '; CC-CEDICT has an entry for it' : ''));
+    }
+    if (analyzer === 'generic' && UNSPACED.test(word)) {
+        hints.push('no word analyzer was available, so it is the characters from the pointer on and may run past the word');
+    }
     const nth = occurrence(payload.context, payload.contextAt, word);
     const place = nth ? `The word on screen is the ${ORDINALS[nth[0] - 1] || `${nth[0]}th`} of the ${nth[1]} times '{{target}}' is in the context.` : '';
-    const line = hints.length ? `Hints for '{{target}}', which may be wrong: ${hints.join('; ')}.` : '';
+    const line = hints.length ? `Hints for '{{target}}': ${hints.join('; ')}.` : '';
     return [place, line].filter(Boolean).join(' ');
 }
 
