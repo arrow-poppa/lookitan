@@ -351,6 +351,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-27 (Claude, `main`): at the user's request `main` was fast-forwarded to `tests` (1a32157) and a backup of `tests` pushed to `arrow-poppa/lookitan-old` as `backup/tests-2026-10-27`.
+
 - 2026-10-27 (Claude, `tests`): at the user's request, no `translationAlternatives` key: the translation prompt itself asks for the best translation and up to two others of the same meaning, comma-separated, in `translation`.
 
 - 2026-10-27 (Claude, `tests`): at the user's request, up to two other translations of the same meaning (`translationAlternatives`) in the card's translation line, saved words, Anki and exports; every key of the default card describes the unit; a conservative OCR note; the pictures prefer the unit found in the text over the OCR fix. No new request, no new examples.
