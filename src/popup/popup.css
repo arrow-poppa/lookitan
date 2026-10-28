@@ -57,6 +57,7 @@ html, body { height: 100%; overflow: hidden; background: transparent; }
 .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 10px; }
 .chip { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--surface-3); color: var(--text); }
 .ipa { color: var(--muted); font-size: 16px; }
+.saved-form { font-size: 14.5px; }
 .reading { color: var(--text); font-size: 14px; }
 /* The word on screen in Latin letters (Lookupper's "fa-bāḍat"). */
 .translit { color: var(--text); font-size: 14px; font-style: italic; }
