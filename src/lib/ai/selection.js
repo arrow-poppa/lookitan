@@ -156,6 +156,70 @@ export function occurrence(text, at, word) {
     return all.length > 1 && nth ? [nth, all.length] : null;
 }
 
+/** Code points the quoted piece around a repeated word may grow to. */
+const MAX_LOCATOR = 120;
+
+/** Where a quoted piece starting at `i` begins once it takes the word (a character of an unspaced
+ * script) before it, with the spaces between; `i` itself when there is none. */
+function growLeft(chars, i) {
+    let j = i;
+    while (j > 0 && isSpace(chars[j - 1])) { j--; }
+    if (j === 0) { return i; }
+    if (UNSPACED.test(chars[j - 1])) { return j - 1; }
+    while (j > 0 && !isSpace(chars[j - 1]) && !UNSPACED.test(chars[j - 1])) { j--; }
+    return j;
+}
+
+/** Where a quoted piece ending at `i` ends once it takes the word after it (see growLeft). */
+function growRight(chars, i) {
+    let j = i;
+    while (j < chars.length && isSpace(chars[j])) { j++; }
+    if (j === chars.length) { return i; }
+    if (UNSPACED.test(chars[j])) { return j + 1; }
+    while (j < chars.length && !isSpace(chars[j]) && !UNSPACED.test(chars[j])) { j++; }
+    return j;
+}
+
+/**
+ * A piece of the text around the word at `at` that is in the text only once, to tell the AI which
+ * of the word's places is the one on screen without counting them: when the OCR runs words
+ * together ("희망항상"), what the AI would count and what a word count finds differ. Null when the
+ * word is in the text once (any match counts, inside another word too, as the AI sees it), is
+ * not at `at`, or no piece up to MAX_LOCATOR code points is found once. The piece first takes the
+ * rest of the word the match is in, then grows a word (a character in unspaced scripts) on each
+ * side at a time. Case is ignored.
+ * @param {string} text
+ * @param {number|null|undefined} at
+ * @param {string} word
+ * @returns {string|null}
+ */
+export function locator(text, at, word) {
+    if (!text || !word || !Number.isInteger(at)) { return null; }
+    const chars = [...text];
+    let start = at;
+    let end = matchAt(chars, at, [...word]);
+    if (end < 0) { return null; }
+    const repeated = (s, e) => {
+        const piece = chars.slice(s, e);
+        let found = 0;
+        for (let i = 0; i < chars.length; i++) {
+            if (matchAt(chars, i, piece) >= 0 && ++found > 1) { return true; }
+        }
+        return false;
+    };
+    if (!repeated(start, end)) { return null; }
+    // First the rest of the word it was read in ("항상신"), in spaced scripts.
+    const inWord = (c) => c !== undefined && !isSpace(c) && !UNSPACED.test(c);
+    while (inWord(chars[start - 1])) { start--; }
+    while (inWord(chars[end])) { end++; }
+    while (repeated(start, end)) {
+        const [left, right] = [growLeft(chars, start), growRight(chars, end)];
+        if ((left === start && right === end) || right - left > MAX_LOCATOR) { return null; }
+        [start, end] = [left, right];
+    }
+    return chars.slice(start, end).join('');
+}
+
 /**
  * What a cloze covers in the text, as [start, end) code points: the selection when it is one
  * piece, else the word itself at `at`; null when neither is known.

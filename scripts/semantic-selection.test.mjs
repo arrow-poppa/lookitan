@@ -4,7 +4,7 @@ import {resolve} from 'node:path';
 import test from 'node:test';
 import {AIProvider} from '../src/lib/ai/ai-provider.js';
 import {normalizeAiOptions} from '../src/lib/ai/defaults.js';
-import {clozeRange, locateSelection, occurrence, parseSelection, rangeWithin, selectedSpan, selectionText} from '../src/lib/ai/selection.js';
+import {clozeRange, locateSelection, locator, occurrence, parseSelection, rangeWithin, selectedSpan, selectionText} from '../src/lib/ai/selection.js';
 import {CARD_PROMPT, EXPRESSIONS_PROMPT, OCR_ERRORS_PROMPT, cardHints, cardPrompt, parseCard, parseCardProgress, takesCardNotes} from '../src/lib/ai/word-card.js';
 import {imageWord} from '../src/lib/images.js';
 
@@ -153,8 +153,8 @@ test('the old "Reconhecer expressões" switch, off, becomes an empty expressions
 
 test('a word repeated in its context tells the AI which one is on screen', () => {
     const payload = {word: 'turn', context: 'turn it on. Then turn it off.', contextAt: 17, candidates: []};
-    assert.equal(cardHints(payload), "The word on screen is the second of the 2 times '{{target}}' is in the context.");
-    assert.equal(cardHints({...payload, contextAt: 0}), "The word on screen is the first of the 2 times '{{target}}' is in the context.");
+    assert.equal(cardHints(payload), "The word on screen is the '{{target}}' in 'Then turn it'.");
+    assert.equal(cardHints({...payload, contextAt: 0}), "The word on screen is the '{{target}}' in 'turn it on.'.", 'grown until it is there once');
     assert.equal(cardHints({word: 'turn', context: 'Then turn it off.', contextAt: 5, candidates: []}), '', 'once: nothing to add');
     const split = Object.create(AIProvider.prototype)._splitPrompts('turn', payload.context, `Rules.\n${cardHints(payload)}`, '', undefined);
     assert.equal(split.systemPrompt, 'Rules.', 'the position goes with the lookup, never in the cached instructions');
@@ -196,7 +196,8 @@ test('a custom card prompt that asks for the card JSON gets the notes; one that 
 test('occurrences of the word are whole words in spaced scripts, any match in unspaced ones', () => {
     const turn = 'The turnover rose. Then turn it off.';
     assert.equal(occurrence(turn, at(turn, 'turn', 10), 'turn'), null, '"turn" in "turnover" is not the word');
-    assert.equal(cardHints({word: 'turn', context: turn, contextAt: at(turn, 'turn', 10), candidates: []}), '');
+    assert.equal(cardHints({word: 'turn', context: turn, contextAt: at(turn, 'turn', 10), candidates: []}), "The word on screen is the '{{target}}' in 'Then turn it'.",
+        'the AI sees "turn" in "turnover" too, so the note quotes where the word is');
     const twice = 'Turn it on. Then turn it off.';
     assert.deepEqual(occurrence(twice, at(twice, 'turn'), 'turn'), [2, 2], 'case is ignored');
     const dotted = 'İ go and go.';
@@ -209,6 +210,26 @@ test('occurrences of the word are whole words in spaced scripts, any match in un
     assert.deepEqual(occurrence(zh, at(zh, '学', 3), '学'), [2, 3], 'Chinese has no word boundaries to test');
     assert.equal(occurrence(turn, 3, 'turn'), null, 'not at the word: nothing');
     assert.equal(occurrence('', 0, 'x'), null);
+});
+
+test('a repeated word is located by a piece of its context found only there, whole words at a time', () => {
+    // The OCR ran words together: a word count finds 2 "항상", the AI sees 4.
+    const ko = '다. 사랑은 악을 기뻐하지만 진실에 기뻐 하지 않습니다 항상 희망항상, 항상신 뢰를 보호하고, 항상 인내';
+    const all = [...ko.matchAll(/항상/gu)].map((m) => [...ko.slice(0, m.index)].length);
+    assert.equal(all.length, 4);
+    assert.deepEqual(all.map((i) => locator(ko, i, '항상')), ['않습니다 항상 희망항상,', '희망항상,', '항상신', '보호하고, 항상 인내'],
+        'first the word it was read in, then a word on each side');
+    for (const piece of all.map((i) => locator(ko, i, '항상'))) {
+        assert.equal(ko.split(piece).length, 2, `${piece} is in the context once`);
+    }
+    assert.equal(locator('Then turn it off.', 5, 'turn'), null, 'once: nothing to add');
+    assert.equal(locator('Turn it on. Then turn it off.', 17, 'turn'), 'Then turn it', 'case is ignored, so "Turn" is a second one');
+    const zh = '大学的学生在学习。';
+    assert.equal(locator(zh, at(zh, '学', 3), '学'), '的学生', 'a character at a time in unspaced scripts');
+    assert.equal(locator('a a', 2, 'a'), 'a a', 'grows on one side when the other ends');
+    assert.equal(locator('turn turn', 3, 'turn'), null, 'not at the word: nothing');
+    assert.equal(locator('go go', 0, 'go'), 'go go');
+    assert.equal(locator(`${'x '.repeat(100)}x`, 100, 'x'), null, 'no piece found once within the limit');
 });
 
 test('the cloze range is the unit when it is one piece, else the word where the OCR found it', () => {

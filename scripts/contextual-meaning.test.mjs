@@ -150,7 +150,7 @@ test('the hints say what each analyzer found, with no confidence invented', () =
         'without provenance (typed text, older builds), the forms as before');
 
     const twice = cardHints({word: '学习', context: '学习，再学习。', contextAt: 4, candidates: ['学习'], analyzer: 'jieba'});
-    assert(twice.startsWith("The word on screen is the second of the 2 times '{{target}}'") && twice.includes('jieba'), 'repeated words keep their occurrence');
+    assert(twice.startsWith("The word on screen is the '{{target}}' in '学习。'") && twice.includes('jieba'), 'repeated words keep their place');
     for (const h of [kiwi, mecab, sudachi, jieba, arabic, generic, twice]) {
         assert(!/confiden|probab|\d+\s*%|score/i.test(h), `no invented confidence: ${h}`);
         assert(h.includes("'{{target}}'"), 'the hints go with the word, after the cached instructions');

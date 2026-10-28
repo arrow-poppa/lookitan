@@ -4,7 +4,7 @@
 // transliteration, and, when switched on, the word's components and the longer unit it belongs to)
 // and the context translator.
 
-import {occurrence, parseSelection} from './selection.js';
+import {locator, parseSelection} from './selection.js';
 
 /** Default instruction for the card's "translation" key (the "Prompt da tradução da palavra"): of
  * what the card describes, the word or the longer unit it belongs to, the best translation first
@@ -527,8 +527,6 @@ function ocrRun(payload) {
     return chars.slice(start, end).join('').replace(/^[^\p{L}\p{M}\p{N}]+|[^\p{L}\p{M}\p{N}]+$/gu, '');
 }
 
-const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth'];
-
 /** The analyzers that give dictionary forms (`payload.analyzer`, from `Segment::name` in Rust), as
  * the hints name them. */
 const MORPHOLOGICAL = {sudachi: 'Sudachi', kiwi: 'Kiwi', 'mecab-ko-dic': 'mecab-ko-dic'};
@@ -554,8 +552,8 @@ function cedictHas(payload, word) {
  * - Any analyzer: the run the OCR read when the word was cut out of a longer one, and where it
  *   joined the word across a line or column break (the text has none there, so the cut may be
  *   wrong).
- * Before them, when the word is in the context more than once, which of its occurrences is the one
- * on screen, so the AI describes and selects that one. A payload without `analyzer` (typed text, an
+ * Before them, when the word is in the context more than once, a piece of the context found only
+ * there that holds the one on screen (`locator`), so the AI describes and selects that one. A payload without `analyzer` (typed text, an
  * older build) gets the dictionary forms as the word analyzer's. The line holds {{target}}, so it
  * goes with the word after the cached instructions (see `_splitPrompts`). Empty when there is
  * nothing to add.
@@ -596,8 +594,8 @@ export function cardHints(payload) {
     if (analyzer === 'generic' && UNSPACED.test(word)) {
         hints.push('no word analyzer was available, so it is the characters from the pointer on and may run past the word');
     }
-    const nth = occurrence(payload.context, payload.contextAt, word);
-    const place = nth ? `The word on screen is the ${ORDINALS[nth[0] - 1] || `${nth[0]}th`} of the ${nth[1]} times '{{target}}' is in the context.` : '';
+    const piece = locator(payload.context, payload.contextAt, word);
+    const place = piece ? `The word on screen is the '{{target}}' in '${piece}'.` : '';
     const line = hints.length ? `Hints for '{{target}}': ${hints.join('; ')}.` : '';
     return [place, line].filter(Boolean).join(' ');
 }
