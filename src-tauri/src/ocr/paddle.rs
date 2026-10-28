@@ -314,9 +314,13 @@ mod tests {
         }
         assert!(!dict.iter().any(|d| d == " " || d.is_empty()), "the space is the extra last class, not in the list");
 
+        // On the Linux runner, which has no Vulkan, a WebGPU session that failed to start leaves the
+        // test process to crash on exit after passing; the GPU and its CPU fallback are tried on
+        // Windows (DirectML) only.
+        let devices: &[bool] = if cfg!(windows) { &[false, true] } else { &[false] };
         for rec in ["rec_cyrillic", crate::ocr::RU_TINY] {
             for det in ["det_tiny", "det_small"] {
-                for gpu in [false, true] {
+                for &gpu in devices {
                     let plan = EnginePlan { manual: true, det, det_gpu: gpu, rec_gpu: gpu, gpu_choice: None };
                     let ocr = PaddleOcr::new(&models, rec, plan).unwrap();
                     let at = format!("{rec}, {det}, asked {}: det on {}, rec on {}", if gpu { "GPU" } else { "CPU" },

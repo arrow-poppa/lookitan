@@ -80,7 +80,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       # PP-OCRv5 Cyrillic and the experimental PP-OCRv6 Tiny RU on a Russian fixture, with the
-      # fetched models and ONNX Runtime; the GPU is tried and falls back to the CPU on the runners.
+      # fetched models and ONNX Runtime; on Windows the GPU is also asked for and falls back to the CPU.
       - name: Test the Russian recognizers with the real models
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::paddle::tests::real_russian_recognizers -- --ignored --nocapture
 
