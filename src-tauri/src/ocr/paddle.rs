@@ -156,7 +156,7 @@ mod tests {
         let line = |w: f32| TextBox { x0: 0.0, y0: 0.0, x1: w, y1: 48.0, quad: None };
         let mut boxes: Vec<TextBox> = (0..40).map(|i| line(100.0 + (i % 5) as f32 * 200.0)).collect();
         boxes.push(line(3000.0));
-        let batches = plan_batches(&boxes);
+        let batches = plan_batches(&boxes, |w| w);
         assert_eq!(batches.iter().map(Vec::len).sum::<usize>(), boxes.len());
         let mut last_widest = 0;
         for batch in &batches {
@@ -169,6 +169,22 @@ mod tests {
             last_widest = widest;
         }
         assert_eq!(batches.last().unwrap().len(), 1, "the 3000 px line runs alone");
+        // Tiny RU's padding counts against the budget.
+        let padded = |w| rec_padded_width(crate::ocr::RU_TINY, w);
+        for batch in plan_batches(&boxes, padded) {
+            let widest = padded(batch.iter().map(box_rec_width).max().unwrap());
+            assert!(batch.len() == 1 || batch.len() as u32 * widest <= REC_BATCH_COLUMNS);
+        }
+    }
+
+    #[test]
+    fn only_tiny_ru_pads_its_runs_as_its_model_card_does() {
+        for model in ["rec_tiny", "rec_small", "rec_cyrillic", "rec_arabic", "rec_el", "rec_korean"] {
+            assert_eq!(rec_padded_width(model, 300), 300, "{model} reads tight");
+        }
+        assert_eq!(rec_padded_width(crate::ocr::RU_TINY, 16), 640, "at least 640 columns");
+        assert_eq!(rec_padded_width(crate::ocr::RU_TINY, 427), 641, "half again as wide, rounded up");
+        assert_eq!(rec_padded_width(crate::ocr::RU_TINY, 3200), 4800);
     }
 
     #[test]
@@ -252,6 +268,91 @@ mod tests {
         assert!(!needs_right(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 20.0, quad: None }, None), "never a horizontal box");
         assert!(better(0.9, Some(0.5)));
         assert!(!better(0.5, Some(0.5)), "a tie keeps top to bottom");
+    }
+
+    /// Edits between `a` and `b`, in characters.
+    fn edits(a: &str, b: &str) -> usize {
+        let b: Vec<char> = b.chars().collect();
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.chars().enumerate() {
+            let mut prev = row[0];
+            row[0] = i + 1;
+            for (j, &cb) in b.iter().enumerate() {
+                let next = (row[j + 1] + 1).min(row[j] + 1).min(prev + usize::from(ca != cb));
+                prev = row[j + 1];
+                row[j + 1] = next;
+            }
+        }
+        row[b.len()]
+    }
+
+    /// Three Russian lines (fixtures/ru_lines.png, Arial 30 px, black on white) read with the
+    /// recognizers and detectors the build ships, through ONNX Runtime. Needs `fetch-assets.py`.
+    #[test]
+    #[ignore = "needs the fetched models and ONNX Runtime; CI runs it"]
+    fn real_russian_recognizers_read_the_fixture() {
+        const LINES: [&str; 3] = ["Съешь же ещё этих мягких французских булок", "ВСЁ ЕЩЁ ЗДЕСЬ, а ёлка — в лесу.", "Шелестят листья!"];
+        // Each line's ink, 6 px wider on every side, as the detector's unclipped boxes are.
+        const BOXES: [(f32, f32, f32, f32); 3] = [(18.0, 21.0, 689.0, 62.0), (18.0, 73.0, 525.0, 118.0), (18.0, 134.0, 281.0, 168.0)];
+        let resources = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let library = resources.join("ort").join(if cfg!(windows) { "onnxruntime.dll" } else { "libonnxruntime.so" });
+        ort::init_from(&library).expect("ONNX Runtime").with_name("lookitan-test").commit();
+        let models = resources.join("models");
+        let img = image::load_from_memory(include_bytes!("fixtures/ru_lines.png")).unwrap().to_rgba8();
+        let boxes: Vec<TextBox> = BOXES.iter().map(|&(x0, y0, x1, y1)| TextBox { x0, y0, x1, y1, quad: None }).collect();
+        let cer = |read: &[String]| {
+            let (got, want) = (read.join("\n"), LINES.join("\n"));
+            edits(&got, &want) as f32 / want.chars().count() as f32
+        };
+
+        // Tiny RU decodes with PP-OCRv5 Cyrillic's character list: ё and е, Ё and Е apart, no space.
+        let dict: Vec<String> = serde_json::from_slice(&std::fs::read(models.join("rec_ru_tiny.dict.json")).unwrap()).unwrap();
+        let cyrillic: Vec<String> = serde_json::from_slice(&std::fs::read(models.join("rec_cyrillic.dict.json")).unwrap()).unwrap();
+        assert_eq!(dict, cyrillic);
+        for c in "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ.,;:!?-—«»()№".chars() {
+            assert!(dict.iter().any(|d| *d == c.to_string()), "{c} is missing");
+        }
+        assert!(!dict.iter().any(|d| d == " " || d.is_empty()), "the space is the extra last class, not in the list");
+
+        for rec in ["rec_cyrillic", crate::ocr::RU_TINY] {
+            for det in ["det_tiny", "det_small"] {
+                for gpu in [false, true] {
+                    let plan = EnginePlan { manual: true, det, det_gpu: gpu, rec_gpu: gpu, gpu_choice: None };
+                    let ocr = PaddleOcr::new(&models, rec, plan).unwrap();
+                    let at = format!("{rec}, {det}, asked {}: det on {}, rec on {}", if gpu { "GPU" } else { "CPU" },
+                        if ocr.det_on_gpu() { "GPU" } else { "CPU" }, if ocr.rec_on_gpu() { "GPU" } else { "CPU" });
+                    assert_eq!(ocr.rec_model, rec);
+                    assert_eq!(ocr.det_model(), det, "the manual detector, on either device");
+
+                    // The output has a class per character, the CTC blank and the space.
+                    let pw = rec_padded_width(rec, 64) as usize;
+                    let (_, classes, _) = ocr.run_rec(vec![0f32; 3 * REC_HEIGHT as usize * pw], 1, pw).unwrap();
+                    assert_eq!(classes, dict.len() + 2, "{at}");
+
+                    // Recognition only: one box at a time, then the three in one batch.
+                    let single: Vec<String> =
+                        boxes.iter().map(|&b| ocr.recognize_box(&img, b).unwrap().map(|l| l.text).unwrap_or_default()).collect();
+                    let batched: Vec<String> = ocr.recognize_boxes_batched(&img, &boxes).into_iter().map(|l| l.text).collect();
+                    // Detection and recognition.
+                    let found = ocr.detect_boxes(&img).unwrap();
+                    let full: Vec<String> = ocr.recognize_boxes(&img, &found).into_iter().map(|l| l.text).collect();
+                    println!("{at}\n  single  {single:?}\n  batched {batched:?}\n  full    {full:?}");
+
+                    assert_eq!(batched.len(), 3, "{at}");
+                    if rec == "rec_cyrillic" {
+                        assert_eq!(single, LINES, "{at}: PP-OCRv5 Cyrillic reads the lines as written, ё included");
+                        assert_eq!(batched, LINES, "{at}");
+                        assert!(cer(&full) <= 0.03, "{at}: {full:?}");
+                    } else {
+                        // Experimental: it tends to read ё as е and to run words together.
+                        assert_eq!(single[0], LINES[0], "{at}");
+                        assert_eq!(single[2], LINES[2], "{at}");
+                        assert!(cer(&single) <= 0.10 && cer(&batched) <= 0.10, "{at}");
+                        assert!(cer(&full) <= 0.15, "{at}: {full:?}");
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -352,6 +453,14 @@ fn split_at_ink_gaps(decoded: Vec<(char, usize)>, ink: &ink::Ink, step_w: f32, a
     out
 }
 
+/// The input width a recognizer run pads `widest` (its widest crop) to. PP-OCRv6 Tiny RU reads
+/// worse on tight crops (words run together, short ones go astray): its model card pads every run
+/// to at least 640 columns and half again as wide as its widest line. The other recognizers read
+/// best tight, as PaddleOCR feeds them.
+pub fn rec_padded_width(rec_model: &str, widest: u32) -> u32 {
+    if rec_model == crate::ocr::RU_TINY { widest.saturating_mul(3).div_ceil(2).max(640) } else { widest }
+}
+
 /// Width of a crop once resized to the recognizer's input height.
 fn rec_width(cw: u32, ch: u32) -> u32 {
     ((cw as f32 * REC_HEIGHT as f32 / ch as f32).round() as u32).clamp(16, 3200)
@@ -364,15 +473,16 @@ fn box_rec_width(b: &TextBox) -> u32 {
 }
 
 /// Groups boxes of similar width for batched recognition, narrowest first, so little of each
-/// batch is padding.
-pub fn plan_batches(boxes: &[TextBox]) -> Vec<Vec<TextBox>> {
+/// batch is padding. `padded` gives a run's input width from its widest crop
+/// (`rec_padded_width`), which the column budget counts.
+pub fn plan_batches(boxes: &[TextBox], padded: impl Fn(u32) -> u32) -> Vec<Vec<TextBox>> {
     let mut sorted = boxes.to_vec();
     sorted.sort_by_key(box_rec_width);
     let mut out = Vec::new();
     let mut batch: Vec<TextBox> = Vec::new();
     for b in sorted {
         // Sorted ascending, so this box sets the batch's padded width.
-        let widest = box_rec_width(&b);
+        let widest = padded(box_rec_width(&b));
         if !batch.is_empty() && (batch.len() >= REC_BATCH_MAX || (batch.len() as u32 + 1) * widest > REC_BATCH_COLUMNS) {
             out.push(std::mem::take(&mut batch));
         }
@@ -843,6 +953,11 @@ impl PaddleOcr {
         self.rec_on_gpu.load(Ordering::Relaxed)
     }
 
+    /// `plan_batches` with this engine's recognizer padding.
+    pub fn plan_batches(&self, boxes: &[TextBox]) -> Vec<Vec<TextBox>> {
+        plan_batches(boxes, |w| rec_padded_width(&self.rec_model, w))
+    }
+
     /// The detector in use: the GPU's while it runs there, else the CPU's (also after a GPU failure).
     pub fn det_model(&self) -> &'static str {
         if self.det_on_gpu() { self.det_models.0 } else { self.det_models.1 }
@@ -1057,7 +1172,7 @@ impl PaddleOcr {
     /// Reads box `b` turned `turn`, and keeps the reading in `best` if it is better.
     fn read_turn(&self, img: &RgbaImage, b: TextBox, turn: Turn, best: &mut Option<Reading>) -> Result<()> {
         let Some(crop) = rec_crop(img, b, turn) else { return Ok(()) };
-        let pw = crop.tw as usize;
+        let pw = rec_padded_width(&self.rec_model, crop.tw) as usize;
         let mut data = vec![0f32; 3 * REC_HEIGHT as usize * pw];
         fill_rec_input(&mut data, &crop.image, pw);
         let (steps, classes, probs) = self.run_rec(data, 1, pw)?;
@@ -1071,7 +1186,7 @@ impl PaddleOcr {
     /// fails is retried one line at a time. Used for the whole-screen overlay.
     pub fn recognize_boxes_batched(&self, img: &RgbaImage, boxes: &[TextBox]) -> Vec<OcrLine> {
         let mut lines = Vec::with_capacity(boxes.len());
-        for batch in plan_batches(boxes) {
+        for batch in self.plan_batches(boxes) {
             match self.recognize_batch(img, &batch) {
                 Ok(found) => lines.extend(found),
                 Err(e) => {
@@ -1109,7 +1224,7 @@ impl PaddleOcr {
         if crops.is_empty() {
             return Ok(());
         }
-        let pw = crops.iter().map(|(_, c)| c.tw).max().unwrap_or(16) as usize;
+        let pw = rec_padded_width(&self.rec_model, crops.iter().map(|(_, c)| c.tw).max().unwrap_or(16)) as usize;
         let slot = 3 * REC_HEIGHT as usize * pw;
         let mut data = vec![0f32; crops.len() * slot];
         for (k, (_, c)) in crops.iter().enumerate() {

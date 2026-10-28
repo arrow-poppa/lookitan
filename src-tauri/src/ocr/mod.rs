@@ -158,11 +158,27 @@ pub fn language(tag: &str) -> &'static LanguageModel {
         .expect("the default language is in the table")
 }
 
+/// PP-OCRv6 Tiny RU (metrika-labs, fine-tuned on Russian scans and handwriting): an experimental
+/// recognizer for Russian only, chosen in the manual mode. It reads with the PP-OCRv5 Cyrillic
+/// character list, and wants the wide padding of its model card (`paddle::rec_padded_width`).
+pub const RU_TINY: &str = "rec_ru_tiny";
+
+/// The experimental recognizer a language may switch to, beside its own: Tiny RU for Russian.
+pub fn experimental_rec(tag: &str) -> Option<&'static str> {
+    (language(tag).tag == "ru-RU").then_some(RU_TINY)
+}
+
 /// The recognition model for `tag`: `rec_small` when the language reads with `rec_tiny` and is in
-/// `small`, otherwise its own. Languages on `rec_small` or on a model of their own have no choice.
-pub fn rec_model(tag: &str, small: &[String]) -> &'static str {
+/// `small`; its experimental model (`experimental_rec`) when it has one and is in `experimental`;
+/// otherwise its own. Languages on `rec_small` or on a model of their own choose nothing else.
+pub fn rec_model(tag: &str, small: &[String], experimental: &[String]) -> &'static str {
     let l = language(tag);
-    if l.rec == "rec_tiny" && small.iter().any(|t| t.eq_ignore_ascii_case(l.tag)) { "rec_small" } else { l.rec }
+    let listed = |list: &[String]| list.iter().any(|t| t.eq_ignore_ascii_case(l.tag));
+    match experimental_rec(l.tag) {
+        Some(model) if listed(experimental) => model,
+        _ if l.rec == "rec_tiny" && listed(small) => "rec_small",
+        _ => l.rec,
+    }
 }
 
 /// Scripts written without spaces between words; the picker tries the longest dictionary match.
@@ -336,5 +352,22 @@ mod tests {
         assert_eq!(language("xx-XX").tag, DEFAULT_LANGUAGE);
         assert_eq!(language("sr-latn-rs").rec, "rec_tiny");
         assert_eq!(language("sr-Cyrl-RS").rec, "rec_cyrillic");
+    }
+
+    #[test]
+    fn only_russian_can_read_with_the_experimental_tiny_ru() {
+        let ru = vec!["ru-ru".to_string()];
+        assert_eq!(rec_model("ru-RU", &[], &[]), "rec_cyrillic", "PP-OCRv5 Cyrillic stays Russian's own");
+        assert_eq!(rec_model("ru-RU", &[], &ru), RU_TINY);
+        assert_eq!(rec_model("ru-RU", &ru, &[]), "rec_cyrillic", "the small choice is for rec_tiny languages");
+        let all: Vec<String> = LANGUAGES.iter().map(|l| l.tag.to_string()).collect();
+        for l in LANGUAGES.iter().filter(|l| l.tag != "ru-RU") {
+            assert_eq!(experimental_rec(l.tag), None, "{}", l.tag);
+            assert_ne!(rec_model(l.tag, &[], &all), RU_TINY, "{}", l.tag);
+        }
+        for tag in ["uk-UA", "bg-BG", "sr-Cyrl-RS"] {
+            assert_eq!(rec_model(tag, &all, &all), "rec_cyrillic", "{tag}");
+        }
+        assert_eq!(rec_model("pt-BR", &all, &all), "rec_small", "the other choices are unchanged");
     }
 }

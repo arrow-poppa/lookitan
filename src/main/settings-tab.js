@@ -289,6 +289,7 @@ function segmenterRow() {
 }
 
 const OWN_MODELS = {rec_arabic: 'Árabe', rec_cyrillic: 'Cirílico', rec_el: 'Grego', rec_korean: 'Coreano'};
+const EXPERIMENTAL_MODELS = {rec_ru_tiny: 'Tiny RU (experimental)'};
 
 /** The manual mode's `CPU | GPU` switch for one model, saved in `key` (manualDetGpu, manualRecGpu). */
 function deviceSwitch(key) {
@@ -337,8 +338,9 @@ function manualModelRows() {
 
 /**
  * The recognition model of the OCR language, in the manual mode only: one that reads with rec_tiny
- * can switch to rec_small, on its own; one on rec_small or on a model of its own shows only that
- * model. The row stays (empty) so a change of language can refill it.
+ * can switch to rec_small, on its own; Russian can switch to its experimental model; one on
+ * rec_small or on a model of its own shows only that model. The row stays (empty) so a change of
+ * language can refill it.
  */
 function recognizerRow() {
     const row = el('div', {id: 'recognizer-row'});
@@ -362,6 +364,18 @@ function fillRecognizerRow(row) {
             {value: 'small', label: 'Small'},
         ], others().length < small().length ? 'small' : 'tiny', (v) => {
             s.smallRecognizer = v === 'small' ? [...others(), language.tag] : others();
+            save();
+        });
+    } else if (language.experimental) {
+        // Russian: its own model, or PP-OCRv6 Tiny RU on trial (Settings `experimentalRecognizer`).
+        const chosen = () => (Array.isArray(s.experimentalRecognizer) ? s.experimentalRecognizer : []);
+        const rest = () => chosen().filter((t) => String(t).toLowerCase() !== tag);
+        desc = 'Este idioma tem um modelo próprio. O Tiny RU é experimental: foi treinado em documentos e manuscritos e, em texto de tela, errou mais nos nossos testes.';
+        control = select([
+            {value: language.rec, label: `${OWN_MODELS[language.rec] || language.rec} (padrão)`},
+            {value: language.experimental, label: EXPERIMENTAL_MODELS[language.experimental] || language.experimental},
+        ], rest().length < chosen().length ? language.experimental : language.rec, (v) => {
+            s.experimentalRecognizer = v === language.experimental ? [...rest(), language.tag] : rest();
             save();
         });
     } else {

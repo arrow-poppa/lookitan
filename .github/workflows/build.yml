@@ -79,6 +79,11 @@ jobs:
       - name: Test OCR recovery
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+      # PP-OCRv5 Cyrillic and the experimental PP-OCRv6 Tiny RU on a Russian fixture, with the
+      # fetched models and ONNX Runtime; the GPU is tried and falls back to the CPU on the runners.
+      - name: Test the Russian recognizers with the real models
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::paddle::tests::real_russian_recognizers -- --ignored --nocapture
+
       # The word analyzers' dictionaries (segment/mod.rs PACKS), as the app downloads them.
       - name: Cache word analyzer dictionaries
         uses: actions/cache@v4

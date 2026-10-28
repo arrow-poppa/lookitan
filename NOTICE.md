@@ -21,6 +21,7 @@ or adapts the following work.
 | [lindera](https://github.com/lindera/lindera) 6.2 | Word analysis of Japanese, Chinese and Korean text (`src-tauri/src/segment/`) | MIT |
 | [SudachiDict](https://github.com/WorksApplications/SudachiDict) (core), [jieba](https://github.com/fxsjy/jieba) with [CC-CEDICT](https://cc-cedict.org/), [mecab-ko-dic](https://bitbucket.org/eunjeon/mecab-ko-dic) | lindera's prebuilt dictionaries, downloaded unmodified from its GitHub release on first use, each with its NOTICE.txt | SudachiDict and mecab-ko-dic: Apache-2.0; jieba: MIT; CC-CEDICT: CC BY-SA 4.0 |
 | [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv6 and PP-OCRv5 models | OCR models, downloaded at build time from huggingface.co/PaddlePaddle | Apache-2.0 |
+| [PP-OCRv6 Tiny RU](https://huggingface.co/metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx) by metrika-labs (fine-tuned from PP-OCRv6_tiny_rec) | Experimental Russian recognizer, downloaded at build time | Apache-2.0 |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.24.4 and DirectML 1.15.4 | Inference runtime, downloaded at build time | MIT |
 | [Tauri](https://tauri.app) and its plugins | Application framework | MIT or Apache-2.0 |
 

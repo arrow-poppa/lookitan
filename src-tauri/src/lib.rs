@@ -43,7 +43,7 @@ use crate::cards::CardStore;
 use crate::dict::{DictList, Dictionary, EntryRef};
 use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
-use crate::ocr::paddle::{plan_batches, split_focus, EnginePlan, PaddleOcr, TextBox};
+use crate::ocr::paddle::{split_focus, EnginePlan, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
 use crate::platform::geometry::DisplayGeometry;
@@ -238,6 +238,9 @@ pub struct LanguageInfo {
     pub name: &'static str,
     /// Its recognition model by default; with `rec_tiny`, it can switch to `rec_small`.
     pub rec: &'static str,
+    /// An experimental recognizer it can switch to (`ocr::experimental_rec`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experimental: Option<&'static str>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -662,7 +665,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                     && matches!(state.recognition.lock().as_ref(), Some(r) if r.id == id)
             };
             // Lines of similar width share one recognizer run.
-            for chunk in plan_batches(&rest) {
+            for chunk in p.plan_batches(&rest) {
                 // A new lookup supersedes this overlay; do not run another stale OCR batch.
                 if !current(&app) {
                     return;
@@ -1490,7 +1493,7 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
 
 #[tauri::command]
 fn ocr_languages() -> Vec<LanguageInfo> {
-    ocr::LANGUAGES.iter().map(|l| LanguageInfo { tag: l.tag, name: l.name, rec: l.rec }).collect()
+    ocr::LANGUAGES.iter().map(|l| LanguageInfo { tag: l.tag, name: l.name, rec: l.rec, experimental: ocr::experimental_rec(l.tag) }).collect()
 }
 
 #[tauri::command]

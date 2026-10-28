@@ -4,6 +4,9 @@
 Everything comes from official sources at pinned versions:
   * PaddleOCR ONNX models from huggingface.co/PaddlePaddle (Apache-2.0), pinned by commit; each
     file is checked against the SHA-256 that Hugging Face reports for that commit.
+  * PP-OCRv6 Tiny RU (Apache-2.0), an experimental Russian recognizer fine-tuned by metrika-labs
+    from PP-OCRv6_tiny_rec: pinned by commit and by its own SHA-256 (MODEL_SHA256). Its file is
+    model.onnx, and its rec_keys.txt must match the character list of its inference.yml.
   * ONNX Runtime (MIT): the 1.24.4 DirectML build from NuGet on Windows; on Linux, the native
     library of Microsoft's onnxruntime-webgpu 1.27.0 wheel from PyPI (CPU plus the WebGPU provider,
     with Dawn linked in), checked against the SHA-256 that PyPI reports.
@@ -52,7 +55,15 @@ MODEL_REPOS = {
     "rec_arabic": ("PaddlePaddle/arabic_PP-OCRv5_mobile_rec_onnx", "14aaedcd75825982689ecf5cd64ab33ee083215a"),
     "rec_el": ("PaddlePaddle/el_PP-OCRv5_mobile_rec_onnx", "8152b89d2ee0e1d4c92decab75fe75e5e3d836b6"),
     "rec_korean": ("PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx", "5c6f574b8e2230adf4287b33e736d71b9fabd28e"),
+    # Experimental, for Russian only (ocr::RU_TINY). The repository was vladlinv/PP-OCRv6_tiny_rec_ru_onnx.
+    "rec_ru_tiny": ("metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx", "7b6f4f0f232eb5199e01961d3744a3828a905334"),
 }
+# Model files not named inference.onnx.
+MODEL_FILES = {"rec_ru_tiny": "model.onnx"}
+# SHA-256 a model must have whatever its repository reports (models outside PaddlePaddle's).
+MODEL_SHA256 = {"rec_ru_tiny": "54feb4032b359561c224747547b1f0c44f9437aff39a98f47924b2c9ebc4002d"}
+# Models whose rec_keys.txt (one character a line) must equal their inference.yml's character list.
+MODEL_KEYS = {"rec_ru_tiny"}
 
 # language -> (npm package, version, SHA-256 of the package tarball)
 HUNSPELL = {
@@ -166,15 +177,27 @@ def fetch_models() -> None:
             continue
         info = json.loads(get(f"{HF}/api/models/{repo}/revision/{rev}?blobs=true"))
         expected = {s["rfilename"]: (s.get("lfs") or {}).get("sha256") for s in info.get("siblings", [])}
-        onnx = get(f"{HF}/{repo}/resolve/{rev}/inference.onnx")
-        want = expected.get("inference.onnx")
+        name = MODEL_FILES.get(stem, "inference.onnx")
+        onnx = get(f"{HF}/{repo}/resolve/{rev}/{name}")
+        want = expected.get(name)
         if want and sha256(onnx) != want:
-            sys.exit(f"checksum mismatch for {repo} inference.onnx")
+            sys.exit(f"checksum mismatch for {repo} {name}")
+        if stem in MODEL_SHA256 and sha256(onnx) != MODEL_SHA256[stem]:
+            sys.exit(f"{repo} {name} is not the pinned model (sha256 {sha256(onnx)})")
         (MODELS / f"{stem}.onnx").write_bytes(onnx)
         if stem.startswith("rec_"):
             cfg = yaml.safe_load(get(f"{HF}/{repo}/resolve/{rev}/inference.yml"))
+            if cfg["PostProcess"].get("name") != "CTCLabelDecode":
+                sys.exit(f"{repo}: not a CTC recognizer")
             chars = cfg["PostProcess"]["character_dict"]
             chars = ["" if c is None else str(c) for c in chars]
+            if stem in MODEL_KEYS:
+                # One character a line; this repository has CRLF line ends.
+                keys = get(f"{HF}/{repo}/resolve/{rev}/rec_keys.txt").decode("utf-8").replace("\r\n", "\n").split("\n")
+                if keys[-1] == "":
+                    keys.pop()
+                if keys != chars:
+                    sys.exit(f"{repo}: rec_keys.txt and inference.yml list different characters")
             (MODELS / f"{stem}.dict.json").write_text(json.dumps(chars, ensure_ascii=False), encoding="utf-8")
             print(f"{stem}: {len(onnx) / 1e6:.1f} MB, {len(chars)} characters")
         else:

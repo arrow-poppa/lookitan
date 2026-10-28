@@ -487,6 +487,37 @@ test('in the manual mode a tiny language chooses tiny or small for itself, and t
     }
 });
 
+test('in the manual mode Russian keeps PP-OCRv5 Cyrillic by default and can try Tiny RU; the other Cyrillic languages cannot', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ru-RU', ocrManual: true, experimentalRecognizer: ['xx-XX']});
+    const {view, settings} = fixture;
+    fixture.languages.resolve([{tag: 'ru-RU', name: 'Russian', rec: 'rec_cyrillic', experimental: 'rec_ru_tiny'},
+        {tag: 'uk-UA', name: 'Ukrainian', rec: 'rec_cyrillic'}, {tag: 'bg-BG', name: 'Bulgarian', rec: 'rec_cyrillic'}]);
+    fixture.status.resolve({session: 'windows'});
+    await fixture.initialization;
+    const recognizer = () => descendants(view.document.getElementById('recognizer-row')).find((node) => node.tagName === 'select');
+    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Cirílico (padrão)', 'Tiny RU (experimental)']);
+    assert.equal(recognizer().value, 'rec_cyrillic', 'PP-OCRv5 Cyrillic is the default');
+    assert.notEqual(recognizer().disabled, true);
+    recognizer().value = 'rec_ru_tiny';
+    recognizer().dispatch('change');
+    assert.equal(JSON.stringify(settings.experimentalRecognizer), '["xx-XX","ru-RU"]');
+    recognizer().value = 'rec_cyrillic';
+    recognizer().dispatch('change');
+    assert.equal(JSON.stringify(settings.experimentalRecognizer), '["xx-XX"]', 'back to Cyrillic; other entries kept');
+    recognizer().value = 'rec_ru_tiny';
+    recognizer().dispatch('change');
+    const language = view.document.getElementById('ocr-language');
+    for (const tag of ['uk-UA', 'bg-BG']) {
+        language.value = tag;
+        language.dispatch('change');
+        assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Cirílico (padrão)'], tag);
+        assert.equal(recognizer().disabled, true);
+    }
+    language.value = 'ru-RU';
+    language.dispatch('change');
+    assert.equal(recognizer().value, 'rec_ru_tiny', 'the choice is restored');
+});
+
 test('the manual OCR mode picks the detector and puts each model on the CPU or the GPU; off, nothing new shows', async () => {
     const fixture = await settingsFixture({ocrLanguage: 'ru-RU', useGpu: true});
     const {root, settings} = fixture;
