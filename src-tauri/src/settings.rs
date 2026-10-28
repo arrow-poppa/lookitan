@@ -4,13 +4,28 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// An engine this build does not know (a newer version's, or another platform's in an imported
+/// file) reads as `Paddle`, so the rest of the settings still load.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", from = "String")]
 pub enum OcrEngineKind {
     /// PP-OCRv6 on the local GPU (DirectML on Windows, WebGPU on Linux) or CPU.
     Paddle,
     /// Google Lens over the network.
     Lens,
+}
+
+impl From<String> for OcrEngineKind {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "paddle" => Self::Paddle,
+            "lens" => Self::Lens,
+            other => {
+                log::warn!("unknown OCR engine {other:?}; using PP-OCRv6");
+                Self::Paddle
+            }
+        }
+    }
 }
 
 /// Which video card OCR asks for when the user chooses one (`Settings::choose_gpu`).
@@ -620,6 +635,15 @@ mod tests {
         assert!(global.dictionaries.iter().any(|d| d.id == "new"), "a dictionary installed in a profile is installed for all");
         let again = choose_profile(global, &id);
         assert_eq!(again.profiles.len(), 1);
+    }
+
+    #[test]
+    fn an_unknown_ocr_engine_reads_as_paddle_and_keeps_the_other_settings() {
+        let saved: Settings = serde_json::from_str(r#"{"ocrEngine": "someday", "screenOcrEngine": "lens", "ocrLanguage": "ja-JP"}"#).unwrap();
+        assert_eq!(saved.ocr_engine, OcrEngineKind::Paddle);
+        assert_eq!(saved.screen_ocr_engine, Some(OcrEngineKind::Lens));
+        assert_eq!(saved.ocr_language, "ja-JP");
+        assert_eq!(serde_json::to_value(OcrEngineKind::Lens).unwrap(), "lens");
     }
 
     #[test]

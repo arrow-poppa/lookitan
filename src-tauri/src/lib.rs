@@ -574,7 +574,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
             return Ok(());
         }
     }
-    let OcrPass { lines, engine, kind: ocr_kind, rest, paddle: paddle_engine, notice, key: ocr_key, block: text_block } = pass;
+    let OcrPass { lines, engine, kind: _, rest, paddle: paddle_engine, notice, key: ocr_key, block: text_block } = pass;
     let ocr_ms = started.elapsed().as_millis() as u64;
 
     let id = state.recognition_seq.fetch_add(1, Ordering::SeqCst) + 1;
@@ -670,11 +670,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
                 if !current(&app) {
                     return;
                 }
-                let more = if ocr_kind == OcrEngineKind::Paddle {
-                    cached_recognize(&app.state::<AppState>(), &p, &image, ocr_key, &chunk, true)
-                } else {
-                    p.recognize_boxes_batched(&image, &chunk)
-                };
+                let more = cached_recognize(&app.state::<AppState>(), &p, &image, ocr_key, &chunk, true);
                 let state = app.state::<AppState>();
                 let mut all = {
                     let mut guard = state.recognition.lock();
@@ -706,12 +702,13 @@ fn run_scan(app: &AppHandle) -> Result<()> {
 struct OcrPass {
     lines: Vec<OcrLine>,
     engine: String,
-    /// The engine that was asked for (Lens falls back to PP-OCRv6 and keeps its cache key).
+    /// The engine that was asked for; `engine` names the one that read (Lens falls back to PP-OCRv6).
     kind: OcrEngineKind,
     /// Boxes still to recognize in the background for the overlay (whole-screen passes only).
     rest: Vec<TextBox>,
     paddle: Option<Arc<PaddleOcr>>,
     notice: Option<String>,
+    /// The cache key of the engine that read `lines`.
     key: FrameKey,
     /// The block of text under the pointer (`Reading::Block`), when the pointer is on one.
     block: Option<TextBox>,
@@ -731,8 +728,10 @@ enum Reading {
 /// Recognizes the lines around the pointer first. In a whole-screen pass the other boxes are
 /// returned in `rest` so the overlay can fill in while the user reads.
 fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, reading: Reading) -> Result<OcrPass> {
-    let key = frame_key(image, &format!("{:?}|{}|{}|{:?}|{}", kind, settings.ocr_language, settings.rec_model(), settings.engine_plan(),
+    // Each engine's results have their own key, so a fallback's lines never pass for Lens's.
+    let key_of = |kind: OcrEngineKind| frame_key(image, &format!("{:?}|{}|{}|{:?}|{}", kind, settings.ocr_language, settings.rec_model(), settings.engine_plan(),
         if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
+    let mut key = key_of(kind);
     let mut notice = None;
     if kind == OcrEngineKind::Lens {
         match cached_lens(state, image, key, settings) {
@@ -740,7 +739,10 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
                 layout::look(image, &mut lines);
                 return Ok(OcrPass { lines, engine: "Google Lens".into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None });
             }
-            Err(e) => notice = Some(format!("O Google Lens falhou e o OCR local (PP-OCRv6) leu no lugar: {e:#}")),
+            Err(e) => {
+                notice = Some(format!("O Google Lens falhou e o OCR local (PP-OCRv6) leu no lugar: {e:#}"));
+                key = key_of(OcrEngineKind::Paddle);
+            }
         }
     }
     let p = ensure_paddle(state)?;
