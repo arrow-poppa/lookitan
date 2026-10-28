@@ -301,18 +301,19 @@ function deviceSwitch(key) {
 
 /** In the manual mode, a model's select with its `CPU | GPU` switch beside it. */
 function withDevice(control, key) {
-    return store.settings.ocrManual ? el('div', {class: 'model-controls'}, control, deviceSwitch(key)) : control;
+    return el('div', {class: 'model-controls'}, control, deviceSwitch(key));
 }
 
 /**
  * "Escolher modelos manualmente": off, the OCR picks as Lookupper does (the small detector on the
- * GPU, the tiny one on the CPU, the recognizer where the detector is); on, the detector and where
- * each model runs are the user's (Settings `ocrManual`, `manualDet`, `manualDetGpu`, `manualRecGpu`).
+ * GPU, the tiny one on the CPU, the language's own recognizer where the detector is); on, the
+ * models and where each runs are the user's (Settings `ocrManual`, `manualDet`, `manualDetGpu`,
+ * `smallRecognizer`, `manualRecGpu`).
  */
 function manualModelRows() {
     const s = store.settings;
     const mode = cardRow({icon: 'settings', title: 'Escolher modelos manualmente',
-        desc: 'Desligado, o Lookitan escolhe: detecção small na placa de vídeo (tiny na CPU sem ela) e o reconhecimento onde a detecção estiver. Ligado, você escolhe o modelo de detecção e se cada modelo roda na CPU ou na GPU.',
+        desc: 'Desligado, o Lookitan escolhe: detecção small na placa de vídeo (tiny na CPU sem ela) e o reconhecimento padrão do idioma onde a detecção estiver. Ligado, você escolhe os modelos de detecção e de reconhecimento e se cada um roda na CPU ou na GPU.',
         control: toggle(!!s.ocrManual, (v) => {
             if (v && s.manualDet === undefined) {
                 // The first time, from the automatic choice.
@@ -335,8 +336,9 @@ function manualModelRows() {
 }
 
 /**
- * The recognition model of the OCR language: one that reads with rec_tiny can switch to rec_small,
- * on its own; one on rec_small or on a model of its own shows only that model.
+ * The recognition model of the OCR language, in the manual mode only: one that reads with rec_tiny
+ * can switch to rec_small, on its own; one on rec_small or on a model of its own shows only that
+ * model. The row stays (empty) so a change of language can refill it.
  */
 function recognizerRow() {
     const row = el('div', {id: 'recognizer-row'});
@@ -349,7 +351,7 @@ function fillRecognizerRow(row) {
     const s = store.settings;
     const tag = String(s.ocrLanguage || '').toLowerCase();
     const language = languages.find((l) => l.tag.toLowerCase() === tag);
-    if (!language?.rec) { return; }
+    if (!s.ocrManual || !language?.rec) { return; }
     const small = () => (Array.isArray(s.smallRecognizer) ? s.smallRecognizer : []);
     const others = () => small().filter((t) => String(t).toLowerCase() !== tag);
     let control, desc;
@@ -679,8 +681,6 @@ function render(root) {
             control: engineSelect(s.ocrEngine, (v) => { s.ocrEngine = v; })}),
         cardRow({icon: 'scan', title: 'OCR da tela inteira', desc: `Usado quando o atalho é apertado fora de uma palavra; depois é só clicar na palavra. ${engineDesc(screenEngine)}`, wide: true,
             control: engineSelect(screenEngine, (v) => { s.screenOcrEngine = v; })}),
-        ...manualModelRows(),
-        recognizerRow(),
         usesLens ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'Opcional nos instaladores do GitHub, que já vêm com uma chave. Cole a sua se ela parar de funcionar.', wide: true, control: lensKey}) : null,
         captureRegionRows(),
         // In the manual mode each model has its own CPU | GPU switch instead.
@@ -692,6 +692,8 @@ function render(root) {
                 {value: 'highPerformance', label: 'Dedicada (mais rápida)'},
                 {value: 'lowPower', label: 'Integrada (gasta menos energia)'},
             ], s.gpuPreference || 'highPerformance', (v) => { s.gpuPreference = v; save(); })}) : null,
+        ...manualModelRows(),
+        recognizerRow(),
         el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('alert')}),
             el('div', {class: 'txt'}, el('div', {class: 't'}, 'Estado do motor'), el('div', {class: 'd', id: 'engine-status'}, engineStatusText()))),
     ));

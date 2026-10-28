@@ -461,8 +461,8 @@ test('the video card choice stays hidden until its toggle is on', async () => {
     await fixture.finish();
 });
 
-test('a tiny language chooses tiny or small for itself, and the others show their only model', async () => {
-    const fixture = await settingsFixture({ocrLanguage: 'pt-BR', smallRecognizer: ['de-DE']});
+test('in the manual mode a tiny language chooses tiny or small for itself, and the others show their only model', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'pt-BR', smallRecognizer: ['de-DE'], ocrManual: true});
     const {view, settings} = fixture;
     const recognizer = () => descendants(view.document.getElementById('recognizer-row')).find((node) => node.tagName === 'select');
     assert.equal(recognizer(), undefined, 'shown once the languages are known');
@@ -497,7 +497,10 @@ test('the manual OCR mode picks the detector and puts each model on the CPU or t
     const switches = (r) => descendants(r).filter((node) => node.className === 'segmented');
     assert.equal(row('Modelo de detecção'), undefined, 'off by default: the automatic choice');
     assert(row('Usar a placa de vídeo'), 'off: the one GPU switch');
-    assert.equal(switches(fixture.view.document.getElementById('recognizer-row')).length, 0);
+    const recognizerRow = () => fixture.view.document.getElementById('recognizer-row');
+    assert.equal(recognizerRow().children.length, 0, 'off: no recognizer choice either');
+    const at = (title) => descendants(root).filter((node) => node.className === 'card-row').findIndex((node) => node.textContent.includes(title));
+    assert.equal(at('Escolher modelos manualmente') + 1, at('Estado do motor'), 'right above the engine state');
     const manual = descendants(row('Escolher modelos manualmente')).find((node) => node.tagName === 'input');
     manual.checked = true;
     manual.dispatch('change');
@@ -514,7 +517,9 @@ test('the manual OCR mode picks the detector and puts each model on the CPU or t
     const [detDevice] = switches(detector);
     detDevice.children[0].dispatch('click');
     assert.equal(settings.manualDetGpu, false, 'the detector on the CPU');
-    const recognizer = fixture.view.document.getElementById('recognizer-row');
+    assert(at('Modelo de detecção') < at('Estado do motor'));
+    assert(at('Modelo de reconhecimento') < at('Estado do motor'));
+    const recognizer = recognizerRow();
     assert.deepEqual(descendants(recognizer).find((node) => node.tagName === 'select').children.map((o) => o.textContent), ['Cirílico (padrão)'],
         'Cyrillic offers only its own model');
     const [recDevice] = switches(recognizer);

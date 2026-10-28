@@ -261,8 +261,10 @@ impl Settings {
     }
 
     /// The recognition model of the OCR language (`ocr::rec_model`).
+    /// The language's own recognizer; Tiny or Small (`small_recognizer`) only in the manual mode,
+    /// where its choice is shown.
     pub fn rec_model(&self) -> &'static str {
-        crate::ocr::rec_model(&self.ocr_language, &self.small_recognizer)
+        crate::ocr::rec_model(&self.ocr_language, if self.ocr_manual { &self.small_recognizer } else { &[] })
     }
 
     /// Which detector runs where, and where the recognizer runs: the manual mode's choices, or
@@ -717,6 +719,8 @@ mod tests {
         let old: Settings = serde_json::from_str(r#"{"ocrLanguage": "pt-BR"}"#).unwrap();
         assert_eq!(old.rec_model(), "rec_tiny", "settings saved before the option keep tiny");
         let mut s: Settings = serde_json::from_str(r#"{"ocrLanguage": "pt-BR", "smallRecognizer": ["pt-br"]}"#).unwrap();
+        assert_eq!(s.rec_model(), "rec_tiny", "off the manual mode, the language's own model");
+        s.ocr_manual = true;
         assert_eq!(s.rec_model(), "rec_small");
         s.ocr_language = "de-DE".into();
         assert_eq!(s.rec_model(), "rec_tiny", "the choice is per language");
