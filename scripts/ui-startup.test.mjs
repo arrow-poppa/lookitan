@@ -461,7 +461,7 @@ test('the video card choice stays hidden until its toggle is on', async () => {
     await fixture.finish();
 });
 
-test('in the manual mode a tiny language chooses tiny or small for itself, and the others show their only model', async () => {
+test('in the manual mode a tiny language chooses tiny or small for itself, and the others show their only PP-OCR model', async () => {
     const fixture = await settingsFixture({ocrLanguage: 'pt-BR', smallRecognizer: ['de-DE'], ocrManual: true});
     const {view, settings} = fixture;
     const recognizer = () => descendants(view.document.getElementById('recognizer-row')).find((node) => node.tagName === 'select');
@@ -470,7 +470,7 @@ test('in the manual mode a tiny language chooses tiny or small for itself, and t
         {tag: 'ar-SA', name: 'Arabic', rec: 'rec_arabic'}]);
     fixture.status.resolve({session: 'windows'});
     await fixture.initialization;
-    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Tiny (padrão)', 'Small']);
+    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Tiny (padrão)', 'Small', 'IndraOCR (experimental)']);
     assert.equal(recognizer().value, 'tiny');
     recognizer().value = 'small';
     recognizer().dispatch('change');
@@ -479,12 +479,43 @@ test('in the manual mode a tiny language chooses tiny or small for itself, and t
     recognizer().dispatch('change');
     assert.equal(JSON.stringify(settings.smallRecognizer), '["de-DE"]', 'other languages keep their choice');
     const language = view.document.getElementById('ocr-language');
-    for (const [tag, only] of [['ja-JP', 'Small (padrão)'], ['ar-SA', 'Árabe (padrão)']]) {
+    // Beside the only PP-OCR model, the recognizers on the same boxes: MeikiOCR for Japanese only.
+    for (const [tag, offered] of [['ja-JP', ['Small (padrão)', 'MeikiOCR (japonês)', 'IndraOCR (experimental)']], ['ar-SA', ['Árabe (padrão)', 'IndraOCR (experimental)']]]) {
         language.value = tag;
         language.dispatch('change');
-        assert.deepEqual(recognizer().children.map((o) => o.textContent), [only]);
-        assert.equal(recognizer().disabled, true);
+        assert.deepEqual(recognizer().children.map((o) => o.textContent), offered);
+        assert.notEqual(recognizer().disabled, true);
     }
+});
+
+test('in the manual mode choosing MeikiOCR or IndraOCR as the recognizer makes it the engine; a PP-OCR model puts PP-OCRv6 back', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrManual: true, ocrEngine: 'oneocr', screenOcrEngine: 'paddle'});
+    const {view, root, settings} = fixture;
+    fixture.languages.resolve([{tag: 'ja-JP', name: 'Japanese', rec: 'rec_small'}, {tag: 'pt-BR', name: 'Portuguese (Brazil)', rec: 'rec_tiny'}]);
+    fixture.status.resolve({session: 'windows'});
+    await fixture.initialization;
+    const recognizer = () => descendants(view.document.getElementById('recognizer-row')).find((node) => node.tagName === 'select');
+    const row = () => view.document.getElementById('recognizer-row');
+    assert.equal(recognizer().value, 'rec_small');
+    assert(row().textContent.includes('O OneOCR, escolhido para o OCR em volta do cursor, acha e lê o texto sozinho'), 'an engine that reads by itself is named');
+    recognizer().value = 'meiki';
+    recognizer().dispatch('change');
+    assert.deepEqual([settings.ocrEngine, settings.screenOcrEngine], ['meiki', 'meiki']);
+    assert.equal(recognizer().value, 'meiki');
+    assert(row().textContent.includes('O MeikiOCR lê as linhas que a detecção acha'));
+    assert(descendants(root).some((node) => node.textContent === 'Modelos do MeikiOCR (31 MB)'), 'its models row shows');
+    recognizer().value = 'indra';
+    recognizer().dispatch('change');
+    assert.deepEqual([settings.ocrEngine, settings.screenOcrEngine], ['indra', 'indra']);
+    recognizer().value = 'rec_small';
+    recognizer().dispatch('change');
+    assert.deepEqual([settings.ocrEngine, settings.screenOcrEngine], ['paddle', 'paddle']);
+    // Away from Japanese, MeikiOCR is not offered.
+    const language = view.document.getElementById('ocr-language');
+    language.value = 'pt-BR';
+    language.dispatch('change');
+    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Tiny (padrão)', 'Small', 'IndraOCR (experimental)']);
+    await fixture.finish();
 });
 
 test('in the manual mode Russian keeps PP-OCRv5 Cyrillic by default and can try Tiny RU; the other Cyrillic languages cannot', async () => {
@@ -495,7 +526,7 @@ test('in the manual mode Russian keeps PP-OCRv5 Cyrillic by default and can try 
     fixture.status.resolve({session: 'windows'});
     await fixture.initialization;
     const recognizer = () => descendants(view.document.getElementById('recognizer-row')).find((node) => node.tagName === 'select');
-    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Cirílico (padrão)', 'Tiny RU (experimental)']);
+    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Cirílico (padrão)', 'Tiny RU (experimental)', 'IndraOCR (experimental)']);
     assert.equal(recognizer().value, 'rec_cyrillic', 'PP-OCRv5 Cyrillic is the default');
     assert.notEqual(recognizer().disabled, true);
     recognizer().value = 'rec_ru_tiny';
@@ -510,8 +541,7 @@ test('in the manual mode Russian keeps PP-OCRv5 Cyrillic by default and can try 
     for (const tag of ['uk-UA', 'bg-BG']) {
         language.value = tag;
         language.dispatch('change');
-        assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Cirílico (padrão)'], tag);
-        assert.equal(recognizer().disabled, true);
+        assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Cirílico (padrão)', 'IndraOCR (experimental)'], tag);
     }
     language.value = 'ru-RU';
     language.dispatch('change');
@@ -551,8 +581,8 @@ test('the manual OCR mode picks the detector and puts each model on the CPU or t
     assert(at('Modelo de detecção') < at('Estado do motor'));
     assert(at('Modelo de reconhecimento') < at('Estado do motor'));
     const recognizer = recognizerRow();
-    assert.deepEqual(descendants(recognizer).find((node) => node.tagName === 'select').children.map((o) => o.textContent), ['Cirílico (padrão)'],
-        'Cyrillic offers only its own model');
+    assert.deepEqual(descendants(recognizer).find((node) => node.tagName === 'select').children.map((o) => o.textContent), ['Cirílico (padrão)', 'IndraOCR (experimental)'],
+        'Cyrillic offers only its own PP-OCR model, and IndraOCR');
     const [recDevice] = switches(recognizer);
     assert(recDevice, 'with a CPU | GPU switch');
     recDevice.children[0].dispatch('click');

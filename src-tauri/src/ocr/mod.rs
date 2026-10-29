@@ -57,6 +57,31 @@ pub struct OcrLine {
     pub look: crate::layout::Look,
 }
 
+impl OcrLine {
+    /// The line moved by `(dx, dy)` capture pixels: read on a part of the capture, put where that
+    /// part is. Its characters run along it and its ink lies across it, in its frame when turned.
+    pub fn shift(&mut self, dx: f32, dy: f32) {
+        self.x0 += dx;
+        self.x1 += dx;
+        self.y0 += dy;
+        self.y1 += dy;
+        let (fx, fy) = match &mut self.tilt {
+            Some(t) => {
+                let (fx, fy) = t.to_frame(dx, dy);
+                t.rect = (t.rect.0 + fx, t.rect.1 + fy, t.rect.2 + fx, t.rect.3 + fy);
+                (fx, fy)
+            }
+            None => (dx, dy),
+        };
+        let (along, across) = if self.flow == Flow::Across { (fx, fy) } else { (fy, fx) };
+        for c in &mut self.chars {
+            c.x0 += along;
+            c.x1 += along;
+        }
+        self.ink_y = self.ink_y.map(|(a, b)| (a + across, b + across));
+    }
+}
+
 /// A turned line's frame: the capture turned by `-angle` (radians) about its origin, where the
 /// line stands upright (or, for a column, straight down) in `rect`, `(x0, y0, x1, y1)`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -343,6 +368,29 @@ mod tests {
 
     fn drawn(text: &str) -> Vec<OcrChar> {
         text.chars().enumerate().map(|(i, ch)| OcrChar { ch, x0: i as f32 * 10.0, x1: i as f32 * 10.0 + 10.0 }).collect()
+    }
+
+    #[test]
+    fn a_line_read_on_part_of_the_capture_moves_to_where_that_part_is() {
+        let line = |flow, tilt| OcrLine {
+            text: "ab".into(), x0: 10.0, y0: 20.0, x1: 30.0, y1: 40.0, chars: drawn("ab"), ink_y: Some((22.0, 38.0)), flow, tilt, look: Default::default(),
+        };
+        let mut across = line(Flow::Across, None);
+        across.shift(100.0, 50.0);
+        assert_eq!((across.x0, across.y0, across.x1, across.y1), (110.0, 70.0, 130.0, 90.0));
+        assert_eq!((across.chars[1].x0, across.chars[1].x1, across.ink_y), (110.0, 120.0, Some((72.0, 88.0))), "spans along x, ink rows");
+        let mut down = line(Flow::Down, None);
+        down.shift(100.0, 50.0);
+        assert_eq!((down.chars[1].x0, down.ink_y), (60.0, Some((122.0, 138.0))), "spans along y, ink columns");
+        // A turned line: a point of its frame lands on the capture where it was, moved.
+        let tilt = Tilt { angle: 0.3, rect: (5.0, 6.0, 45.0, 26.0) };
+        let mut turned = line(Flow::Across, Some(tilt));
+        turned.shift(100.0, 50.0);
+        let t = turned.tilt.unwrap();
+        let (before, after) = (tilt.to_capture(tilt.rect.0, tilt.rect.1), t.to_capture(t.rect.0, t.rect.1));
+        assert!((after.0 - before.0 - 100.0).abs() < 1e-3 && (after.1 - before.1 - 50.0).abs() < 1e-3);
+        let (start, moved) = (tilt.to_capture(0.0, 22.0), t.to_capture(turned.chars[0].x0, turned.ink_y.unwrap().0));
+        assert!((moved.0 - start.0 - 100.0).abs() < 1e-3 && (moved.1 - start.1 - 50.0).abs() < 1e-3, "its first letter and ink follow");
     }
 
     fn text(chars: &[OcrChar]) -> String {

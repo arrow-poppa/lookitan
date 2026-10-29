@@ -422,6 +422,11 @@ function recognizerRow() {
     return row;
 }
 
+/** Recognizers that read PP-OCR's boxes in its recognizer's place (engines `meiki`, `indra`). */
+const BOX_READERS = {meiki: 'MeikiOCR (japonês)', indra: 'IndraOCR (experimental)'};
+/** Engines that find and read the text themselves. */
+const PAGE_ENGINES = {oneocr: 'OneOCR', screenai: 'Chrome ScreenAI', lens: 'Google Lens', bing: 'Bing'};
+
 function fillRecognizerRow(row) {
     row.replaceChildren();
     const s = store.settings;
@@ -430,33 +435,52 @@ function fillRecognizerRow(row) {
     if (!s.ocrManual || !language?.rec) { return; }
     const small = () => (Array.isArray(s.smallRecognizer) ? s.smallRecognizer : []);
     const others = () => small().filter((t) => String(t).toLowerCase() !== tag);
-    let control, desc;
+    // PP-OCR's models for the language: what is offered, which is chosen and how a choice is kept.
+    let options, value, choose, desc;
     if (language.rec === 'rec_tiny') {
         desc = 'Vale só para este idioma. O small acerta mais, mas na CPU leva cerca de 4× mais tempo por linha.';
-        control = select([
-            {value: 'tiny', label: 'Tiny (padrão)'},
-            {value: 'small', label: 'Small'},
-        ], others().length < small().length ? 'small' : 'tiny', (v) => {
-            s.smallRecognizer = v === 'small' ? [...others(), language.tag] : others();
-            save();
-        });
+        options = [{value: 'tiny', label: 'Tiny (padrão)'}, {value: 'small', label: 'Small'}];
+        value = others().length < small().length ? 'small' : 'tiny';
+        choose = (v) => { s.smallRecognizer = v === 'small' ? [...others(), language.tag] : others(); };
     } else if (language.experimental) {
         // Russian: its own model, or PP-OCRv6 Tiny RU on trial (Settings `experimentalRecognizer`).
         const chosen = () => (Array.isArray(s.experimentalRecognizer) ? s.experimentalRecognizer : []);
         const rest = () => chosen().filter((t) => String(t).toLowerCase() !== tag);
         desc = 'Este idioma tem um modelo próprio. O Tiny RU é experimental: foi treinado em documentos e manuscritos e, em texto de tela, errou mais nos nossos testes.';
-        control = select([
+        options = [
             {value: language.rec, label: `${OWN_MODELS[language.rec] || language.rec} (padrão)`},
             {value: language.experimental, label: EXPERIMENTAL_MODELS[language.experimental] || language.experimental},
-        ], rest().length < chosen().length ? language.experimental : language.rec, (v) => {
-            s.experimentalRecognizer = v === language.experimental ? [...rest(), language.tag] : rest();
-            save();
-        });
+        ];
+        value = rest().length < chosen().length ? language.experimental : language.rec;
+        choose = (v) => { s.experimentalRecognizer = v === language.experimental ? [...rest(), language.tag] : rest(); };
     } else {
         const only = language.rec === 'rec_small';
-        desc = only ? 'Este idioma só tem o modelo small.' : 'Este idioma tem um modelo próprio.';
-        control = select([{value: language.rec, label: only ? 'Small (padrão)' : `${OWN_MODELS[language.rec] || language.rec} (padrão)`}], language.rec, () => {});
-        control.disabled = true;
+        desc = only ? 'Este idioma só tem o modelo small do PP-OCR.' : 'Este idioma tem um modelo próprio no PP-OCR.';
+        options = [{value: language.rec, label: only ? 'Small (padrão)' : `${OWN_MODELS[language.rec] || language.rec} (padrão)`}];
+        value = language.rec;
+        choose = () => {};
+    }
+    // MeikiOCR (Japanese only) and IndraOCR read the boxes of the same detector: choosing one makes
+    // it the engine of both OCR selectors; choosing a PP-OCR model puts PP-OCR back where one was.
+    const pointer = s.ocrEngine || 'paddle';
+    const readers = Object.entries(BOX_READERS).filter(([k]) => k !== 'meiki' || tag === 'ja-jp' || pointer === 'meiki');
+    const control = select([...options, ...readers.map(([k, label]) => ({value: k, label}))], BOX_READERS[pointer] ? pointer : value, (v) => {
+        if (BOX_READERS[v]) {
+            s.ocrEngine = v;
+            s.screenOcrEngine = v;
+        } else {
+            choose(v);
+            if (BOX_READERS[s.ocrEngine]) { s.ocrEngine = 'paddle'; }
+            if (BOX_READERS[s.screenOcrEngine]) { s.screenOcrEngine = 'paddle'; }
+        }
+        save();
+        rerender();
+    });
+    control.disabled = options.length + readers.length < 2;
+    if (BOX_READERS[pointer]) {
+        desc = `O ${BOX_READERS[pointer].replace(/ \(.*\)$/, '')} lê as linhas que a detecção acha, no lugar do reconhecimento do PP-OCRv6, que volta a ler se ele falhar. Escolher um modelo do PP-OCR volta para o PP-OCRv6.`;
+    } else if (PAGE_ENGINES[pointer]) {
+        desc += ` O ${PAGE_ENGINES[pointer]}, escolhido para o OCR em volta do cursor, acha e lê o texto sozinho: estes modelos valem quando o PP-OCRv6 lê no lugar dele e, na captura automática, para achar o bloco de texto sob o cursor.`;
     }
     // The manual mode adds where it runs; the models offered stay those that read the language's
     // script (rec_tiny and rec_small have no Cyrillic, Arabic or Hangul).

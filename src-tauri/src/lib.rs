@@ -759,25 +759,57 @@ enum Reading {
 /// returned in `rest` so the overlay can fill in while the user reads.
 fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, reading: Reading) -> Result<OcrPass> {
     // Each engine's results have their own key, so a fallback's lines never pass for Lens's.
-    let key_of = |kind: OcrEngineKind| frame_key(image, &format!("{:?}|{}|{}|{:?}|{}", kind, settings.ocr_language, settings.rec_model(), settings.engine_plan(),
-        if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
+    let context = |kind: OcrEngineKind| format!("{:?}|{}|{}|{:?}|{}", kind, settings.ocr_language, settings.rec_model(), settings.engine_plan(),
+        if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" });
+    let key_of = |kind: OcrEngineKind| frame_key(image, &context(kind));
     let mut key = key_of(kind);
     let mut notice = None;
-    // Engines that read the whole image at once; when one fails, PP-OCRv6 reads.
+    // Engines that read the whole image they get at once; when one fails, PP-OCRv6 reads.
     let page = match kind {
-        OcrEngineKind::Lens => Some(("Google Lens", cached_page(state, key, || {
-            lens_engine(state)?.recognize(image, &settings.lens_api_key, &settings.ocr_language)
-        }))),
-        OcrEngineKind::ScreenAi => Some(("Chrome ScreenAI", cached_page(state, key, || state.screenai.recognize(image)))),
-        OcrEngineKind::OneOcr => Some(("OneOCR", cached_page(state, key, || state.oneocr.recognize(image)))),
-        OcrEngineKind::Bing => Some(("Bing", cached_page(state, key, || bing_engine(state)?.recognize(image)))),
+        OcrEngineKind::Lens => Some("Google Lens"),
+        OcrEngineKind::ScreenAi => Some("Chrome ScreenAI"),
+        OcrEngineKind::OneOcr => Some("OneOCR"),
+        OcrEngineKind::Bing => Some("Bing"),
         OcrEngineKind::Paddle | OcrEngineKind::Meiki | OcrEngineKind::Indra => None,
     };
-    if let Some((name, read)) = page {
+    if let Some(name) = page {
+        let read_page = |img: &image::RgbaImage| -> Result<Vec<OcrLine>> {
+            match kind {
+                OcrEngineKind::Lens => lens_engine(state)?.recognize(img, &settings.lens_api_key, &settings.ocr_language),
+                OcrEngineKind::ScreenAi => state.screenai.recognize(img),
+                OcrEngineKind::OneOcr => state.oneocr.recognize(img),
+                _ => bing_engine(state)?.recognize(img),
+            }
+        };
+        // The automatic capture reads only the block of text under the pointer, as PP-OCR's pass
+        // does: its detector finds the block, and the engine gets that part of the monitor (not
+        // all of it, which OneOCR would also shrink to 1152×768). Off any block, nothing is read
+        // and the lookup goes on to the whole screen, as with PP-OCR.
+        let region = if reading == Reading::Block { pointer_block(state, image, key_of(OcrEngineKind::Paddle), px, py)? } else { None };
+        if reading == Reading::Block && region.is_none() {
+            return Ok(OcrPass { lines: Vec::new(), engine: name.into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None });
+        }
+        let read = match region {
+            Some(b) => {
+                let (x, y, crop) = block_crop(image, &b);
+                // Where the part is, too: its lines are kept in the capture's pixels.
+                key = frame_key(&crop, &format!("{}|at {x},{y}", context(kind)));
+                cached_page(state, key, || {
+                    let mut lines = read_page(&crop)?;
+                    for l in &mut lines {
+                        l.shift(x as f32, y as f32);
+                    }
+                    Ok(lines)
+                })
+            }
+            None => cached_page(state, key, || read_page(image)),
+        };
         match read {
             Ok(mut lines) => {
                 layout::look(image, &mut lines);
-                return Ok(OcrPass { lines, engine: name.into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None });
+                // As PP-OCR's block: one read as at most one letter or digit is not trusted.
+                let block = region.filter(|_| block::reads_as_text(lines.iter().map(|l| l.text.as_str())));
+                return Ok(OcrPass { lines, engine: name.into(), kind, rest: Vec::new(), paddle: None, notice, key, block });
             }
             Err(e) => {
                 notice = Some(format!("O {name} falhou e o OCR local (PP-OCRv6) leu no lugar: {e:#}"));
@@ -830,6 +862,32 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     layout::look(image, &mut lines);
     let engine = p.name();
     Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key, block })
+}
+
+/// The block of text under the pointer, found by PP-OCR's detector (its boxes cached under `key`).
+fn pointer_block(state: &AppState, image: &image::RgbaImage, key: FrameKey, px: f32, py: f32) -> Result<Option<TextBox>> {
+    let cached = state.ocr_cache.lock().boxes(key);
+    let boxes = match cached {
+        Some(boxes) => boxes,
+        None => {
+            let boxes = ensure_paddle(state)?.detect_boxes(image)?;
+            state.ocr_cache.lock().save_boxes(key, &boxes);
+            boxes
+        }
+    };
+    let under: Vec<TextBox> = block::under(&boxes, px, py).into_iter().map(|i| boxes[i]).collect();
+    Ok(block::bounds(&under))
+}
+
+/// The part of the capture a block takes, with a margin, and where that part starts.
+fn block_crop(image: &image::RgbaImage, b: &TextBox) -> (u32, u32, image::RgbaImage) {
+    const MARGIN: f32 = 16.0;
+    let (w, h) = (image.width(), image.height());
+    let x0 = ((b.x0 - MARGIN).max(0.0) as u32).min(w.saturating_sub(1));
+    let y0 = ((b.y0 - MARGIN).max(0.0) as u32).min(h.saturating_sub(1));
+    let x1 = ((b.x1 + MARGIN).ceil().max(0.0) as u32).clamp(x0 + 1, w.max(x0 + 1));
+    let y1 = ((b.y1 + MARGIN).ceil().max(0.0) as u32).clamp(y0 + 1, h.max(y0 + 1));
+    (x0, y0, image::imageops::crop_imm(image, x0, y0, x1 - x0, y1 - y0).to_image())
 }
 
 /// A recognizer other than PP-OCR's reading its detector's boxes.
