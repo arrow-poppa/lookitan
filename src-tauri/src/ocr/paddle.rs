@@ -14,7 +14,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use image::imageops::FilterType;
 use image::{Rgba, RgbaImage};
-use ort::session::builder::GraphOptimizationLevel;
+use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 use ort::session::Session;
 use ort::value::Tensor;
 use parking_lot::Mutex;
@@ -863,8 +863,19 @@ pub(crate) fn cpu_session(path: &Path) -> Result<Session> {
 }
 
 // `choice` is the card the user picked (Configurações › OCR); `None` keeps the API's default.
-#[cfg(windows)]
 pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
+    let mut b = gpu_builder(choice)?;
+    Ok(ortx!(b.commit_from_file(path)))
+}
+
+/// A GPU session for a model already read (one changed for the GPU, as meiki.rs's).
+pub(crate) fn gpu_session_from_memory(model: &[u8], choice: Option<GpuPreference>) -> Result<Session> {
+    let mut b = gpu_builder(choice)?;
+    Ok(ortx!(b.commit_from_memory(model)))
+}
+
+#[cfg(windows)]
+fn gpu_builder(choice: Option<GpuPreference>) -> Result<SessionBuilder> {
     use ort::ep::directml::PerformancePreference;
     use ort::ep::DirectML;
     let b = ortx!(Session::builder());
@@ -877,9 +888,7 @@ pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<
         Some(GpuPreference::HighPerformance) => DirectML::default().with_performance_preference(PerformancePreference::HighPerformance),
         Some(GpuPreference::LowPower) => DirectML::default().with_performance_preference(PerformancePreference::MinimumPower),
     };
-    let mut b = ortx!(b.with_execution_providers([ep.build().error_on_failure()]));
-    let s = ortx!(b.commit_from_file(path));
-    Ok(s)
+    Ok(ortx!(b.with_execution_providers([ep.build().error_on_failure()])))
 }
 
 // Linux has no DirectML; the bundled ONNX Runtime build carries the WebGPU provider, which runs on
@@ -888,7 +897,7 @@ pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<
 // from the power preference (high performance when unset). The context is shared by every session
 // and released with the last one, so a new preference applies when the engine is rebuilt.
 #[cfg(target_os = "linux")]
-pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
+fn gpu_builder(choice: Option<GpuPreference>) -> Result<SessionBuilder> {
     use ort::ep::webgpu::DawnBackendType;
     use ort::ep::{ArbitrarilyConfigurableExecutionProvider, WebGPU};
     // Dawn's and the session's threads take this thread's priority (platform/priority.rs).
@@ -903,13 +912,11 @@ pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<
         };
         ep = ep.with_arbitrary_config("ep.webgpuexecutionprovider.powerPreference", value);
     }
-    let mut b = ortx!(b.with_execution_providers([ep.build().error_on_failure()]));
-    let s = ortx!(b.commit_from_file(path));
-    Ok(s)
+    Ok(ortx!(b.with_execution_providers([ep.build().error_on_failure()])))
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-pub(crate) fn gpu_session(_path: &Path, _choice: Option<GpuPreference>) -> Result<Session> {
+fn gpu_builder(_choice: Option<GpuPreference>) -> Result<SessionBuilder> {
     bail!("GPU inference is only available on Windows (DirectML) and Linux (WebGPU)")
 }
 

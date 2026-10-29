@@ -9,19 +9,25 @@
 // background colour, not black (black padding made a bar or a "。" at the end of lines in our
 // tests), and a line longer than 960 columns is read in overlapping windows, as meikiocr reads
 // long columns, instead of being shrunk.
+//
+// On the GPU the models run with one change (`for_gpu`): DirectML multiplies a matrix by a 1-D
+// weight wrongly (D-FINE's box integral, measured on 2026-10-28 with ONNX Runtime 1.24.4 on an AMD
+// Radeon: every character wrong, no error), so that weight is given as a one-column matrix, which
+// the Reshape after it turns into the same thing. The files on disk are not changed.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use image::imageops::FilterType;
 use image::RgbaImage;
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
 use super::models::MEIKI;
-use super::paddle::{cpu_session, gpu_session, BoxReader, Glyph, InferenceSession};
+use super::paddle::{cpu_session, gpu_session_from_memory, BoxReader, Glyph, InferenceSession};
 use crate::settings::GpuPreference;
 
 /// The line model's input: 32 rows of 960 columns, at most 48 characters.
@@ -64,7 +70,12 @@ impl MeikiRec {
                 bail!("MeikiOCR model not found: {}", path.display());
             }
             let (session, on_gpu) = if gpu {
-                match gpu_session(&path, choice) {
+                let model = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+                let fixed = for_gpu(&model).unwrap_or_else(|e| {
+                    log::warn!("MeikiOCR's {stage} model is used as it is on the GPU: {e:#}");
+                    None
+                });
+                match gpu_session_from_memory(fixed.as_deref().unwrap_or(&model), choice) {
                     Ok(s) => (s, true),
                     Err(e) => {
                         log::warn!("Ocr.GpuFallback.{stage}: {e:#}");
@@ -258,9 +269,263 @@ fn suppress(mut glyphs: Vec<Glyph>) -> Vec<Glyph> {
     kept
 }
 
+// ---------------------------------------------------------------------------- the GPU's change
+
+/// The model with every 1-D weight of a MatMul given as a one-column matrix, when only Reshapes
+/// read those MatMuls' products (so nothing downstream changes); `None` when there is none. ONNX's
+/// protobuf is read and written field by field, the rest kept byte for byte.
+fn for_gpu(model: &[u8]) -> Result<Option<Vec<u8>>> {
+    // ModelProto.graph; GraphProto.node and .initializer; NodeProto.input, .output and .op_type;
+    // TensorProto.dims and .name.
+    const GRAPH: u64 = 7;
+    const NODE: u64 = 1;
+    const INITIALIZER: u64 = 5;
+    const INPUT: u64 = 1;
+    const OUTPUT: u64 = 2;
+    const OP_TYPE: u64 = 4;
+    const DIMS: u64 = 1;
+    const NAME: u64 = 8;
+
+    let top = fields(model)?;
+    let graph = top.iter().find(|f| f.number == GRAPH && f.wire == 2).context("the model has no graph")?;
+    let graph_fields = fields(graph.payload)?;
+    let mut nodes: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+    for f in graph_fields.iter().filter(|f| f.number == NODE && f.wire == 2) {
+        let (mut op, mut inputs, mut outputs) = (String::new(), Vec::new(), Vec::new());
+        for g in fields(f.payload)?.into_iter().filter(|g| g.wire == 2) {
+            let text = String::from_utf8_lossy(g.payload).into_owned();
+            match g.number {
+                INPUT => inputs.push(text),
+                OUTPUT => outputs.push(text),
+                OP_TYPE => op = text,
+                _ => {}
+            }
+        }
+        nodes.push((op, inputs, outputs));
+    }
+    let mut readers: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (op, inputs, _) in &nodes {
+        for i in inputs {
+            readers.entry(i.as_str()).or_default().push(op.as_str());
+        }
+    }
+    let only_reshapes = |value: &str| readers.get(value).is_some_and(|r| !r.is_empty() && r.iter().all(|op| *op == "Reshape"));
+    let weights: HashSet<&str> = nodes
+        .iter()
+        .filter(|(op, inputs, _)| op == "MatMul" && inputs.len() == 2)
+        .map(|(_, inputs, _)| inputs[1].as_str())
+        .filter(|w| {
+            readers[w].iter().all(|op| *op == "MatMul")
+                && nodes
+                    .iter()
+                    .filter(|(op, inputs, _)| op == "MatMul" && inputs.iter().any(|i| i == w))
+                    .all(|(_, inputs, outputs)| inputs[0] != *w && outputs.iter().all(|o| only_reshapes(o)))
+        })
+        .collect();
+
+    let mut changed = false;
+    let mut graph_out = Vec::with_capacity(graph.payload.len() + 64);
+    for f in &graph_fields {
+        if f.number == INITIALIZER && f.wire == 2 {
+            let tensor = fields(f.payload)?;
+            let name = tensor.iter().find(|t| t.number == NAME && t.wire == 2).map(|t| t.payload);
+            let mut dims = Vec::new();
+            for t in tensor.iter().filter(|t| t.number == DIMS) {
+                match t.wire {
+                    0 => dims.push(varint(t.payload, &mut 0)?),
+                    2 => {
+                        let mut at = 0;
+                        while at < t.payload.len() {
+                            dims.push(varint(t.payload, &mut at)?);
+                        }
+                    }
+                    _ => bail!("a tensor's dims are not integers"),
+                }
+            }
+            if dims.len() == 1 && name.is_some_and(|n| std::str::from_utf8(n).is_ok_and(|n| weights.contains(n))) {
+                let mut out = Vec::with_capacity(f.payload.len() + 4);
+                for d in [dims[0], 1] {
+                    put_varint(&mut out, DIMS << 3);
+                    put_varint(&mut out, d);
+                }
+                for t in tensor.iter().filter(|t| t.number != DIMS) {
+                    out.extend_from_slice(t.raw);
+                }
+                put_field(&mut graph_out, INITIALIZER, &out);
+                changed = true;
+                continue;
+            }
+        }
+        graph_out.extend_from_slice(f.raw);
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut out = Vec::with_capacity(model.len() + 64);
+    for f in &top {
+        if f.number == GRAPH && f.wire == 2 {
+            put_field(&mut out, GRAPH, &graph_out);
+        } else {
+            out.extend_from_slice(f.raw);
+        }
+    }
+    Ok(Some(out))
+}
+
+/// A protobuf field: its number, wire type, its bytes as they are and its value's (a varint's, or
+/// what a length-delimited field holds).
+struct Field<'a> {
+    number: u64,
+    wire: u8,
+    raw: &'a [u8],
+    payload: &'a [u8],
+}
+
+fn fields(buf: &[u8]) -> Result<Vec<Field<'_>>> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < buf.len() {
+        let start = at;
+        let key = varint(buf, &mut at)?;
+        let wire = (key & 7) as u8;
+        let value = at;
+        let end = match wire {
+            0 => {
+                varint(buf, &mut at)?;
+                at
+            }
+            1 => at + 8,
+            2 => {
+                let len = usize::try_from(varint(buf, &mut at)?)?;
+                at.checked_add(len).context("a field longer than the model")?
+            }
+            5 => at + 4,
+            _ => bail!("the model is not protobuf (wire type {wire})"),
+        };
+        if end > buf.len() {
+            bail!("the model ends inside a field");
+        }
+        let payload = if wire == 2 { &buf[at..end] } else { &buf[value..end] };
+        at = end;
+        out.push(Field { number: key >> 3, wire, raw: &buf[start..end], payload });
+    }
+    Ok(out)
+}
+
+fn varint(buf: &[u8], at: &mut usize) -> Result<u64> {
+    let mut v = 0u64;
+    for shift in (0..64).step_by(7) {
+        let b = *buf.get(*at).context("the model ends inside a number")?;
+        *at += 1;
+        v |= u64::from(b & 0x7f) << shift;
+        if b & 0x80 == 0 {
+            return Ok(v);
+        }
+    }
+    bail!("a number in the model is too long")
+}
+
+fn put_varint(out: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        out.push(v as u8 | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
+}
+
+/// A length-delimited field.
+fn put_field(out: &mut Vec<u8>, number: u64, payload: &[u8]) {
+    put_varint(out, number << 3 | 2);
+    put_varint(out, payload.len() as u64);
+    out.extend_from_slice(payload);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type Value = std::result::Result<u64, Vec<u8>>;
+
+    /// A protobuf message from its fields: a varint, or the bytes of a length-delimited one.
+    fn message(fields: &[(u64, Value)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (n, v) in fields {
+            match v {
+                Ok(v) => {
+                    put_varint(&mut out, n << 3);
+                    put_varint(&mut out, *v);
+                }
+                Err(bytes) => put_field(&mut out, *n, bytes),
+            }
+        }
+        out
+    }
+
+    fn text(s: &str) -> Value {
+        Err(s.as_bytes().to_vec())
+    }
+
+    fn node(op: &str, inputs: &[&str], output: &str) -> Value {
+        let mut f: Vec<(u64, Value)> = inputs.iter().map(|i| (1, text(i))).collect();
+        f.push((2, text(output)));
+        f.push((4, text(op)));
+        Err(message(&f))
+    }
+
+    const RAW: [u8; 12] = [0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64];
+
+    fn tensor(name: &str, dims: &[u64]) -> Value {
+        let mut f: Vec<(u64, Value)> = dims.iter().map(|d| (1, Ok(*d))).collect();
+        f.push((2, Ok(1)));
+        f.push((8, text(name)));
+        f.push((9, Err(RAW.to_vec())));
+        Err(message(&f))
+    }
+
+    /// The dims of each initializer of a model.
+    fn dims_of(model: &[u8]) -> HashMap<String, Vec<u64>> {
+        let top = fields(model).unwrap();
+        let graph = top.iter().find(|f| f.number == 7).unwrap();
+        let mut out = HashMap::new();
+        for f in fields(graph.payload).unwrap().into_iter().filter(|f| f.number == 5) {
+            let t = fields(f.payload).unwrap();
+            let name = String::from_utf8(t.iter().find(|x| x.number == 8).unwrap().payload.to_vec()).unwrap();
+            assert_eq!(t.iter().find(|x| x.number == 9).unwrap().payload, &RAW[..], "the weights are kept");
+            out.insert(name, t.iter().filter(|x| x.number == 1).map(|x| varint(x.payload, &mut 0).unwrap()).collect());
+        }
+        out
+    }
+
+    #[test]
+    fn a_1d_matmul_weight_read_only_through_reshapes_becomes_a_column_on_the_gpu() {
+        let graph = message(&[
+            (1, node("MatMul", &["x", "w"], "y")),
+            (1, node("Reshape", &["y", "shape"], "z")),
+            (1, node("MatMul", &["x", "w"], "y2")),
+            (1, node("Reshape", &["y2", "shape"], "z2")),
+            // Its product added to something: [n] and [n, 1] would broadcast differently.
+            (1, node("MatMul", &["x", "v"], "u")),
+            (1, node("Add", &["u", "b"], "out")),
+            (2, text("graph")),
+            (5, tensor("w", &[3])),
+            (5, tensor("v", &[3])),
+            (5, tensor("m", &[3, 2])),
+        ]);
+        let model = message(&[(1, Ok(8)), (7, Err(graph)), (8, Err(message(&[(2, Ok(16))])))]);
+        let fixed = for_gpu(&model).unwrap().expect("w changes");
+        let dims = dims_of(&fixed);
+        assert_eq!(dims["w"], vec![3, 1]);
+        assert_eq!(dims["v"], vec![3], "read by an Add");
+        assert_eq!(dims["m"], vec![3, 2]);
+        // The other fields are kept: the IR version and the opset.
+        let (before, after) = (fields(&model).unwrap(), fields(&fixed).unwrap());
+        assert_eq!(after[0].raw, before[0].raw);
+        assert_eq!(after.last().unwrap().raw, before.last().unwrap().raw);
+        // Nothing to change: none.
+        let plain = message(&[(7, Err(message(&[(1, node("Add", &["a", "b"], "c")), (5, tensor("a", &[3]))])))]);
+        assert!(for_gpu(&plain).unwrap().is_none());
+        assert!(for_gpu(&[0x0f]).is_err(), "not protobuf");
+    }
 
     fn g(ch: char, from: f32, to: f32, score: f32) -> Glyph {
         Glyph { ch, from, to, score }
@@ -318,6 +583,24 @@ mod tests {
         for l in &lines {
             assert!(l.chars.windows(2).all(|w| w[0].x0 <= w[1].x0 + 0.5), "{}", l.text);
             assert!(l.chars.iter().all(|c| c.x0 >= l.x0 - 1.0 && c.x1 <= l.x1 + 1.0), "{}", l.text);
+        }
+        // The GPU's version of each model reads the same as the file does, here on the CPU.
+        for (name, (w, h)) in [(MEIKI.files[0].name, LINE), (MEIKI.files[1].name, COLUMN)] {
+            let model = std::fs::read(dir.join(name)).unwrap();
+            let fixed = for_gpu(&model).unwrap().expect("the box integral's weight");
+            let data: Vec<f32> = (0..3 * w * h).map(|i| ((i * 7919) % 255) as f32 / 255.0).collect();
+            let read = |bytes: &[u8]| {
+                let mut s = ort::session::Session::builder().unwrap().commit_from_memory(bytes).unwrap();
+                let input = Tensor::from_array(([1usize, 3, h, w], data.clone())).unwrap();
+                let sizes = Tensor::from_array(([1usize, 2], vec![w as i64, h as i64])).unwrap();
+                let out = s.run(ort::inputs![input.view(), sizes.view()]).unwrap();
+                let (_, codes) = out["char_codes"].try_extract_tensor::<i32>().unwrap();
+                let (_, scores) = out["scores"].try_extract_tensor::<f32>().unwrap();
+                (codes.to_vec(), scores.to_vec())
+            };
+            let (a, b) = (read(&model), read(&fixed));
+            assert_eq!(a.0, b.0, "{name}");
+            assert!(a.1.iter().zip(&b.1).all(|(x, y)| (x - y).abs() < 1e-4), "{name}");
         }
     }
 
