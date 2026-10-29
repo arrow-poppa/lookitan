@@ -224,7 +224,7 @@ impl IndraRec {
             }
             prev = id;
         }
-        if glyphs.is_empty() || sum / read.max(1) as f32 < MIN_CONFIDENCE {
+        if glyphs.is_empty() || sum / (read.max(1) as f32) < MIN_CONFIDENCE {
             return Vec::new();
         }
         glyphs

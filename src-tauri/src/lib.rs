@@ -771,7 +771,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         OcrEngineKind::ScreenAi => Some(("Chrome ScreenAI", cached_page(state, key, || state.screenai.recognize(image)))),
         OcrEngineKind::OneOcr => Some(("OneOCR", cached_page(state, key, || state.oneocr.recognize(image)))),
         OcrEngineKind::Bing => Some(("Bing", cached_page(state, key, || bing_engine(state)?.recognize(image)))),
-        OcrEngineKind::Paddle | OcrEngineKind::Meiki => None,
+        OcrEngineKind::Paddle | OcrEngineKind::Meiki | OcrEngineKind::Indra => None,
     };
     if let Some((name, read)) = page {
         match read {
