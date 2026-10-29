@@ -22,6 +22,8 @@ pub enum OcrEngineKind {
     /// Microsoft's OneOCR from the Snipping Tool (ocr/oneocr.rs), Windows only, in a helper
     /// process; its files are copied from the installed Snipping Tool when it is chosen.
     OneOcr,
+    /// Bing's visual search OCR over the network (ocr/bing.rs).
+    Bing,
 }
 
 impl From<String> for OcrEngineKind {
@@ -32,6 +34,7 @@ impl From<String> for OcrEngineKind {
             "meiki" => Self::Meiki,
             "screenai" => Self::ScreenAi,
             "oneocr" => Self::OneOcr,
+            "bing" => Self::Bing,
             other => {
                 log::warn!("unknown OCR engine {other:?}; using PP-OCRv6");
                 Self::Paddle
@@ -679,6 +682,7 @@ mod tests {
         let oneocr: Settings = serde_json::from_str(r#"{"screenOcrEngine": "oneocr"}"#).unwrap();
         assert!(oneocr.wants(OcrEngineKind::OneOcr) && !oneocr.wants(OcrEngineKind::Lens));
         assert_eq!(serde_json::to_value(OcrEngineKind::OneOcr).unwrap(), "oneocr");
+        assert_eq!(serde_json::from_str::<OcrEngineKind>(r#""bing""#).unwrap(), OcrEngineKind::Bing);
     }
 
     #[test]

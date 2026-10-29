@@ -755,6 +755,8 @@ function render(root) {
     const windows = (status?.session || 'windows') === 'windows';
     const engineDesc = (engine) => engine === 'lens'
         ? 'Envia a captura ao Google (API não oficial). Se falhar, o PP-OCRv6 assume.'
+        : engine === 'bing'
+        ? 'Envia a captura à Microsoft, pelo site do Bing (não é uma API oficial e pode mudar sem aviso), como o owocr faz. Se falhar, o PP-OCRv6 assume.'
         : engine === 'meiki'
             ? `A detecção do PP-OCRv6 acha as linhas e o MeikiOCR, treinado em texto de jogos japoneses, as lê. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, o PP-OCRv6 lê.' : 'Ele lê só japonês: neste idioma, o PP-OCRv6 lê no lugar.'}`
             : engine === 'oneocr'
@@ -770,6 +772,7 @@ function render(root) {
         // OneOCR is the Windows Snipping Tool's.
         ...(windows || value === 'oneocr' ? [{value: 'oneocr', label: 'OneOCR (local, do Windows)'}] : []),
         {value: 'lens', label: 'Google Lens (nuvem)'},
+        {value: 'bing', label: 'Bing (nuvem)'},
     ], value, (v) => { set(v); save(); rerender(); });
     root.append(heading('OCR'), el('div', {class: 'group'},
         cardRow({icon: 'scan', title: 'OCR em volta do cursor', desc: `Lê a palavra sob o cursor. ${engineDesc(s.ocrEngine)}`, wide: true,

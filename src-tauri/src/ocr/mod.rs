@@ -9,6 +9,7 @@ macro_rules! ortx {
 }
 
 pub mod lens;
+pub mod bing;
 pub mod cache;
 pub mod helper;
 pub mod ink;

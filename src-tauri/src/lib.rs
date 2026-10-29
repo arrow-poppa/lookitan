@@ -41,6 +41,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::cards::CardStore;
 use crate::dict::{DictList, Dictionary, EntryRef};
+use crate::ocr::bing::BingOcr;
 use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
 use crate::ocr::meiki::MeikiRec;
@@ -98,6 +99,7 @@ pub struct AppState {
     engine_error: RwLock<Option<String>>,
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
     lens: Mutex<Option<Arc<LensOcr>>>,
+    bing: Mutex<Option<Arc<BingOcr>>>,
     /// MeikiOCR's recognizer, and whether it was asked for the GPU.
     meiki: Mutex<Option<(bool, Arc<MeikiRec>)>>,
     /// Chrome ScreenAI's and OneOCR's helper processes, started with their first lookup.
@@ -315,6 +317,16 @@ fn ensure_paddle(state: &AppState) -> Result<Arc<PaddleOcr>> {
             Err(e)
         }
     }
+}
+
+fn bing_engine(state: &AppState) -> Result<Arc<BingOcr>> {
+    let mut slot = state.bing.lock();
+    if let Some(b) = slot.as_ref() {
+        return Ok(b.clone());
+    }
+    let b = Arc::new(BingOcr::new()?);
+    *slot = Some(b.clone());
+    Ok(b)
 }
 
 fn lens_engine(state: &AppState) -> Result<Arc<LensOcr>> {
@@ -755,6 +767,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         }))),
         OcrEngineKind::ScreenAi => Some(("Chrome ScreenAI", cached_page(state, key, || state.screenai.recognize(image)))),
         OcrEngineKind::OneOcr => Some(("OneOCR", cached_page(state, key, || state.oneocr.recognize(image)))),
+        OcrEngineKind::Bing => Some(("Bing", cached_page(state, key, || bing_engine(state)?.recognize(image)))),
         OcrEngineKind::Paddle | OcrEngineKind::Meiki => None,
     };
     if let Some((name, read)) = page {
@@ -2188,6 +2201,7 @@ pub fn run() {
                 engine_error: RwLock::new(None),
                 ort_ready: Mutex::new(None),
                 lens: Mutex::new(None),
+                bing: Mutex::new(None),
                 meiki: Mutex::new(None),
                 screenai: ScreenAi::default(),
                 oneocr: OneOcr::default(),

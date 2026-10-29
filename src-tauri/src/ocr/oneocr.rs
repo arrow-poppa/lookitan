@@ -277,16 +277,21 @@ impl OneOcr {
         let Some(bytes) = answer else { bail!("ele não leu esta imagem") };
         let lines: Vec<Line> = serde_json::from_slice(&bytes).context("read OneOCR's answer")?;
         let mut out = to_lines(&lines, k);
-        // Word edges snap to the ink, as Lens's do: level lines drawn left to right only.
-        for line in out.iter_mut().filter(|l| l.tilt.is_none() && !is_rtl_text(l.chars.iter().map(|c| c.ch))) {
-            super::lens::snap_to_ink(img, line);
-        }
+        snap_level_lines(img, &mut out);
         Ok(out)
     }
 
     /// Ends the helper now (before its files are deleted).
     pub fn stop(&self) {
         self.helper.stop();
+    }
+}
+
+/// Snaps the word edges of `lines` to the ink, as Lens's are: level lines drawn left to right only
+/// (`to_lines` lays a word's letters evenly over its box).
+pub(crate) fn snap_level_lines(img: &RgbaImage, lines: &mut [OcrLine]) {
+    for line in lines.iter_mut().filter(|l| l.tilt.is_none() && !is_rtl_text(l.chars.iter().map(|c| c.ch))) {
+        super::lens::snap_to_ink(img, line);
     }
 }
 

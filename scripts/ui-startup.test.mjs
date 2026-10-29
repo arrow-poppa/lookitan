@@ -685,13 +685,13 @@ test('MeikiOCR is offered for Japanese only, ScreenAI always and OneOCR on Windo
         return descendants(row).filter((node) => node.tagName === 'option').map((node) => node.value);
     };
     const english = await settingsFixture({ocrLanguage: 'en-US', ocrEngine: 'paddle'});
-    assert.deepEqual(offered(english.root, 'OCR em volta do cursor'), ['paddle', 'screenai', 'oneocr', 'lens']);
+    assert.deepEqual(offered(english.root, 'OCR em volta do cursor'), ['paddle', 'screenai', 'oneocr', 'lens', 'bing']);
     await english.finish();
 
     const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'paddle', screenOcrEngine: null});
     const {root, settings} = fixture;
     const modelsRow = () => descendants(root).some((node) => node.className === 'card-row' && node.textContent.includes('Modelos do MeikiOCR'));
-    assert.deepEqual(offered(root, 'OCR em volta do cursor'), ['paddle', 'meiki', 'screenai', 'oneocr', 'lens']);
+    assert.deepEqual(offered(root, 'OCR em volta do cursor'), ['paddle', 'meiki', 'screenai', 'oneocr', 'lens', 'bing']);
     assert(!modelsRow());
     const control = () => descendants(descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes('OCR em volta do cursor')))
         .find((node) => node.tagName === 'select');
