@@ -45,6 +45,7 @@ use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
 use crate::ocr::meiki::MeikiRec;
 use crate::ocr::models;
+use crate::ocr::oneocr::OneOcr;
 use crate::ocr::screenai::ScreenAi;
 use crate::ocr::paddle::{recognize_boxes_with, split_focus, EnginePlan, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
@@ -99,8 +100,9 @@ pub struct AppState {
     lens: Mutex<Option<Arc<LensOcr>>>,
     /// MeikiOCR's recognizer, and whether it was asked for the GPU.
     meiki: Mutex<Option<(bool, Arc<MeikiRec>)>>,
-    /// Chrome ScreenAI's helper process, started with its first lookup.
+    /// Chrome ScreenAI's and OneOCR's helper processes, started with their first lookup.
     screenai: ScreenAi,
+    oneocr: OneOcr,
     /// Each downloaded engine's download while it runs, or why it failed (`Downloaded::id`).
     downloads: Mutex<HashMap<&'static str, String>>,
     recognition: Mutex<Option<Recognition>>,
@@ -752,6 +754,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
             lens_engine(state)?.recognize(image, &settings.lens_api_key, &settings.ocr_language)
         }))),
         OcrEngineKind::ScreenAi => Some(("Chrome ScreenAI", cached_page(state, key, || state.screenai.recognize(image)))),
+        OcrEngineKind::OneOcr => Some(("OneOCR", cached_page(state, key, || state.oneocr.recognize(image)))),
         OcrEngineKind::Paddle | OcrEngineKind::Meiki => None,
     };
     if let Some((name, read)) = page {
@@ -878,6 +881,8 @@ fn meiki_engine(state: &AppState, settings: &Settings) -> Result<Arc<MeikiRec>> 
 enum Downloaded {
     Meiki,
     ScreenAi,
+    /// Copied from the Snipping Tool installed here, not downloaded.
+    OneOcr,
 }
 
 /// A downloaded engine's files, for Settings › OCR.
@@ -892,13 +897,14 @@ pub struct ModelState {
 const DOWNLOADING: &str = "estão sendo baixados";
 
 impl Downloaded {
-    const ALL: [Downloaded; 2] = [Downloaded::Meiki, Downloaded::ScreenAi];
+    const ALL: [Downloaded; 3] = [Downloaded::Meiki, Downloaded::ScreenAi, Downloaded::OneOcr];
 
     /// Its name in Settings and in the `models` map: the engine's own (`OcrEngineKind`).
     fn id(self) -> &'static str {
         match self {
             Downloaded::Meiki => "meiki",
             Downloaded::ScreenAi => "screenai",
+            Downloaded::OneOcr => "oneocr",
         }
     }
 
@@ -907,13 +913,18 @@ impl Downloaded {
     }
 
     fn supported(self) -> bool {
-        self != Downloaded::ScreenAi || ocr::screenai::supported()
+        match self {
+            Downloaded::Meiki => true,
+            Downloaded::ScreenAi => ocr::screenai::supported(),
+            Downloaded::OneOcr => ocr::oneocr::supported(),
+        }
     }
 
     fn installed(self) -> bool {
         match self {
             Downloaded::Meiki => models::MEIKI.installed(),
             Downloaded::ScreenAi => ocr::screenai::installed(),
+            Downloaded::OneOcr => ocr::oneocr::installed(),
         }
     }
 
@@ -921,6 +932,8 @@ impl Downloaded {
         match self {
             Downloaded::Meiki => models::MEIKI.bytes(),
             Downloaded::ScreenAi => ocr::screenai::bytes(),
+            // About the Snipping Tool 11.2608's three files.
+            Downloaded::OneOcr => 105_000_000,
         }
     }
 
@@ -928,6 +941,7 @@ impl Downloaded {
         match self {
             Downloaded::Meiki => models::MEIKI.ensure(progress).map(|_| ()),
             Downloaded::ScreenAi => ocr::screenai::ensure(progress),
+            Downloaded::OneOcr => ocr::oneocr::install(progress),
         }
     }
 
@@ -941,6 +955,10 @@ impl Downloaded {
             Downloaded::ScreenAi => {
                 state.screenai.stop();
                 ocr::screenai::remove()
+            }
+            Downloaded::OneOcr => {
+                state.oneocr.stop();
+                ocr::oneocr::remove()
             }
         }
     }
@@ -1522,9 +1540,12 @@ fn warm_engine_in_background(app: &AppHandle) {
                 download_models(&app, Downloaded::Meiki);
             }
         }
-        // ScreenAI's helper starts with its first lookup; only its files are fetched here.
-        if settings.wants_screenai() && Downloaded::ScreenAi.supported() && !Downloaded::ScreenAi.installed() {
-            download_models(&app, Downloaded::ScreenAi);
+        // ScreenAI's and OneOCR's helpers start with their first lookup; only their files are
+        // fetched (copied, for OneOCR) here.
+        for (kind, which) in [(OcrEngineKind::ScreenAi, Downloaded::ScreenAi), (OcrEngineKind::OneOcr, Downloaded::OneOcr)] {
+            if settings.wants(kind) && which.supported() && !which.installed() {
+                download_models(&app, which);
+            }
         }
         let _ = app.emit("engine-status", ());
     });
@@ -2119,11 +2140,10 @@ pub fn run() {
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // Chrome ScreenAI's helper process (ocr/screenai.rs): this executable, without the app.
+    // An OCR library's helper process (ocr/helper.rs): this executable, without the app.
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    if let Some(i) = args.iter().position(|a| a == ocr::screenai::HELPER_ARG) {
-        let dir = args.get(i + 1).map(PathBuf::from).unwrap_or_default();
-        std::process::exit(ocr::screenai::helper_main(&dir));
+    if let Some(i) = args.iter().position(|a| a == ocr::helper::ARG) {
+        std::process::exit(ocr::helper::main(&args[i + 1..]));
     }
 
     let wants_scan = std::env::args().any(|a| a == "--scan");
@@ -2170,6 +2190,7 @@ pub fn run() {
                 lens: Mutex::new(None),
                 meiki: Mutex::new(None),
                 screenai: ScreenAi::default(),
+                oneocr: OneOcr::default(),
                 downloads: Mutex::new(HashMap::new()),
                 recognition: Mutex::new(None),
                 ocr_cache: Mutex::new(OcrCache::default()),

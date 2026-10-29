@@ -298,6 +298,10 @@ const DOWNLOADED_ENGINES = {
         desc: 'A biblioteca de OCR do Chrome, do Google, baixada do repositório de pacotes do Chromium (CIPD), como o owocr faz: uma versão fixa, conferida. Não é software livre e não tem licença própria. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
         removeAsk: 'Apagar os arquivos do Chrome ScreenAI? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
         removeTitle: 'Apagar o Chrome ScreenAI'},
+    oneocr: {title: 'Arquivos do OneOCR (do Recorte do Windows)',
+        desc: 'O OCR do Recorte do Windows 11, da Microsoft: copiados do Recorte instalado neste computador, como o owocr faz (precisa do Recorte atualizado da Microsoft Store). Não é software livre. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
+        removeAsk: 'Apagar a cópia dos arquivos do OneOCR? Enquanto não forem copiados de novo, o PP-OCRv6 lê no lugar dele.',
+        removeTitle: 'Apagar o OneOCR', action: 'Copiar do Recorte', done: 'copiados'},
 };
 
 /** The files of the chosen engines that are downloaded: their state, with a button to download or
@@ -323,7 +327,7 @@ function modelsRow(engine) {
     const model = status?.models?.[engine];
     const downloading = /^estão sendo baixados/.test(model?.download || '');
     const device = engine === 'meiki' && status?.meikiOnGpu != null ? ` · reconhecimento na ${status.meikiOnGpu ? 'GPU' : 'CPU'}` : '';
-    const state = model?.installed ? `baixados${device}` : (model?.download || 'não baixados');
+    const state = model?.installed ? `${info.done || 'baixados'}${device}` : (model?.download || `não ${info.done || 'baixados'}`);
     const error = el('div', {class: 'd', style: 'color: var(--danger)', hidden: true});
     const run = async (button, action) => {
         error.hidden = true;
@@ -341,7 +345,7 @@ function modelsRow(engine) {
             await api.removeOcrModels(engine);
         }));
     } else {
-        button = el('button', {html: `${icon('download', 'sm')}Baixar`, disabled: downloading});
+        button = el('button', {html: `${icon('download', 'sm')}${info.action || 'Baixar'}`, disabled: downloading});
         button.addEventListener('click', () => void run(button, () => api.installOcrModels(engine)));
     }
     row.append(el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('download')}),
@@ -748,10 +752,13 @@ function render(root) {
     const screenEngine = s.screenOcrEngine ?? s.ocrEngine;
     const usesLens = screenEngine === 'lens' || s.ocrEngine === 'lens';
     const japanese = s.ocrLanguage === 'ja-JP';
+    const windows = (status?.session || 'windows') === 'windows';
     const engineDesc = (engine) => engine === 'lens'
         ? 'Envia a captura ao Google (API não oficial). Se falhar, o PP-OCRv6 assume.'
         : engine === 'meiki'
             ? `A detecção do PP-OCRv6 acha as linhas e o MeikiOCR, treinado em texto de jogos japoneses, as lê. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, o PP-OCRv6 lê.' : 'Ele lê só japonês: neste idioma, o PP-OCRv6 lê no lugar.'}`
+            : engine === 'oneocr'
+                ? 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador. Roda no seu computador, nada sai dele; sem os arquivos, o PP-OCRv6 lê.'
             : engine === 'screenai'
                 ? 'A biblioteca de OCR do Chrome, que reconhece qualquer idioma e acha o de cada linha sozinha. Roda no seu computador, nada sai dele; sem os arquivos baixados, o PP-OCRv6 lê.'
                 : 'Roda no seu computador; nada sai dele.';
@@ -760,6 +767,8 @@ function render(root) {
         {value: 'paddle', label: 'PP-OCRv6 (local)'},
         ...(japanese || value === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (local, japonês)'}] : []),
         {value: 'screenai', label: 'Chrome ScreenAI (local, qualquer idioma)'},
+        // OneOCR is the Windows Snipping Tool's.
+        ...(windows || value === 'oneocr' ? [{value: 'oneocr', label: 'OneOCR (local, do Windows)'}] : []),
         {value: 'lens', label: 'Google Lens (nuvem)'},
     ], value, (v) => { set(v); save(); rerender(); });
     root.append(heading('OCR'), el('div', {class: 'group'},

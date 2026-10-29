@@ -10,10 +10,12 @@ macro_rules! ortx {
 
 pub mod lens;
 pub mod cache;
+pub mod helper;
 pub mod ink;
 mod lens_proto;
 pub mod meiki;
 pub mod models;
+pub mod oneocr;
 pub mod paddle;
 pub mod quad;
 pub mod screenai;
@@ -188,6 +190,29 @@ pub fn rec_model(tag: &str, small: &[String], experimental: &[String]) -> &'stat
         Some(model) if listed(experimental) => model,
         _ if l.rec == "rec_tiny" && listed(small) => "rec_small",
         _ => l.rec,
+    }
+}
+
+/// A line's text with each character on its span from the engine (`glyphs`, in order); a character
+/// of the text the engine gave no span (a space between words) gets an empty one where the previous
+/// one ends. When the glyphs do not spell the text, the glyphs are the line.
+pub(crate) fn align(text: &str, glyphs: &[(char, f32, f32)]) -> Vec<OcrChar> {
+    let mut out = Vec::with_capacity(text.chars().count());
+    let mut k = 0;
+    let mut end = glyphs.first().map_or(0.0, |g| g.1);
+    for ch in text.chars() {
+        if let Some(&(g, from, to)) = glyphs.get(k).filter(|g| g.0 == ch) {
+            out.push(OcrChar { ch: g, x0: from.min(to), x1: from.max(to) });
+            end = to;
+            k += 1;
+        } else {
+            out.push(OcrChar { ch, x0: end, x1: end });
+        }
+    }
+    if k == glyphs.len() {
+        out
+    } else {
+        glyphs.iter().map(|&(ch, from, to)| OcrChar { ch, x0: from.min(to), x1: from.max(to) }).collect()
     }
 }
 

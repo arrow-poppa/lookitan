@@ -19,6 +19,9 @@ pub enum OcrEngineKind {
     /// Chrome's Screen AI library (ocr/screenai.rs), any language, in a helper process; its files
     /// are downloaded when it is chosen.
     ScreenAi,
+    /// Microsoft's OneOCR from the Snipping Tool (ocr/oneocr.rs), Windows only, in a helper
+    /// process; its files are copied from the installed Snipping Tool when it is chosen.
+    OneOcr,
 }
 
 impl From<String> for OcrEngineKind {
@@ -28,6 +31,7 @@ impl From<String> for OcrEngineKind {
             "lens" => Self::Lens,
             "meiki" => Self::Meiki,
             "screenai" => Self::ScreenAi,
+            "oneocr" => Self::OneOcr,
             other => {
                 log::warn!("unknown OCR engine {other:?}; using PP-OCRv6");
                 Self::Paddle
@@ -285,6 +289,11 @@ impl Settings {
     /// Whether either engine is Chrome ScreenAI.
     pub fn wants_screenai(&self) -> bool {
         self.ocr_engine == OcrEngineKind::ScreenAi || self.screen_ocr_engine == Some(OcrEngineKind::ScreenAi)
+    }
+
+    /// Whether either engine is `kind`.
+    pub fn wants(&self, kind: OcrEngineKind) -> bool {
+        self.ocr_engine == kind || self.screen_ocr_engine == Some(kind)
     }
 
     pub fn engine_for(&self, whole_screen: bool) -> OcrEngineKind {
@@ -667,6 +676,9 @@ mod tests {
         let screenai: Settings = serde_json::from_str(r#"{"ocrEngine": "screenai"}"#).unwrap();
         assert!(screenai.wants_screenai() && !screenai.wants_meiki());
         assert_eq!(serde_json::to_value(OcrEngineKind::ScreenAi).unwrap(), "screenai");
+        let oneocr: Settings = serde_json::from_str(r#"{"screenOcrEngine": "oneocr"}"#).unwrap();
+        assert!(oneocr.wants(OcrEngineKind::OneOcr) && !oneocr.wants(OcrEngineKind::Lens));
+        assert_eq!(serde_json::to_value(OcrEngineKind::OneOcr).unwrap(), "oneocr");
     }
 
     #[test]

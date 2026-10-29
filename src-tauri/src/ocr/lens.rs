@@ -195,7 +195,7 @@ const INK_REACH: f32 = 0.15;
 /// near Lens's word box and never past halfway to the next word. Spaces fill the gaps between
 /// words. Lens's boxes are loose and a little off, so without this the highlight did not hug the
 /// word. Vertical lines and crops with no clear ink keep Lens's boxes.
-fn snap_to_ink(img: &RgbaImage, line: &mut OcrLine) {
+pub(crate) fn snap_to_ink(img: &RgbaImage, line: &mut OcrLine) {
     let (iw, ih) = img.dimensions();
     let height = line.y1 - line.y0;
     if line.vertical() || height <= 0.0 || height > (line.x1 - line.x0) * 1.5 {

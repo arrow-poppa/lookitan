@@ -7,42 +7,25 @@
 // the zip's, and downloaded only when the user picks the engine; it is not in the installers. The
 // package carries the licences of what it is built from, none of its own: it is Google's.
 //
-// It runs in a helper process, this executable started with `--screenai-helper <folder>`, as
-// Chrome runs it in a utility process: it has no shutdown and can be initialized once per process,
-// a crash or a hang there cannot take Lookitan down, and ending the process gives its memory back.
-// The helper ends after `IDLE` without a request, or when a request takes longer than `TIMEOUT`
-// (Chrome's 10 s), and starts again with the next one.
-//
-// Protocol on the helper's stdin/stdout, little-endian: once loaded it writes the library's major
-// and minor version and its largest image side (3 × u32). Each request is width, height (u32) and
-// the RGBA pixels; each answer is a status (0: the serialized `VisualAnnotation` follows, 1: the
-// library read nothing) and a length (u32), then that many bytes.
+// It runs in a helper process (ocr/helper.rs), as Chrome runs it in a utility process: it has no
+// shutdown and can be initialized once per process. Its answers are the serialized
+// `VisualAnnotation`.
 
 use std::ffi::{c_char, c_void, CStr};
-use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use image::imageops::FilterType;
 use image::RgbaImage;
-use parking_lot::Mutex;
 use prost::Message;
 
-use super::{Flow, OcrChar, OcrLine, Tilt};
+use super::helper::Helper;
+use super::{align, Flow, OcrLine, Tilt};
 
-/// The argument that starts this executable as the helper.
-pub const HELPER_ARG: &str = "--screenai-helper";
 const CIPD: &str = "https://chrome-infra-packages.appspot.com/prpc/cipd.Repository/GetInstanceURL";
 /// Chrome needs 140.3 or later (`whitespace_bounding_box`); the pinned packages are 153.05.
 const MIN_VERSION: (u32, u32) = (140, 3);
-const TIMEOUT: Duration = Duration::from_secs(10);
-/// Loading the library and its models takes about a second.
-const START_TIMEOUT: Duration = Duration::from_secs(30);
-const IDLE: Duration = Duration::from_secs(5 * 60);
 /// Lines turned less than this read as level (as quad.rs's `UPRIGHT_ANGLE`).
 const LEVEL: f32 = 2.0 * std::f32::consts::PI / 180.0;
 
@@ -206,17 +189,6 @@ extern "C" fn file_content(name: *const c_char, size: u32, buffer: *mut c_char) 
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), buffer as *mut u8, n) };
 }
 
-/// The helper process: loads the library from `dir` and answers requests until stdin closes.
-pub fn helper_main(dir: &Path) -> i32 {
-    match serve(dir) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("ScreenAI helper: {e:#}");
-            1
-        }
-    }
-}
-
 type PerformFn = unsafe extern "C" fn(*const SkBitmap, *mut u32) -> *mut c_char;
 type FreeFn = unsafe extern "C" fn(*mut c_char);
 
@@ -299,129 +271,22 @@ impl Loaded {
     }
 }
 
-fn serve(dir: &Path) -> Result<()> {
+/// The helper process (`helper::main`): loads the library from `dir` and answers until stdin closes.
+pub fn serve(dir: &Path) -> Result<()> {
     let library = load(dir)?;
-    let ((major, minor), side) = (library.version, library.side);
-    let (mut input, mut output) = (std::io::stdin().lock(), std::io::stdout().lock());
-    for v in [major, minor, side] {
-        output.write_all(&v.to_le_bytes())?;
-    }
-    output.flush()?;
-    loop {
-        let mut head = [0u8; 8];
-        match input.read_exact(&mut head) {
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
-            other => other?,
-        }
-        let w = u32::from_le_bytes(head[0..4].try_into().unwrap());
-        let h = u32::from_le_bytes(head[4..8].try_into().unwrap());
-        if w == 0 || h == 0 || w > side.max(1) * 4 || h > side.max(1) * 4 {
-            bail!("bad image size {w}x{h}");
-        }
-        let mut pixels = vec![0u8; w as usize * h as usize * 4];
-        input.read_exact(&mut pixels)?;
-        match library.read(w, h, &pixels) {
-            None => {
-                output.write_all(&1u32.to_le_bytes())?;
-                output.write_all(&0u32.to_le_bytes())?;
-            }
-            Some(bytes) => {
-                output.write_all(&0u32.to_le_bytes())?;
-                output.write_all(&(bytes.len() as u32).to_le_bytes())?;
-                output.write_all(&bytes)?;
-            }
-        }
-        output.flush()?;
-    }
+    super::helper::serve(library.version, library.side, |w, h, pixels| library.read(w, h, pixels))
 }
 
 // ---------------------------------------------------------------------------------- the app side
 
-struct Helper {
-    child: Arc<Mutex<Child>>,
-    stdin: ChildStdin,
-    stdout: ChildStdout,
-    side: u32,
-    used: Instant,
-}
-
-/// Runs `f`, ending the helper if it takes longer than `limit` (its pipes then close, so `f` fails).
-fn watched<T>(child: &Arc<Mutex<Child>>, limit: Duration, f: impl FnOnce() -> Result<T>) -> Result<T> {
-    let done = Arc::new(AtomicBool::new(false));
-    let (watch, finished) = (child.clone(), done.clone());
-    std::thread::spawn(move || {
-        std::thread::sleep(limit);
-        if !finished.load(Ordering::SeqCst) {
-            log::warn!("ScreenAI took longer than {} s; ending its helper", limit.as_secs());
-            let _ = watch.lock().kill();
-        }
-    });
-    let result = f();
-    done.store(true, Ordering::SeqCst);
-    result
-}
-
-fn read_u32(r: &mut impl Read) -> Result<u32> {
-    let mut b = [0u8; 4];
-    r.read_exact(&mut b)?;
-    Ok(u32::from_le_bytes(b))
-}
-
-impl Helper {
-    fn start() -> Result<Self> {
-        let resources = resources()?;
-        let exe = std::env::current_exe().context("find Lookitan's executable")?;
-        let mut child = Command::new(exe)
-            .arg(HELPER_ARG)
-            .arg(&resources)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            // The library logs every model it loads.
-            .stderr(Stdio::null())
-            .spawn()
-            .context("start the ScreenAI helper")?;
-        let (stdin, mut stdout) = (child.stdin.take().context("helper stdin")?, child.stdout.take().context("helper stdout")?);
-        let child = Arc::new(Mutex::new(child));
-        let hello = watched(&child, START_TIMEOUT, || Ok([read_u32(&mut stdout)?, read_u32(&mut stdout)?, read_u32(&mut stdout)?]));
-        let [major, minor, side] = match hello {
-            Ok(hello) => hello,
-            Err(e) => {
-                let _ = child.lock().kill();
-                return Err(e.context("the ScreenAI helper did not start"));
-            }
-        };
-        log::info!("Chrome ScreenAI {major}.{minor} ready in its helper, images up to {side} px");
-        Ok(Self { child, stdin, stdout, side: side.max(256), used: Instant::now() })
-    }
-
-    /// The library's annotation of `img`, or `None` when it read nothing.
-    fn ask(&mut self, img: &RgbaImage) -> Result<Option<Vec<u8>>> {
-        let (stdin, stdout) = (&mut self.stdin, &mut self.stdout);
-        watched(&self.child, TIMEOUT, || {
-            stdin.write_all(&img.width().to_le_bytes())?;
-            stdin.write_all(&img.height().to_le_bytes())?;
-            stdin.write_all(img.as_raw())?;
-            stdin.flush()?;
-            let status = read_u32(stdout)?;
-            let len = read_u32(stdout)? as usize;
-            let mut bytes = vec![0u8; len];
-            stdout.read_exact(&mut bytes)?;
-            Ok((status == 0).then_some(bytes))
-        })
-    }
-}
-
-impl Drop for Helper {
-    fn drop(&mut self) {
-        let mut child = self.child.lock();
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-}
-
-#[derive(Default)]
 pub struct ScreenAi {
-    helper: Arc<Mutex<Option<Helper>>>,
+    helper: Helper,
+}
+
+impl Default for ScreenAi {
+    fn default() -> Self {
+        Self { helper: Helper::new("Chrome ScreenAI", "screenai") }
+    }
 }
 
 impl ScreenAi {
@@ -430,62 +295,15 @@ impl ScreenAi {
         if !installed() {
             bail!("os arquivos dele não estão baixados (Configurações › OCR)");
         }
-        let mut slot = self.helper.lock();
-        if slot.is_none() {
-            *slot = Some(Helper::start()?);
-            self.end_when_idle();
-        }
-        let helper = slot.as_mut().unwrap();
-        // Larger images are shrunk to the library's largest side, as owocr does; boxes come back
-        // in the shrunk image's pixels.
-        let (w, h) = img.dimensions();
-        let scale = (helper.side as f32 / w.max(h) as f32).min(1.0);
-        let shrunk;
-        let input = if scale < 1.0 {
-            shrunk = image::imageops::resize(img, ((w as f32 * scale).round() as u32).max(1), ((h as f32 * scale).round() as u32).max(1), FilterType::Triangle);
-            &shrunk
-        } else {
-            img
-        };
-        let started = Instant::now();
-        match helper.ask(input) {
-            Ok(answer) => {
-                helper.used = Instant::now();
-                let Some(bytes) = answer else { bail!("a biblioteca não leu esta imagem") };
-                let annotation = VisualAnnotation::decode(bytes.as_slice()).context("decode ScreenAI's answer")?;
-                log::info!("Chrome ScreenAI read {} lines in {} ms", annotation.lines.len(), started.elapsed().as_millis());
-                Ok(to_lines(&annotation, 1.0 / scale))
-            }
-            Err(e) => {
-                // A helper that crashed, hung or broke its pipe starts again with the next request.
-                *slot = None;
-                Err(e)
-            }
-        }
-    }
-
-    /// Ends the helper (and frees its memory) once it has been idle for `IDLE`.
-    fn end_when_idle(&self) {
-        let helper = Arc::downgrade(&self.helper);
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(30));
-            let Some(helper) = helper.upgrade() else { return };
-            let mut slot = helper.lock();
-            match slot.as_ref() {
-                None => return,
-                Some(h) if h.used.elapsed() >= IDLE => {
-                    log::info!("Chrome ScreenAI idle; ending its helper");
-                    *slot = None;
-                    return;
-                }
-                Some(_) => {}
-            }
-        });
+        let (answer, k) = self.helper.ask(&resources()?, img)?;
+        let Some(bytes) = answer else { bail!("a biblioteca não leu esta imagem") };
+        let annotation = VisualAnnotation::decode(bytes.as_slice()).context("decode ScreenAI's answer")?;
+        Ok(to_lines(&annotation, k))
     }
 
     /// Ends the helper now (before its files are deleted).
     pub fn stop(&self) {
-        *self.helper.lock() = None;
+        self.helper.stop();
     }
 }
 
@@ -618,29 +436,6 @@ pub fn to_lines(annotation: &VisualAnnotation, k: f32) -> Vec<OcrLine> {
     out
 }
 
-/// The line's text with each character on its symbol's span, in order; a character of the text no
-/// symbol has (a space) gets an empty span where the previous one ends. When the symbols do not
-/// spell the text, the symbols are the line.
-fn align(text: &str, glyphs: &[(char, f32, f32)]) -> Vec<OcrChar> {
-    let mut out = Vec::with_capacity(text.chars().count());
-    let mut k = 0;
-    let mut end = glyphs.first().map_or(0.0, |g| g.1);
-    for ch in text.chars() {
-        if let Some(&(g, from, to)) = glyphs.get(k).filter(|g| g.0 == ch) {
-            out.push(OcrChar { ch: g, x0: from.min(to), x1: from.max(to) });
-            end = to;
-            k += 1;
-        } else {
-            out.push(OcrChar { ch, x0: end, x1: end });
-        }
-    }
-    if k == glyphs.len() {
-        out
-    } else {
-        glyphs.iter().map(|&(ch, from, to)| OcrChar { ch, x0: from.min(to), x1: from.max(to) }).collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,7 +545,7 @@ mod tests {
         ];
         for (png, want) in fixtures {
             let img = image::load_from_memory(png).unwrap().to_rgba8();
-            let started = Instant::now();
+            let started = std::time::Instant::now();
             let bytes = library.read(img.width(), img.height(), img.as_raw()).expect("an annotation");
             let lines = to_lines(&VisualAnnotation::decode(bytes.as_slice()).unwrap(), 1.0);
             let got: String = lines.iter().map(|l| l.text.as_str()).collect();
