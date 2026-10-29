@@ -12,7 +12,7 @@ export const api = {
     engineStatus: () => invoke('engine_status'),
     installSegmenter: () => invoke('install_segmenter'),
     removeSegmenter: () => invoke('remove_segmenter'),
-    installOcrModels: (engine) => invoke('install_ocr_models', {engine}),
+    installOcrModels: (engine, acceptLicense = false) => invoke('install_ocr_models', {engine, acceptLicense}),
     removeOcrModels: (engine) => invoke('remove_ocr_models', {engine}),
     ocrLanguages: () => invoke('ocr_languages'),
     listDictionaries: () => invoke('list_dictionaries'),

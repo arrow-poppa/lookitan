@@ -302,6 +302,11 @@ const DOWNLOADED_ENGINES = {
         desc: 'O OCR do Recorte do Windows 11, da Microsoft: copiados do Recorte instalado neste computador, como o owocr faz (precisa do Recorte atualizado da Microsoft Store). Não é software livre. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
         removeAsk: 'Apagar a cópia dos arquivos do OneOCR? Enquanto não forem copiados de novo, o PP-OCRv6 lê no lugar dele.',
         removeTitle: 'Apagar o OneOCR', action: 'Copiar do Recorte', done: 'copiados'},
+    indra: {title: 'Modelos do IndraOCR (20 MB)',
+        desc: 'Os reconhecedores do IndraOCR, da Datalab, no Hugging Face: uma versão fixa, conferida. Os pesos têm a licença AI Pubs Open RAIL-M modificada, que você aceita antes de baixar.',
+        removeAsk: 'Apagar os modelos do IndraOCR? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
+        removeTitle: 'Apagar o IndraOCR',
+        license: 'Os pesos do IndraOCR (Datalab) usam a licença AI Pubs Open RAIL-M modificada (huggingface.co/datalab-to/indra-ocr, arquivo LICENSE, que vem junto com os modelos). Ela permite uso pessoal, em pesquisa e em empresas com menos de US$ 20 milhões de receita ou de investimento; proíbe o uso por quem oferece um produto que concorra com os da Datalab e usos ilegais; e diz que os resultados do modelo também ficam sob ela. Ao baixar, você aceita esses termos. Baixar?'},
 };
 
 /** The files of the chosen engines that are downloaded: their state, with a button to download or
@@ -346,7 +351,10 @@ function modelsRow(engine) {
         }));
     } else {
         button = el('button', {html: `${icon('download', 'sm')}${info.action || 'Baixar'}`, disabled: downloading});
-        button.addEventListener('click', () => void run(button, () => api.installOcrModels(engine)));
+        button.addEventListener('click', () => void run(button, async () => {
+            if (info.license && !await ask(info.license, {title: 'Licença do IndraOCR', kind: 'warning', okLabel: 'Aceitar e baixar', cancelLabel: 'Cancelar'})) { return; }
+            await api.installOcrModels(engine, !!info.license);
+        }));
     }
     row.append(el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('download')}),
         el('div', {class: 'txt'}, el('div', {class: 't'}, info.title), el('div', {class: 'd'}, `${info.desc} Estado: ${state}`), error),
@@ -759,6 +767,8 @@ function render(root) {
         ? 'Envia a captura à Microsoft, pelo site do Bing (não é uma API oficial e pode mudar sem aviso), como o owocr faz. Se falhar, o PP-OCRv6 assume.'
         : engine === 'meiki'
             ? `A detecção do PP-OCRv6 acha as linhas e o MeikiOCR, treinado em texto de jogos japoneses, as lê. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, o PP-OCRv6 lê.' : 'Ele lê só japonês: neste idioma, o PP-OCRv6 lê no lugar.'}`
+            : engine === 'indra'
+                ? 'A detecção do PP-OCRv6 acha as linhas e o IndraOCR, leve e feito para a CPU, as lê (experimental). Roda no seu computador. Sem os modelos baixados, o PP-OCRv6 lê.'
             : engine === 'oneocr'
                 ? 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador. Roda no seu computador, nada sai dele; sem os arquivos, o PP-OCRv6 lê.'
             : engine === 'screenai'
@@ -769,6 +779,7 @@ function render(root) {
         {value: 'paddle', label: 'PP-OCRv6 (local)'},
         ...(japanese || value === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (local, japonês)'}] : []),
         {value: 'screenai', label: 'Chrome ScreenAI (local, qualquer idioma)'},
+        {value: 'indra', label: 'IndraOCR (local, experimental)'},
         // OneOCR is the Windows Snipping Tool's.
         ...(windows || value === 'oneocr' ? [{value: 'oneocr', label: 'OneOCR (local, do Windows)'}] : []),
         {value: 'lens', label: 'Google Lens (nuvem)'},

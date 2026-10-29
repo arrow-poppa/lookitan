@@ -44,11 +44,12 @@ use crate::dict::{DictList, Dictionary, EntryRef};
 use crate::ocr::bing::BingOcr;
 use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
+use crate::ocr::indra::{Group as IndraGroup, IndraRec};
 use crate::ocr::meiki::MeikiRec;
 use crate::ocr::models;
 use crate::ocr::oneocr::OneOcr;
 use crate::ocr::screenai::ScreenAi;
-use crate::ocr::paddle::{recognize_boxes_with, split_focus, EnginePlan, PaddleOcr, TextBox};
+use crate::ocr::paddle::{recognize_boxes_with, BoxReader, split_focus, EnginePlan, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
 use crate::platform::geometry::DisplayGeometry;
@@ -102,6 +103,8 @@ pub struct AppState {
     bing: Mutex<Option<Arc<BingOcr>>>,
     /// MeikiOCR's recognizer, and whether it was asked for the GPU.
     meiki: Mutex<Option<(bool, Arc<MeikiRec>)>>,
+    /// IndraOCR's recognizer for one group, and whether it was asked for the GPU.
+    indra: Mutex<Option<(IndraGroup, bool, Arc<IndraRec>)>>,
     /// Chrome ScreenAI's and OneOCR's helper processes, started with their first lookup.
     screenai: ScreenAi,
     oneocr: OneOcr,
@@ -782,19 +785,22 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
             }
         }
     }
-    let meiki = if kind == OcrEngineKind::Meiki {
-        match meiki_engine(state, settings) {
-            Ok(m) => Some(m),
-            Err(e) => {
-                notice = Some(format!("O MeikiOCR não leu e o PP-OCRv6 leu no lugar: {e:#}"));
-                key = key_of(OcrEngineKind::Paddle);
-                None
-            }
-        }
-    } else {
-        None
+    // Recognizers other than PP-OCR's, on its detector's boxes.
+    let wanted = match kind {
+        OcrEngineKind::Meiki => Some(("MeikiOCR", meiki_engine(state, settings).map(Reader::Meiki))),
+        OcrEngineKind::Indra => Some(("IndraOCR", indra_engine(state, settings).map(Reader::Indra))),
+        _ => None,
     };
-    let p = BoxEngine { paddle: ensure_paddle(state)?, meiki };
+    let reader = match wanted {
+        Some((_, Ok(reader))) => Some(reader),
+        Some((name, Err(e))) => {
+            notice = Some(format!("O {name} não leu e o PP-OCRv6 leu no lugar: {e:#}"));
+            key = key_of(OcrEngineKind::Paddle);
+            None
+        }
+        None => None,
+    };
+    let p = BoxEngine { paddle: ensure_paddle(state)?, reader };
     let cached_boxes = state.ocr_cache.lock().boxes(key);
     let boxes = match cached_boxes {
         Some(boxes) => boxes,
@@ -826,25 +832,55 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key, block })
 }
 
-/// What reads a pass's boxes: PP-OCR's detector, with its own recognizer or MeikiOCR's.
+/// A recognizer other than PP-OCR's reading its detector's boxes.
+#[derive(Clone)]
+enum Reader {
+    Meiki(Arc<MeikiRec>),
+    Indra(Arc<IndraRec>),
+}
+
+impl Reader {
+    fn reader(&self) -> &dyn BoxReader {
+        match self {
+            Reader::Meiki(m) => m.as_ref(),
+            Reader::Indra(i) => i.as_ref(),
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Reader::Meiki(_) => "MeikiOCR",
+            Reader::Indra(_) => "IndraOCR",
+        }
+    }
+
+    fn on_gpu(&self) -> bool {
+        match self {
+            Reader::Meiki(m) => m.on_gpu(),
+            Reader::Indra(i) => i.on_gpu(),
+        }
+    }
+}
+
+/// What reads a pass's boxes: PP-OCR's detector, with its own recognizer or another one.
 #[derive(Clone)]
 struct BoxEngine {
     paddle: Arc<PaddleOcr>,
-    meiki: Option<Arc<MeikiRec>>,
+    reader: Option<Reader>,
 }
 
 impl BoxEngine {
     fn recognize(&self, image: &image::RgbaImage, boxes: &[TextBox], batched: bool) -> Vec<OcrLine> {
-        match &self.meiki {
-            Some(m) => recognize_boxes_with(image, boxes, m.as_ref()),
+        match &self.reader {
+            Some(r) => recognize_boxes_with(image, boxes, r.reader()),
             None if batched => self.paddle.recognize_boxes_batched(image, boxes),
             None => self.paddle.recognize_boxes(image, boxes),
         }
     }
 
-    /// The background pass's runs: PP-OCR's batches, or MeikiOCR's runs of 16 boxes.
+    /// The background pass's runs: PP-OCR's batches, or another recognizer's runs of 16 boxes.
     fn plan_batches(&self, boxes: &[TextBox]) -> Vec<Vec<TextBox>> {
-        match self.meiki {
+        match self.reader {
             Some(_) => boxes.chunks(16).map(<[TextBox]>::to_vec).collect(),
             None => self.paddle.plan_batches(boxes),
         }
@@ -854,11 +890,36 @@ impl BoxEngine {
     fn name(&self) -> String {
         let p = &self.paddle;
         let device = |gpu: bool| if gpu { "GPU" } else { "CPU" };
-        match &self.meiki {
-            Some(m) => format!("MeikiOCR · {} · detecção PP-OCRv6 {} · {}", device(m.on_gpu()), p.det_model(), device(p.det_on_gpu())),
+        match &self.reader {
+            Some(r) => format!("{} · {} · detecção PP-OCRv6 {} · {}", r.name(), device(r.on_gpu()), p.det_model(), device(p.det_on_gpu())),
             None => format!("PP-OCRv6 {} · {}", p.det_model(), device(p.det_on_gpu())),
         }
     }
+}
+
+/// IndraOCR's recognizer for the OCR language's group, loaded once its models are downloaded (after
+/// the user accepted their licence), where the recognizer would run (`EnginePlan`).
+fn indra_engine(state: &AppState, settings: &Settings) -> Result<Arc<IndraRec>> {
+    if !Downloaded::Indra.installed() {
+        match state.downloads.lock().get(Downloaded::Indra.id()).cloned() {
+            Some(state) => bail!("os modelos dele {state}"),
+            None => bail!("os modelos dele não estão baixados (Configurações › OCR)"),
+        }
+    }
+    let group = IndraGroup::of(&settings.ocr_language);
+    let plan = settings.engine_plan();
+    let gpu = if plan.manual { plan.rec_gpu } else { plan.det_gpu };
+    let mut slot = state.indra.lock();
+    if let Some((g, on, r)) = slot.as_ref() {
+        if *g == group && *on == gpu {
+            return Ok(r.clone());
+        }
+    }
+    // One group at a time: drop the previous sessions before loading their replacements.
+    *slot = None;
+    let r = Arc::new(IndraRec::new(&models::INDRA.dir()?, group, gpu, plan.gpu_choice)?);
+    *slot = Some((group, gpu, r.clone()));
+    Ok(r)
 }
 
 /// MeikiOCR's recognizer, loaded once its models are downloaded, on the GPU when the recognizer
@@ -896,6 +957,8 @@ enum Downloaded {
     ScreenAi,
     /// Copied from the Snipping Tool installed here, not downloaded.
     OneOcr,
+    /// Downloaded only once the user accepts its licence (`install_ocr_models`).
+    Indra,
 }
 
 /// A downloaded engine's files, for Settings › OCR.
@@ -910,7 +973,7 @@ pub struct ModelState {
 const DOWNLOADING: &str = "estão sendo baixados";
 
 impl Downloaded {
-    const ALL: [Downloaded; 3] = [Downloaded::Meiki, Downloaded::ScreenAi, Downloaded::OneOcr];
+    const ALL: [Downloaded; 4] = [Downloaded::Meiki, Downloaded::ScreenAi, Downloaded::OneOcr, Downloaded::Indra];
 
     /// Its name in Settings and in the `models` map: the engine's own (`OcrEngineKind`).
     fn id(self) -> &'static str {
@@ -918,6 +981,7 @@ impl Downloaded {
             Downloaded::Meiki => "meiki",
             Downloaded::ScreenAi => "screenai",
             Downloaded::OneOcr => "oneocr",
+            Downloaded::Indra => "indra",
         }
     }
 
@@ -927,7 +991,7 @@ impl Downloaded {
 
     fn supported(self) -> bool {
         match self {
-            Downloaded::Meiki => true,
+            Downloaded::Meiki | Downloaded::Indra => true,
             Downloaded::ScreenAi => ocr::screenai::supported(),
             Downloaded::OneOcr => ocr::oneocr::supported(),
         }
@@ -938,6 +1002,7 @@ impl Downloaded {
             Downloaded::Meiki => models::MEIKI.installed(),
             Downloaded::ScreenAi => ocr::screenai::installed(),
             Downloaded::OneOcr => ocr::oneocr::installed(),
+            Downloaded::Indra => models::INDRA.installed(),
         }
     }
 
@@ -947,6 +1012,7 @@ impl Downloaded {
             Downloaded::ScreenAi => ocr::screenai::bytes(),
             // About the Snipping Tool 11.2608's three files.
             Downloaded::OneOcr => 105_000_000,
+            Downloaded::Indra => models::INDRA.bytes(),
         }
     }
 
@@ -955,6 +1021,7 @@ impl Downloaded {
             Downloaded::Meiki => models::MEIKI.ensure(progress).map(|_| ()),
             Downloaded::ScreenAi => ocr::screenai::ensure(progress),
             Downloaded::OneOcr => ocr::oneocr::install(progress),
+            Downloaded::Indra => models::INDRA.ensure(progress).map(|_| ()),
         }
     }
 
@@ -972,6 +1039,10 @@ impl Downloaded {
             Downloaded::OneOcr => {
                 state.oneocr.stop();
                 ocr::oneocr::remove()
+            }
+            Downloaded::Indra => {
+                *state.indra.lock() = None;
+                models::INDRA.remove()
             }
         }
     }
@@ -1013,12 +1084,16 @@ fn download_models(app: &AppHandle, which: Downloaded) {
     });
 }
 
-/// Settings › OCR: downloads an engine's files (`Downloaded::id`).
+/// Settings › OCR: downloads an engine's files (`Downloaded::id`). IndraOCR's need `accept_license`:
+/// the user accepted its weights' licence in the dialog just before.
 #[tauri::command]
-fn install_ocr_models(app: AppHandle, engine: String) {
-    if let Some(which) = Downloaded::of(&engine) {
-        download_models(&app, which);
+fn install_ocr_models(app: AppHandle, engine: String, accept_license: Option<bool>) -> std::result::Result<(), String> {
+    let which = Downloaded::of(&engine).ok_or_else(|| format!("unknown engine {engine}"))?;
+    if which == Downloaded::Indra && accept_license != Some(true) {
+        return Err("Os modelos do IndraOCR só são baixados depois que você aceita a licença deles.".into());
     }
+    download_models(&app, which);
+    Ok(())
 }
 
 /// Settings › OCR: deletes an engine's files; a pass asked for that engine then reads with
@@ -2203,6 +2278,7 @@ pub fn run() {
                 lens: Mutex::new(None),
                 bing: Mutex::new(None),
                 meiki: Mutex::new(None),
+                indra: Mutex::new(None),
                 screenai: ScreenAi::default(),
                 oneocr: OneOcr::default(),
                 downloads: Mutex::new(HashMap::new()),

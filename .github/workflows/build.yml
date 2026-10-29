@@ -100,6 +100,22 @@ jobs:
           python scripts/fetch-ocr-models.py MEIKI "$LOOKITAN_MEIKI"
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::meiki::tests::real_meiki -- --ignored --nocapture
 
+      # IndraOCR's recognizers are downloaded by the app only after the user accepts their licence:
+      # fetched here, pinned in ocr/models.rs, for their real test.
+      - name: Cache IndraOCR models
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/indra
+          key: indra-${{ hashFiles('src-tauri/src/ocr/models.rs') }}
+
+      - name: Test IndraOCR with the real models
+        shell: bash
+        env:
+          LOOKITAN_INDRA: ${{ runner.temp }}/indra
+        run: |
+          python scripts/fetch-ocr-models.py INDRA "$LOOKITAN_INDRA"
+          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::indra::tests::real_indra -- --ignored --nocapture
+
       # Chrome ScreenAI is not in the installers either (the app downloads it when the user picks
       # it): the CIPD instance pinned in ocr/screenai.rs, fetched as the app does, for its real test.
       - name: Cache Chrome ScreenAI

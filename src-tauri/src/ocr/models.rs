@@ -41,6 +41,22 @@ pub static MEIKI: ModelSet = ModelSet {
     ],
 };
 
+/// IndraOCR's recognizers for the groups Lookitan's languages read with (datalab-to, tag v1.1.0 as
+/// indra-ocr 1.1.2 pins it; weights under the modified AI Pubs Open RAIL-M licence, shipped with
+/// them as its §4 asks), and their vocabularies. Downloaded only after the user accepts it.
+pub static INDRA: ModelSet = ModelSet {
+    id: "indra-ocr-v1.1.0",
+    repo: "datalab-to/indra-ocr",
+    revision: "bd02167fdf2005a19962cc15188f8496a2c87d3b",
+    files: &[
+        ModelFile { name: "rec.onnx", bytes: 5_042_161, sha256: "475972a2710be4a3cbfeb2bc7f3624ffd563de07de42476fc7a290d4e1ece484" },
+        ModelFile { name: "rec_cjk.onnx", bytes: 10_176_018, sha256: "4a035516a17e62cdf33a4fe2d88077654cb8841cff024685cdef4e351694ef50" },
+        ModelFile { name: "rec_rtl.onnx", bytes: 4_812_710, sha256: "468796bd684486a8388c30c8b4ed2a26e3eeb1f8ff02831c24c2e12c79a2a834" },
+        ModelFile { name: "meta.json", bytes: 211_869, sha256: "4ce4c94b46f5d644033c02e718322014ff4081270f385038c571912b56696339" },
+        ModelFile { name: "LICENSE", bytes: 14_750, sha256: "50c88a018a7ee322e89f6b09401b237beb0cd331685879405b3db48993950a5f" },
+    ],
+};
+
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_root(dir: PathBuf) {
@@ -110,7 +126,7 @@ mod tests {
 
     #[test]
     fn model_sets_are_pinned() {
-        for set in [&MEIKI] {
+        for set in [&MEIKI, &INDRA] {
             assert_eq!(set.revision.len(), 40);
             for f in set.files {
                 assert_eq!(f.sha256.len(), 64);
@@ -119,5 +135,6 @@ mod tests {
             }
         }
         assert_eq!(MEIKI.bytes(), 31_466_215);
+        assert_eq!(INDRA.bytes(), 20_257_508);
     }
 }

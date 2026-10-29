@@ -12,6 +12,7 @@ pub mod lens;
 pub mod bing;
 pub mod cache;
 pub mod helper;
+pub mod indra;
 pub mod ink;
 mod lens_proto;
 pub mod meiki;
