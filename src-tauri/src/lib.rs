@@ -1010,8 +1010,8 @@ impl Downloaded {
         match self {
             Downloaded::Meiki => models::MEIKI.bytes(),
             Downloaded::ScreenAi => ocr::screenai::bytes(),
-            // About the Snipping Tool 11.2608's three files.
-            Downloaded::OneOcr => 105_000_000,
+            // About the Snipping Tool 11.2608's three files, as written.
+            Downloaded::OneOcr => 114_000_000,
             Downloaded::Indra => models::INDRA.bytes(),
         }
     }
@@ -1063,9 +1063,10 @@ fn download_models(app: &AppHandle, which: Downloaded) {
     let app = app.clone();
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
-        let total = which.bytes().max(1);
+        // Asked each time: ScreenAI's is known once CIPD has said which package is the latest.
         let progress = |done: u64| {
-            state.downloads.lock().insert(which.id(), format!("{DOWNLOADING} ({}%)", done * 100 / total));
+            let percent = (done * 100 / which.bytes().max(1)).min(100);
+            state.downloads.lock().insert(which.id(), format!("{DOWNLOADING} ({percent}%)"));
             let _ = app.emit("engine-status", ());
         };
         let result = which.ensure(&progress);

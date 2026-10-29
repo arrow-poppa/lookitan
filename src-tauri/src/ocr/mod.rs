@@ -21,6 +21,7 @@ pub mod oneocr;
 pub mod paddle;
 pub mod quad;
 pub mod screenai;
+pub mod store;
 
 use serde::Serialize;
 

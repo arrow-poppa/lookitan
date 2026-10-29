@@ -117,12 +117,17 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::indra::tests::real_indra -- --ignored --nocapture
 
       # Chrome ScreenAI is not in the installers either (the app downloads it when the user picks
-      # it): the CIPD instance pinned in ocr/screenai.rs, fetched as the app does, for its real test.
+      # it): CIPD's latest instance, fetched as the app does, for its real test.
+      - name: Resolve Chrome ScreenAI
+        id: screenai
+        shell: bash
+        run: echo "digest=$(python scripts/fetch-ocr-models.py SCREENAI-DIGEST:${{ matrix.platform }} -)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Chrome ScreenAI
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/screenai
-          key: screenai-${{ matrix.platform }}-${{ hashFiles('src-tauri/src/ocr/screenai.rs') }}
+          key: screenai-${{ matrix.platform }}-${{ steps.screenai.outputs.digest }}
 
       - name: Test Chrome ScreenAI with the real library
         shell: bash
@@ -131,6 +136,27 @@ jobs:
         run: |
           python scripts/fetch-ocr-models.py SCREENAI:${{ matrix.platform }} "${{ runner.temp }}/screenai"
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::screenai::tests::real_screenai -- --ignored --nocapture
+
+      # OneOCR's files are Microsoft's and not in the installers: read out of the Snipping Tool's
+      # package on Microsoft's servers as the app does without a Snipping Tool (ocr/store.rs),
+      # checked against the package's signature, for its real test. Windows only. The link comes
+      # from a third-party site, so a failure here does not fail the build.
+      - name: Cache OneOCR
+        if: matrix.platform == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/oneocr
+          key: oneocr-${{ hashFiles('src-tauri/src/ocr/store.rs') }}
+
+      - name: Test OneOCR with the real files
+        if: matrix.platform == 'windows'
+        continue-on-error: true
+        shell: bash
+        env:
+          LOOKITAN_ONEOCR: ${{ runner.temp }}/oneocr
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::store::tests::real_store -- --ignored --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::oneocr::tests::real_oneocr -- --ignored --nocapture
 
       # The word analyzers' dictionaries (segment/mod.rs PACKS), as the app downloads them.
       - name: Cache word analyzer dictionaries

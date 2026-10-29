@@ -294,14 +294,14 @@ const DOWNLOADED_ENGINES = {
         desc: 'De rtr46/meikiocr no Hugging Face, licença LGPL-3.0; baixados uma vez e conferidos.',
         removeAsk: 'Apagar os modelos do MeikiOCR? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
         removeTitle: 'Apagar o MeikiOCR'},
-    screenai: {title: 'Arquivos do Chrome ScreenAI (76 MB)',
-        desc: 'A biblioteca de OCR do Chrome, do Google, baixada do repositório de pacotes do Chromium (CIPD), como o owocr faz: uma versão fixa, conferida. Não é software livre e não tem licença própria. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
+    screenai: {title: 'Arquivos do Chrome ScreenAI (cerca de 76 MB)',
+        desc: 'A biblioteca de OCR do Chrome, do Google, baixada do repositório de pacotes do Chromium (CIPD), como o owocr faz: a versão mais recente quando você baixa, conferida pelo SHA-256 que o CIPD dá. Para atualizar, apague e baixe de novo. Não é software livre e não tem licença própria. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
         removeAsk: 'Apagar os arquivos do Chrome ScreenAI? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
         removeTitle: 'Apagar o Chrome ScreenAI'},
     oneocr: {title: 'Arquivos do OneOCR (do Recorte do Windows)',
-        desc: 'O OCR do Recorte do Windows 11, da Microsoft: copiados do Recorte instalado neste computador, como o owocr faz (precisa do Recorte atualizado da Microsoft Store). Não é software livre. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
-        removeAsk: 'Apagar a cópia dos arquivos do OneOCR? Enquanto não forem copiados de novo, o PP-OCRv6 lê no lugar dele.',
-        removeTitle: 'Apagar o OneOCR', action: 'Copiar do Recorte', done: 'copiados'},
+        desc: 'O OCR do Recorte do Windows 11, da Microsoft: copiados do Recorte instalado neste computador, como o owocr faz. Sem ele (no Windows 10, por exemplo), cerca de 80 MB são baixados do pacote do Recorte no servidor da Microsoft, com o link dado pelo site store.rg-adguard.net (de terceiros), como o LunaTranslator faz, e conferidos pela assinatura da Microsoft. Não é software livre. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
+        removeAsk: 'Apagar os arquivos do OneOCR? Enquanto não forem instalados de novo, o PP-OCRv6 lê no lugar dele.',
+        removeTitle: 'Apagar o OneOCR', action: 'Instalar', done: 'instalados'},
     indra: {title: 'Modelos do IndraOCR (20 MB)',
         desc: 'Os reconhecedores do IndraOCR, da Datalab, no Hugging Face: uma versão fixa, conferida. Os pesos têm a licença AI Pubs Open RAIL-M modificada, que você aceita antes de baixar.',
         removeAsk: 'Apagar os modelos do IndraOCR? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
@@ -770,7 +770,7 @@ function render(root) {
             : engine === 'indra'
                 ? 'A detecção do PP-OCRv6 acha as linhas e o IndraOCR, leve e feito para a CPU, as lê (experimental). Roda no seu computador. Sem os modelos baixados, o PP-OCRv6 lê.'
             : engine === 'oneocr'
-                ? 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador. Roda no seu computador, nada sai dele; sem os arquivos, o PP-OCRv6 lê.'
+                ? 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador ou baixados do servidor da Microsoft. Roda no seu computador, nada sai dele; sem os arquivos, o PP-OCRv6 lê.'
             : engine === 'screenai'
                 ? 'A biblioteca de OCR do Chrome, que reconhece qualquer idioma e acha o de cada linha sozinha. Roda no seu computador, nada sai dele; sem os arquivos baixados, o PP-OCRv6 lê.'
                 : 'Roda no seu computador; nada sai dele.';

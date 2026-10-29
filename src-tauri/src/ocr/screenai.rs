@@ -3,9 +3,11 @@
 // character its own box.
 //
 // The library comes from Chromium's CIPD package `chromium/third_party/screen-ai/<platform>`, as
-// owocr fetches it (at the user's request on 2026-10-28), pinned to one instance whose SHA-256 is
-// the zip's, and downloaded only when the user picks the engine; it is not in the installers. The
-// package carries the licences of what it is built from, none of its own: it is Google's.
+// owocr fetches it (at the user's request on 2026-10-28): the instance its `latest` ref points to
+// when the user downloads it (the user chose latest over a pinned one on 2026-10-28, as
+// GameSentenceMiner falls back to), checked against that instance's SHA-256, which is the zip's.
+// It is downloaded only when the user picks the engine; it is not in the installers. The package
+// carries the licences of what it is built from, none of its own: it is Google's.
 //
 // It runs in a helper process (ocr/helper.rs), as Chrome runs it in a utility process: it has no
 // shutdown and can be initialized once per process. Its answers are the serialized
@@ -13,6 +15,7 @@
 
 use std::ffi::{c_char, c_void, CStr};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -23,63 +26,78 @@ use prost::Message;
 use super::helper::Helper;
 use super::{align, Flow, OcrLine, Tilt};
 
-const CIPD: &str = "https://chrome-infra-packages.appspot.com/prpc/cipd.Repository/GetInstanceURL";
-/// Chrome needs 140.3 or later (`whitespace_bounding_box`); the pinned packages are 153.05.
+const CIPD: &str = "https://chrome-infra-packages.appspot.com/prpc/cipd.Repository";
+/// Chrome needs 140.3 or later (`whitespace_bounding_box`); the latest was 153.05 on 2026-10-28.
 const MIN_VERSION: (u32, u32) = (140, 3);
 /// Lines turned less than this read as level (as quad.rs's `UPRIGHT_ANGLE`).
 const LEVEL: f32 = 2.0 * std::f32::consts::PI / 180.0;
 
 struct Package {
     name: &'static str,
-    digest: &'static str,
+    /// About its size (153.05's), until CIPD gives the latest one's.
     bytes: u64,
     library: &'static str,
 }
 
-// Version 153.05, registered 2026-10-18.
 #[cfg(windows)]
 static PACKAGE: Option<Package> = Some(Package {
     name: "chromium/third_party/screen-ai/windows-amd64",
-    digest: "cec1c343edb1047a01a7962d28a6bc3390d78635ed88aae585c7fcdf823224af",
     bytes: 76_409_162,
     library: "chrome_screen_ai.dll",
 });
 #[cfg(target_os = "linux")]
 static PACKAGE: Option<Package> = Some(Package {
     name: "chromium/third_party/screen-ai/linux",
-    digest: "cd837ed33b7098f1c65f22c4618c79a98dc86e50b58fd7f2d3cae94cf9ce36ac",
     bytes: 78_301_068,
     library: "libchromescreenai.so",
 });
 #[cfg(not(any(windows, target_os = "linux")))]
 static PACKAGE: Option<Package> = None;
 
+/// The size of the package being downloaded, once CIPD has given it.
+static SIZE: AtomicU64 = AtomicU64::new(0);
+
 pub fn supported() -> bool {
     PACKAGE.is_some()
 }
 
 pub fn bytes() -> u64 {
-    PACKAGE.as_ref().map_or(0, |p| p.bytes)
+    match SIZE.load(Ordering::Relaxed) {
+        0 => PACKAGE.as_ref().map_or(0, |p| p.bytes),
+        n => n,
+    }
 }
 
 fn package() -> Result<&'static Package> {
     PACKAGE.as_ref().context("Chrome ScreenAI is not available on this system")
 }
 
-/// The package's folder: `resources/` in it holds the library and its models.
-fn dir() -> Result<PathBuf> {
-    Ok(super::models::root()?.join(format!("screenai-{}", &package()?.digest[..8])))
+/// The unpacked packages' folders, `screenai-<the start of its SHA-256>`.
+fn folders() -> Vec<PathBuf> {
+    let Ok(root) = super::models::root() else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
+    entries.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("screenai-")).map(|e| e.path()).collect()
+}
+
+/// The package's folder (the newest, if a download left an older one): `resources/` in it holds
+/// the library and its models.
+fn dir() -> Option<PathBuf> {
+    let p = PACKAGE.as_ref()?;
+    folders()
+        .into_iter()
+        .filter(|d| d.join("resources").join(p.library).is_file())
+        .max_by_key(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok())
 }
 
 fn resources() -> Result<PathBuf> {
-    Ok(dir()?.join("resources"))
+    Ok(dir().context("os arquivos dele não estão baixados (Configurações › OCR)")?.join("resources"))
 }
 
 pub fn installed() -> bool {
-    package().is_ok_and(|p| resources().is_ok_and(|r| r.join(p.library).is_file()))
+    dir().is_some()
 }
 
-/// Downloads and unpacks the package, reporting the bytes done of `bytes()`.
+/// Downloads and unpacks the latest package, reporting the bytes done of `bytes()`.
 pub fn ensure(progress: &dyn Fn(u64)) -> Result<()> {
     if installed() {
         return Ok(());
@@ -93,8 +111,10 @@ pub fn ensure(progress: &dyn Fn(u64)) -> Result<()> {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
+    let latest = latest(p)?;
+    SIZE.store(latest.bytes, Ordering::Relaxed);
     let zip = root.join(".download-screenai.zip");
-    let fetched = signed_url().and_then(|url| crate::segment::download(&url, &zip, p.bytes, Some(p.digest), progress));
+    let fetched = crate::segment::download(&latest.url, &zip, latest.bytes, Some(&latest.digest), progress);
     if let Err(e) = fetched {
         let _ = std::fs::remove_file(&zip);
         return Err(e);
@@ -111,36 +131,73 @@ pub fn ensure(progress: &dyn Fn(u64)) -> Result<()> {
         let _ = std::fs::remove_dir_all(&unpacking);
         bail!("the ScreenAI package has no resources/{}", p.library);
     }
-    let home = dir()?;
+    let home = root.join(format!("screenai-{}", &latest.digest[..8]));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::rename(&unpacking, &home).context("move ScreenAI into place")?;
+    // Older packages.
+    for old in folders().into_iter().filter(|d| *d != home) {
+        let _ = std::fs::remove_dir_all(old);
+    }
+    log::info!("Chrome ScreenAI {} downloaded", &latest.digest[..8]);
     Ok(())
 }
 
 pub fn remove() -> Result<()> {
-    let home = dir()?;
-    if home.exists() {
+    for home in folders() {
         std::fs::remove_dir_all(&home).with_context(|| format!("delete {}", home.display()))?;
     }
     Ok(())
 }
 
-/// CIPD's signed download URL for the pinned instance.
-fn signed_url() -> Result<String> {
-    let p = package()?;
-    let body = serde_json::json!({"package": p.name, "instance": {"hashAlgo": "SHA256", "hexDigest": p.digest}});
+/// The instance CIPD's `latest` ref points to.
+struct Instance {
+    digest: String,
+    url: String,
+    bytes: u64,
+}
+
+/// Asks CIPD which instance is the latest, its signed download URL and its size.
+fn latest(p: &Package) -> Result<Instance> {
     let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build()?;
-    let text = client
-        .post(CIPD)
-        .header("content-type", "application/json")
-        .header("accept", "application/json")
-        .body(body.to_string())
-        .send()?
-        .error_for_status()?
-        .text()?;
-    // pRPC's JSON answers start with an anti-XSSI line.
-    let json: serde_json::Value = serde_json::from_str(text.trim_start_matches(")]}'").trim_start()).context("read CIPD's answer")?;
-    json["signedUrl"].as_str().map(str::to_string).context("CIPD gave no download URL")
+    let ask = |method: &str, body: serde_json::Value| -> Result<serde_json::Value> {
+        let text = client
+            .post(format!("{CIPD}/{method}"))
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .body(body.to_string())
+            .send()?
+            .error_for_status()?
+            .text()?;
+        prpc_json(&text)
+    };
+    let digest = instance_digest(&ask("ResolveVersion", serde_json::json!({"package": p.name, "version": "latest"}))?)?;
+    let signed = ask("GetInstanceURL", serde_json::json!({"package": p.name, "instance": {"hashAlgo": "SHA256", "hexDigest": digest.as_str()}}))?;
+    let url = signed["signedUrl"].as_str().context("CIPD gave no download URL")?.to_string();
+    // The size comes in the headers (reqwest's `content_length` is the empty body's on HEAD).
+    let head = client.head(&url).send()?.error_for_status()?;
+    let bytes = head
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&n| n > 0 && n < 1 << 30)
+        .context("CIPD's download has no size")?;
+    Ok(Instance { digest, url, bytes })
+}
+
+/// pRPC's JSON answers start with an anti-XSSI line.
+fn prpc_json(text: &str) -> Result<serde_json::Value> {
+    serde_json::from_str(text.trim_start_matches(")]}'").trim_start()).context("read CIPD's answer")
+}
+
+/// The SHA-256 a `ResolveVersion` answer names, the only kind of instance downloaded.
+fn instance_digest(answer: &serde_json::Value) -> Result<String> {
+    let instance = &answer["instance"];
+    let digest = instance["hexDigest"].as_str().unwrap_or_default();
+    if instance["hashAlgo"].as_str() != Some("SHA256") || digest.len() != 64 || !digest.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        bail!("CIPD's latest ScreenAI is not a SHA-256 instance");
+    }
+    Ok(digest.to_string())
 }
 
 // ------------------------------------------------------------------------------------ the helper
@@ -509,7 +566,7 @@ mod tests {
         assert_eq!(path("../secret"), None);
     }
 
-    /// The pinned library itself, loaded in this process, on the Russian and Japanese fixtures.
+    /// The latest library itself, loaded in this process, on the Russian and Japanese fixtures.
     /// Needs the package unpacked in `LOOKITAN_SCREENAI` (its `resources/` folder; CI fetches it);
     /// skipped without it. Run it alone: the library can be initialized once per process.
     #[test]
@@ -560,10 +617,20 @@ mod tests {
     }
 
     #[test]
-    fn the_pinned_packages_are_whole_instances() {
+    fn the_latest_instance_is_read_from_cipd_s_answer() {
+        let digest = "cd837ed33b7098f1c65f22c4618c79a98dc86e50b58fd7f2d3cae94cf9ce36ac";
+        let answer = format!(")]}}'\n{{\"package\":\"chromium/third_party/screen-ai/linux\",\"instance\":{{\"hashAlgo\":\"SHA256\",\"hexDigest\":\"{digest}\"}}}}");
+        assert_eq!(instance_digest(&prpc_json(&answer).unwrap()).unwrap(), digest);
+        // Only a whole SHA-256, which names the folder it goes in.
+        for bad in [
+            r#"{"instance":{"hashAlgo":"SHA1","hexDigest":"da39a3ee5e6b4b0d3255bfef95601890afd80709"}}"#,
+            r#"{"instance":{"hashAlgo":"SHA256","hexDigest":"../../../../../../../../../../../../../../../../../../../../../x"}}"#,
+            r#"{"instance":{"hashAlgo":"SHA256","hexDigest":"CD837ED33B7098F1C65F22C4618C79A98DC86E50B58FD7F2D3CAE94CF9CE36AC"}}"#,
+            "{}",
+        ] {
+            assert!(instance_digest(&prpc_json(bad).unwrap()).is_err(), "{bad}");
+        }
         if let Ok(p) = package() {
-            assert_eq!(p.digest.len(), 64);
-            assert!(p.digest.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
             assert!(p.bytes > 50_000_000);
         }
         assert_eq!(std::mem::size_of::<SkBitmap>(), 56, "the layout owocr passes");

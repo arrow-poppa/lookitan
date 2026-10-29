@@ -1,8 +1,9 @@
 // Microsoft's OneOCR, the OCR of Windows 11's Snipping Tool, as an OCR engine (Windows only), at the
 // user's request on 2026-10-28, as owocr uses it: its three files (oneocr.dll, oneocr.onemodel and
 // Microsoft's own onnxruntime.dll) are copied from the Snipping Tool installed on this computer
-// (`Get-AppxPackage Microsoft.ScreenSketch`) into the app's local data; they are Microsoft's, never
-// in the installers nor fetched from anywhere else.
+// (`Get-AppxPackage Microsoft.ScreenSketch`) into the app's local data, or, without one, read out
+// of the Snipping Tool's package on Microsoft's servers (ocr/store.rs, as LunaTranslator does);
+// they are Microsoft's, never in the installers.
 //
 // It runs in a helper process (ocr/helper.rs): oneocr.dll needs its own onnxruntime.dll, which
 // cannot share a process with Lookitan's (the loader would hand it the one already loaded). The
@@ -42,47 +43,54 @@ pub fn version() -> Option<String> {
     std::fs::read_to_string(dir().ok()?.join("version.txt")).ok().map(|v| v.trim().to_string())
 }
 
-/// Copies the files from the Snipping Tool installed here, reporting the bytes copied.
+/// Copies the files from the Snipping Tool installed here or, without one that has them, reads
+/// them out of its package on Microsoft's servers, reporting the bytes written.
 pub fn install(progress: &dyn Fn(u64)) -> Result<()> {
     if !supported() {
         bail!("o OneOCR existe só no Windows");
     }
-    let location = snipping_tool()?;
-    let source = location.join("SnippingTool");
-    let version = location
-        .file_name()
-        .and_then(|n| n.to_str())
-        .and_then(|n| n.split('_').nth(1))
-        .unwrap_or_default()
-        .to_string();
     let root = super::models::root()?;
     std::fs::create_dir_all(&root)?;
     let copying = root.join(format!(".copying-oneocr-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&copying);
     std::fs::create_dir_all(&copying)?;
-    let mut done = 0;
-    for f in FILES {
-        let from = source.join(f);
-        if !from.is_file() {
+    let got = copy(&copying, progress).map(|v| (v, "copied from")).or_else(|local| {
+        log::info!("OneOCR from Microsoft's servers ({local:#})");
+        let _ = std::fs::remove_dir_all(&copying);
+        std::fs::create_dir_all(&copying)?;
+        super::store::fetch(&copying, progress)
+            .map(|v| (v, "downloaded from"))
+            .map_err(|e| anyhow::anyhow!("{local:#}, e o download do servidor da Microsoft falhou: {e:#}"))
+    });
+    let (version, how) = match got {
+        Ok(got) => got,
+        Err(e) => {
             let _ = std::fs::remove_dir_all(&copying);
-            bail!("o Recorte instalado não tem {f} (é preciso o Windows 11 com o Recorte atualizado)");
+            return Err(e);
         }
-        let copied = std::fs::copy(&from, copying.join(f)).with_context(|| format!("copy {}", from.display()));
-        match copied {
-            Ok(n) => done += n,
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&copying);
-                return Err(e);
-            }
-        }
-        progress(done);
-    }
+    };
     std::fs::write(copying.join("version.txt"), &version)?;
     let home = dir()?;
     let _ = std::fs::remove_dir_all(&home);
     std::fs::rename(&copying, &home).context("move OneOCR into place")?;
-    log::info!("OneOCR copied from the Snipping Tool {version}");
+    log::info!("OneOCR {how} the Snipping Tool {version}");
     Ok(())
+}
+
+/// Copies the files from the Snipping Tool installed here into `to`; returns its version.
+fn copy(to: &Path, progress: &dyn Fn(u64)) -> Result<String> {
+    let location = snipping_tool()?;
+    let source = location.join("SnippingTool");
+    let mut done = 0;
+    for f in FILES {
+        let from = source.join(f);
+        if !from.is_file() {
+            bail!("o Recorte instalado não tem {f}");
+        }
+        done += std::fs::copy(&from, to.join(f)).with_context(|| format!("copy {}", from.display()))?;
+        progress(done);
+    }
+    Ok(location.file_name().and_then(|n| n.to_str()).and_then(|n| n.split('_').nth(1)).unwrap_or_default().to_string())
 }
 
 /// The Snipping Tool's install folder, as owocr finds it.
@@ -135,6 +143,14 @@ pub struct Word {
 /// The helper process (`helper::main`): loads OneOCR from `dir` and answers until stdin closes.
 #[cfg(windows)]
 pub fn serve(dir: &Path) -> Result<()> {
+    let (_library, read) = reader(dir)?;
+    super::helper::serve((1, 0), MAX_SIDE, read)
+}
+
+/// Loads OneOCR from `dir`: the library, kept while it reads, and what reads an RGBA image into
+/// its lines, as JSON.
+#[cfg(windows)]
+fn reader(dir: &Path) -> Result<(libloading::Library, impl FnMut(u32, u32, &[u8]) -> Option<Vec<u8>>)> {
     use std::ffi::{c_char, c_void, CStr, CString};
 
     /// OneOCR's image: 8-bit BGRA, packed.
@@ -198,7 +214,9 @@ pub fn serve(dir: &Path) -> Result<()> {
     let text = |p: *const c_char| if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() };
     let corners = |p: *const Corners| if p.is_null() { [0.0; 8] } else { unsafe { std::ptr::read_unaligned(p) } };
 
-    super::helper::serve((1, 0), MAX_SIDE, |w, h, rgba| {
+    let read = move |w: u32, h: u32, rgba: &[u8]| {
+        // What the pipeline was made with, kept as long as it is.
+        let _ = (&model, &key);
         // OneOCR reads BGRA, at least 50 pixels a side: a smaller image is padded with white.
         let (pw, ph) = (w.max(MIN_SIDE), h.max(MIN_SIDE));
         let mut bgra = vec![255u8; pw as usize * ph as usize * 4];
@@ -244,7 +262,8 @@ pub fn serve(dir: &Path) -> Result<()> {
             release(result);
         }
         serde_json::to_vec(&lines).ok()
-    })
+    };
+    Ok((library, read))
 }
 
 #[cfg(not(windows))]
@@ -271,7 +290,7 @@ impl OneOcr {
             bail!("ele existe só no Windows");
         }
         if !installed() {
-            bail!("os arquivos dele não foram copiados do Recorte (Configurações › OCR)");
+            bail!("os arquivos dele não foram instalados (Configurações › OCR)");
         }
         let (answer, k) = self.helper.ask(&dir()?, img)?;
         let Some(bytes) = answer else { bail!("ele não leu esta imagem") };
@@ -400,5 +419,55 @@ mod tests {
         let t = lines[2].tilt.expect("turned 20°");
         assert!((t.angle - 20f32.to_radians()).abs() < 1e-4);
         assert!((lines[2].chars[1].x1 - lines[2].chars[0].x0 - 40.0).abs() < 1e-3, "along the line's frame");
+    }
+
+    /// OneOCR's real files in `LOOKITAN_ONEOCR` (CI fetches them from Microsoft's servers, as
+    /// ocr/store.rs does), loaded in this process, on the Russian and Japanese fixtures; skipped
+    /// without them. Run it alone: no other ONNX Runtime may be loaded first.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn real_oneocr_reads_the_fixtures() {
+        use unicode_normalization::UnicodeNormalization;
+        let Some(dir) = std::env::var_os("LOOKITAN_ONEOCR").map(PathBuf::from) else {
+            eprintln!("LOOKITAN_ONEOCR is not set; skipped");
+            return;
+        };
+        let (_library, mut read) = reader(&dir).expect("load OneOCR");
+        let plain = |s: &str| s.nfkc().filter(|c| !c.is_whitespace()).collect::<String>();
+        let cer = |got: &str, want: &str| {
+            let (a, b): (Vec<char>, Vec<char>) = (plain(got).chars().collect(), plain(want).chars().collect());
+            let mut d: Vec<usize> = (0..=b.len()).collect();
+            for i in 1..=a.len() {
+                let mut prev = d[0];
+                d[0] = i;
+                for j in 1..=b.len() {
+                    let cur = (d[j] + 1).min(d[j - 1] + 1).min(prev + usize::from(a[i - 1] != b[j - 1]));
+                    prev = d[j];
+                    d[j] = cur;
+                }
+            }
+            d[b.len()] as f32 / b.len() as f32
+        };
+        let japanese = "今日はいい天気ですね。散歩に行きましょう！「本当に？」と彼女は小さな声で聞いた。セーブデータを読み込んでいます…東京駅から新幹線で大阪へ向かう。HPが足りない！回復アイテムを使いますか？".repeat(2);
+        let fixtures: [(&[u8], &str); 2] = [
+            (include_bytes!("fixtures/ru_lines.png"), "Съешь же ещё этих мягких французских булок ВСЁ ЕЩЁ ЗДЕСЬ, а ёлка — в лесу. Шелестят листья!"),
+            (include_bytes!("fixtures/ja_lines.png"), &japanese),
+        ];
+        for (png, want) in fixtures {
+            let img = image::load_from_memory(png).unwrap().to_rgba8();
+            let started = std::time::Instant::now();
+            let json = read(img.width(), img.height(), img.as_raw()).expect("an answer");
+            let mut lines = to_lines(&serde_json::from_slice::<Vec<Line>>(&json).unwrap(), 1.0);
+            snap_level_lines(&img, &mut lines);
+            let got: String = lines.iter().map(|l| l.text.as_str()).collect();
+            let e = cer(&got, want);
+            eprintln!("OneOCR: {} lines in {} ms, CER {:.1}%\n{got}", lines.len(), started.elapsed().as_millis(), e * 100.0);
+            assert!(e <= 0.10, "CER {e}");
+            for l in &lines {
+                assert!(l.chars.iter().all(|c| c.x0 <= c.x1), "{}", l.text);
+                assert!(l.x0 < l.x1 && l.y0 < l.y1 && l.x1 <= img.width() as f32 + 1.0 && l.y1 <= img.height() as f32 + 1.0);
+            }
+        }
     }
 }
