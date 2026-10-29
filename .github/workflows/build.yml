@@ -84,6 +84,22 @@ jobs:
       - name: Test the Russian recognizers with the real models
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::paddle::tests::real_russian_recognizers -- --ignored --nocapture
 
+      # MeikiOCR's recognizers are not in the installers (the app downloads them when the user
+      # picks it): fetched here as the app does, pinned in ocr/models.rs, for their real test.
+      - name: Cache MeikiOCR models
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/meiki
+          key: meiki-${{ hashFiles('src-tauri/src/ocr/models.rs') }}
+
+      - name: Test MeikiOCR with the real models
+        shell: bash
+        env:
+          LOOKITAN_MEIKI: ${{ runner.temp }}/meiki
+        run: |
+          python scripts/fetch-ocr-models.py MEIKI "$LOOKITAN_MEIKI"
+          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::meiki::tests::real_meiki -- --ignored --nocapture
+
       # The word analyzers' dictionaries (segment/mod.rs PACKS), as the app downloads them.
       - name: Cache word analyzer dictionaries
         uses: actions/cache@v4

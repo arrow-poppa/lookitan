@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 use parking_lot::{Condvar, Mutex, RwLock};
 use serde::Serialize;
@@ -43,7 +43,9 @@ use crate::cards::CardStore;
 use crate::dict::{DictList, Dictionary, EntryRef};
 use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
-use crate::ocr::paddle::{split_focus, EnginePlan, PaddleOcr, TextBox};
+use crate::ocr::meiki::MeikiRec;
+use crate::ocr::models;
+use crate::ocr::paddle::{recognize_boxes_with, split_focus, EnginePlan, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
 use crate::platform::geometry::DisplayGeometry;
@@ -94,6 +96,10 @@ pub struct AppState {
     engine_error: RwLock<Option<String>>,
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
     lens: Mutex<Option<Arc<LensOcr>>>,
+    /// MeikiOCR's recognizer, and whether it was asked for the GPU.
+    meiki: Mutex<Option<(bool, Arc<MeikiRec>)>>,
+    /// The state of MeikiOCR's models' download while it runs, or why it failed.
+    meiki_download: Mutex<Option<String>>,
     recognition: Mutex<Option<Recognition>>,
     ocr_cache: Mutex<OcrCache>,
     recognition_seq: AtomicU64,
@@ -211,6 +217,11 @@ pub struct EngineStatus {
     pub segmenter: Option<String>,
     /// Whether that analyzer's files are downloaded.
     pub segmenter_installed: Option<bool>,
+    /// MeikiOCR (ocr/meiki.rs): whether its models are downloaded, their download while it runs
+    /// (or why it failed), and where its recognizer runs once loaded.
+    pub meiki_installed: bool,
+    pub meiki_download: Option<String>,
+    pub meiki_on_gpu: Option<bool>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -706,7 +717,7 @@ struct OcrPass {
     kind: OcrEngineKind,
     /// Boxes still to recognize in the background for the overlay (whole-screen passes only).
     rest: Vec<TextBox>,
-    paddle: Option<Arc<PaddleOcr>>,
+    paddle: Option<BoxEngine>,
     notice: Option<String>,
     /// The cache key of the engine that read `lines`.
     key: FrameKey,
@@ -745,12 +756,24 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
             }
         }
     }
-    let p = ensure_paddle(state)?;
+    let meiki = if kind == OcrEngineKind::Meiki {
+        match meiki_engine(state, settings) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                notice = Some(format!("O MeikiOCR não leu e o PP-OCRv6 leu no lugar: {e:#}"));
+                key = key_of(OcrEngineKind::Paddle);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let p = BoxEngine { paddle: ensure_paddle(state)?, meiki };
     let cached_boxes = state.ocr_cache.lock().boxes(key);
     let boxes = match cached_boxes {
         Some(boxes) => boxes,
         None => {
-            let boxes = p.detect_boxes(image)?;
+            let boxes = p.paddle.detect_boxes(image)?;
             state.ocr_cache.lock().save_boxes(key, &boxes);
             boxes
         }
@@ -773,15 +796,125 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         block = None;
     }
     layout::look(image, &mut lines);
-    let gpu = if p.det_on_gpu() { "GPU" } else { "CPU" };
-    let engine = format!("PP-OCRv6 {} · {gpu}", p.det_model());
+    let engine = p.name();
     Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice, key, block })
 }
 
-fn cached_recognize(state: &AppState, engine: &PaddleOcr, image: &image::RgbaImage, key: FrameKey, boxes: &[TextBox], batched: bool) -> Vec<OcrLine> {
+/// What reads a pass's boxes: PP-OCR's detector, with its own recognizer or MeikiOCR's.
+#[derive(Clone)]
+struct BoxEngine {
+    paddle: Arc<PaddleOcr>,
+    meiki: Option<Arc<MeikiRec>>,
+}
+
+impl BoxEngine {
+    fn recognize(&self, image: &image::RgbaImage, boxes: &[TextBox], batched: bool) -> Vec<OcrLine> {
+        match &self.meiki {
+            Some(m) => recognize_boxes_with(image, boxes, m.as_ref()),
+            None if batched => self.paddle.recognize_boxes_batched(image, boxes),
+            None => self.paddle.recognize_boxes(image, boxes),
+        }
+    }
+
+    /// The background pass's runs: PP-OCR's batches, or MeikiOCR's runs of 16 boxes.
+    fn plan_batches(&self, boxes: &[TextBox]) -> Vec<Vec<TextBox>> {
+        match self.meiki {
+            Some(_) => boxes.chunks(16).map(<[TextBox]>::to_vec).collect(),
+            None => self.paddle.plan_batches(boxes),
+        }
+    }
+
+    /// The engine as the pop-up and the overlay name it.
+    fn name(&self) -> String {
+        let p = &self.paddle;
+        let device = |gpu: bool| if gpu { "GPU" } else { "CPU" };
+        match &self.meiki {
+            Some(m) => format!("MeikiOCR · {} · detecção PP-OCRv6 {} · {}", device(m.on_gpu()), p.det_model(), device(p.det_on_gpu())),
+            None => format!("PP-OCRv6 {} · {}", p.det_model(), device(p.det_on_gpu())),
+        }
+    }
+}
+
+/// MeikiOCR's recognizer, loaded once its models are downloaded, on the GPU when the recognizer
+/// would be (`EnginePlan`). An error (not Japanese, models missing or downloading) makes the pass
+/// read with PP-OCR's own recognizer.
+fn meiki_engine(state: &AppState, settings: &Settings) -> Result<Arc<MeikiRec>> {
+    if ocr::language(&settings.ocr_language).tag != "ja-JP" {
+        bail!("ele lê só japonês");
+    }
+    if !models::MEIKI.installed() {
+        match state.meiki_download.lock().clone() {
+            Some(state) => bail!("os modelos dele {state}"),
+            None => bail!("os modelos dele não estão baixados (Configurações › OCR)"),
+        }
+    }
+    let plan = settings.engine_plan();
+    let gpu = if plan.manual { plan.rec_gpu } else { plan.det_gpu };
+    let mut slot = state.meiki.lock();
+    if let Some((on, m)) = slot.as_ref() {
+        if *on == gpu {
+            return Ok(m.clone());
+        }
+    }
+    // Drop the previous sessions before loading their replacements.
+    *slot = None;
+    let m = Arc::new(MeikiRec::new(&models::MEIKI.dir()?, gpu, plan.gpu_choice)?);
+    *slot = Some((gpu, m.clone()));
+    Ok(m)
+}
+
+const MEIKI_DOWNLOADING: &str = "estão sendo baixados";
+
+/// Downloads MeikiOCR's models in the background, one download at a time; Settings › OCR follows it.
+fn download_meiki(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    {
+        let mut download = state.meiki_download.lock();
+        if models::MEIKI.installed() || download.as_deref().is_some_and(|d| d.starts_with(MEIKI_DOWNLOADING)) {
+            return;
+        }
+        *download = Some(format!("{MEIKI_DOWNLOADING} (0%)"));
+    }
+    let _ = app.emit("engine-status", ());
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let total = models::MEIKI.bytes().max(1);
+        let progress = |done: u64| {
+            *state.meiki_download.lock() = Some(format!("{MEIKI_DOWNLOADING} ({}%)", done * 100 / total));
+            let _ = app.emit("engine-status", ());
+        };
+        let result = models::MEIKI.ensure(&progress);
+        if let Err(e) = &result {
+            log::warn!("MeikiOCR download failed: {e:#}");
+        }
+        *state.meiki_download.lock() = result.err().map(|e| format!("não puderam ser baixados: {e:#}"));
+        let _ = app.emit("engine-status", ());
+    });
+}
+
+/// Settings › OCR: downloads MeikiOCR's models.
+#[tauri::command]
+fn install_meiki(app: AppHandle) {
+    download_meiki(&app);
+}
+
+/// Settings › OCR: deletes MeikiOCR's models; a pass asked for MeikiOCR then reads with PP-OCR's
+/// own recognizer.
+#[tauri::command]
+fn remove_meiki(app: AppHandle, state: tauri::State<'_, AppState>) -> std::result::Result<(), String> {
+    // The sessions hold the files open.
+    *state.meiki.lock() = None;
+    let removed = models::MEIKI.remove().map_err(|e| format!("{e:#}"));
+    *state.meiki_download.lock() = None;
+    let _ = app.emit("engine-status", ());
+    removed
+}
+
+fn cached_recognize(state: &AppState, engine: &BoxEngine, image: &image::RgbaImage, key: FrameKey, boxes: &[TextBox], batched: bool) -> Vec<OcrLine> {
     let cached = state.ocr_cache.lock().lines(key, boxes);
     if let Some(lines) = cached { return lines; }
-    let lines = if batched { engine.recognize_boxes_batched(image, boxes) } else { engine.recognize_boxes(image, boxes) };
+    let lines = engine.recognize(image, boxes, batched);
     state.ocr_cache.lock().save_lines(key, boxes, &lines);
     lines
 }
@@ -1287,6 +1420,16 @@ fn warm_engine_in_background(app: &AppHandle) {
         if let Err(e) = ensure_paddle(&state) {
             log::warn!("OCR engine unavailable: {e:#}");
         }
+        let settings = state.settings.read().clone();
+        if settings.wants_meiki() && ocr::language(&settings.ocr_language).tag == "ja-JP" {
+            if models::MEIKI.installed() {
+                if let Err(e) = meiki_engine(&state, &settings) {
+                    log::warn!("MeikiOCR unavailable: {e:#}");
+                }
+            } else {
+                download_meiki(&app);
+            }
+        }
         let _ = app.emit("engine-status", ());
     });
 }
@@ -1490,6 +1633,9 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
         error: state.engine_error.read().clone(),
         segmenter: segment::status(&state.settings.read().ocr_language),
         segmenter_installed: segment::installed(&state.settings.read().ocr_language),
+        meiki_installed: models::MEIKI.installed(),
+        meiki_download: state.meiki_download.try_lock().and_then(|d| d.clone()),
+        meiki_on_gpu: state.meiki.try_lock().and_then(|m| m.as_ref().map(|(_, m)| m.on_gpu())),
     }
 }
 
@@ -1895,6 +2041,7 @@ pub fn run() {
             let resource_dir = app.path().resource_dir()?;
             dictionaries::hunspell::set_root(resource_dir.join("hunspell"));
             segment::set_root(app.path().app_local_data_dir()?.join("segmenters"));
+            models::set_root(app.path().app_local_data_dir()?.join("ocr-models"));
             let first_run = !settings::settings_path(&config_dir).exists();
             let settings = settings::load(&config_dir);
             let hotkey = settings.hotkey.clone();
@@ -1912,6 +2059,8 @@ pub fn run() {
                 engine_error: RwLock::new(None),
                 ort_ready: Mutex::new(None),
                 lens: Mutex::new(None),
+                meiki: Mutex::new(None),
+                meiki_download: Mutex::new(None),
                 recognition: Mutex::new(None),
                 ocr_cache: Mutex::new(OcrCache::default()),
                 recognition_seq: AtomicU64::new(0),
@@ -2042,6 +2191,8 @@ pub fn run() {
             engine_status,
             install_segmenter,
             remove_segmenter,
+            install_meiki,
+            remove_meiki,
             ocr_languages,
             list_dictionaries,
             add_dictionary,

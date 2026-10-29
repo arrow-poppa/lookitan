@@ -1,10 +1,19 @@
 // OCR engines. Both produce lines in the coordinate space of the captured image, with a
 // horizontal span for every character so the word under the pointer can be picked.
 
+// ONNX Runtime's errors as anyhow's.
+macro_rules! ortx {
+    ($e:expr) => {
+        $e.map_err(|e| anyhow::anyhow!("{e}"))?
+    };
+}
+
 pub mod lens;
 pub mod cache;
 pub mod ink;
 mod lens_proto;
+pub mod meiki;
+pub mod models;
 pub mod paddle;
 pub mod quad;
 

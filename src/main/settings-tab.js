@@ -288,6 +288,48 @@ function segmenterRow() {
     return row;
 }
 
+/** MeikiOCR's models (ocr/models.rs): their state, with a button to download or delete them. */
+function meikiRow() {
+    const row = el('div', {id: 'meiki-row'});
+    fillMeikiRow(row);
+    return row;
+}
+
+function fillMeikiRow(row) {
+    row.replaceChildren();
+    const s = store.settings;
+    if (s.ocrEngine !== 'meiki' && (s.screenOcrEngine ?? s.ocrEngine) !== 'meiki') { return; }
+    const downloading = /^estão sendo baixados/.test(status?.meikiDownload || '');
+    const state = status?.meikiInstalled
+        ? `baixados${status.meikiOnGpu === true ? ' · reconhecimento na GPU' : status.meikiOnGpu === false ? ' · reconhecimento na CPU' : ''}`
+        : (status?.meikiDownload || 'não baixados');
+    const error = el('div', {class: 'd', style: 'color: var(--danger)', hidden: true});
+    const run = async (button, action) => {
+        error.hidden = true;
+        button.disabled = true;
+        try { await action(); } catch (e) {
+            error.textContent = String(e?.message || e);
+            error.hidden = false;
+        } finally { button.disabled = false; }
+    };
+    let button;
+    if (status?.meikiInstalled) {
+        button = el('button', {html: `${icon('trash', 'sm')}Apagar`});
+        button.addEventListener('click', () => void run(button, async () => {
+            if (!await ask('Apagar os modelos do MeikiOCR? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
+                {title: 'Apagar o MeikiOCR', kind: 'warning', okLabel: 'Apagar', cancelLabel: 'Cancelar'})) { return; }
+            await api.removeMeiki();
+        }));
+    } else {
+        button = el('button', {html: `${icon('download', 'sm')}Baixar`, disabled: downloading});
+        button.addEventListener('click', () => void run(button, () => api.installMeiki()));
+    }
+    row.append(el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('download')}),
+        el('div', {class: 'txt'}, el('div', {class: 't'}, 'Modelos do MeikiOCR (31 MB)'),
+            el('div', {class: 'd'}, `De rtr46/meikiocr no Hugging Face, licença LGPL-3.0; baixados uma vez e conferidos. Estado: ${state}`), error),
+        el('div', {class: 'ctl'}, button)));
+}
+
 const OWN_MODELS = {rec_arabic: 'Árabe', rec_cyrillic: 'Cirílico', rec_el: 'Grego', rec_korean: 'Coreano'};
 const EXPERIMENTAL_MODELS = {rec_ru_tiny: 'Tiny RU (experimental)'};
 
@@ -548,6 +590,8 @@ export async function refreshStatus() {
     if (s) { s.textContent = engineStatusText(); }
     const row = document.getElementById('segmenter-row');
     if (row) { fillSegmenterRow(row); }
+    const meiki = document.getElementById('meiki-row');
+    if (meiki) { fillMeikiRow(meiki); }
 }
 
 /** Switches to another profile (or Global) and shows its settings: every tab is drawn again from
@@ -683,11 +727,16 @@ function render(root) {
     const lensKey = textInput(s.lensApiKey, (v) => { s.lensApiKey = v.trim(); save(); }, {type: 'password', placeholder: 'Opcional'});
     const screenEngine = s.screenOcrEngine ?? s.ocrEngine;
     const usesLens = screenEngine === 'lens' || s.ocrEngine === 'lens';
+    const japanese = s.ocrLanguage === 'ja-JP';
     const engineDesc = (engine) => engine === 'lens'
         ? 'Envia a captura ao Google (API não oficial). Se falhar, o PP-OCRv6 assume.'
-        : 'Roda no seu computador; nada sai dele.';
+        : engine === 'meiki'
+            ? `A detecção do PP-OCRv6 acha as linhas e o MeikiOCR, treinado em texto de jogos japoneses, as lê. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, o PP-OCRv6 lê.' : 'Ele lê só japonês: neste idioma, o PP-OCRv6 lê no lugar.'}`
+            : 'Roda no seu computador; nada sai dele.';
+    // MeikiOCR reads Japanese only: it is offered with Japanese, and kept in the list while chosen.
     const engineSelect = (value, set) => select([
         {value: 'paddle', label: 'PP-OCRv6 (local)'},
+        ...(japanese || value === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (local, japonês)'}] : []),
         {value: 'lens', label: 'Google Lens (nuvem)'},
     ], value, (v) => { set(v); save(); rerender(); });
     root.append(heading('OCR'), el('div', {class: 'group'},
@@ -695,6 +744,7 @@ function render(root) {
             control: engineSelect(s.ocrEngine, (v) => { s.ocrEngine = v; })}),
         cardRow({icon: 'scan', title: 'OCR da tela inteira', desc: `Usado quando o atalho é apertado fora de uma palavra; depois é só clicar na palavra. ${engineDesc(screenEngine)}`, wide: true,
             control: engineSelect(screenEngine, (v) => { s.screenOcrEngine = v; })}),
+        meikiRow(),
         usesLens ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'Opcional nos instaladores do GitHub, que já vêm com uma chave. Cole a sua se ela parar de funcionar.', wide: true, control: lensKey}) : null,
         captureRegionRows(),
         // In the manual mode each model has its own CPU | GPU switch instead.

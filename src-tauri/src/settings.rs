@@ -13,6 +13,9 @@ pub enum OcrEngineKind {
     Paddle,
     /// Google Lens over the network.
     Lens,
+    /// PP-OCR's detector with MeikiOCR's recognizer (ocr/meiki.rs), for Japanese; its models are
+    /// downloaded when it is chosen.
+    Meiki,
 }
 
 impl From<String> for OcrEngineKind {
@@ -20,6 +23,7 @@ impl From<String> for OcrEngineKind {
         match name.as_str() {
             "paddle" => Self::Paddle,
             "lens" => Self::Lens,
+            "meiki" => Self::Meiki,
             other => {
                 log::warn!("unknown OCR engine {other:?}; using PP-OCRv6");
                 Self::Paddle
@@ -269,6 +273,11 @@ pub struct SettingsProfile {
 
 impl Settings {
     /// The engine for a pass around the pointer or over the whole screen.
+    /// Whether either engine is MeikiOCR.
+    pub fn wants_meiki(&self) -> bool {
+        self.ocr_engine == OcrEngineKind::Meiki || self.screen_ocr_engine == Some(OcrEngineKind::Meiki)
+    }
+
     pub fn engine_for(&self, whole_screen: bool) -> OcrEngineKind {
         if whole_screen { self.screen_ocr_engine.unwrap_or(self.ocr_engine) } else { self.ocr_engine }
     }
@@ -644,6 +653,8 @@ mod tests {
         assert_eq!(saved.screen_ocr_engine, Some(OcrEngineKind::Lens));
         assert_eq!(saved.ocr_language, "ja-JP");
         assert_eq!(serde_json::to_value(OcrEngineKind::Lens).unwrap(), "lens");
+        let meiki: Settings = serde_json::from_str(r#"{"screenOcrEngine": "meiki"}"#).unwrap();
+        assert!(meiki.wants_meiki() && meiki.engine_for(true) == OcrEngineKind::Meiki && meiki.engine_for(false) == OcrEngineKind::Paddle);
     }
 
     #[test]

@@ -501,7 +501,7 @@ fn ensure(root: &Path, pack: &Pack, progress: &dyn Fn(u64)) -> Result<PathBuf> {
 
 /// Downloads `url` to `to`. With a pinned SHA-256 the file must be exactly `bytes` long and match
 /// it; without one, `bytes` is only the most it may weigh.
-fn download(url: &str, to: &Path, bytes: u64, sha256: Option<&str>, progress: &dyn Fn(u64)) -> Result<()> {
+pub(crate) fn download(url: &str, to: &Path, bytes: u64, sha256: Option<&str>, progress: &dyn Fn(u64)) -> Result<()> {
     let client = reqwest::blocking::Client::builder().timeout(DOWNLOAD_TIMEOUT).build()?;
     let mut response = client.get(url).send()?.error_for_status()?;
     let mut file = File::create(to).with_context(|| format!("create {}", to.display()))?;

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use image::imageops::FilterType;
 use image::{Rgba, RgbaImage};
 use ort::session::builder::GraphOptimizationLevel;
@@ -21,12 +21,6 @@ use parking_lot::Mutex;
 
 use super::{quad, ink, is_rtl_text, is_vertical_box, reverse_rtl, Flow, OcrChar, OcrLine, Tilt};
 use crate::settings::GpuPreference;
-
-macro_rules! ortx {
-    ($e:expr) => {
-        $e.map_err(|e| anyhow!("{e}"))?
-    };
-}
 
 #[cfg(test)]
 mod tests {
@@ -242,7 +236,7 @@ mod tests {
         });
         let b = TextBox { x0: 40.0, y0: 10.0, x1: 60.0, y1: 110.0, quad: None };
         assert_eq!(first_turns(&b), [Turn::Left], "a tall box is read top to bottom first");
-        let left = rec_crop(&img, b, Turn::Left).unwrap();
+        let left = rec_crop(&img, b, Turn::Left, true).unwrap();
         assert_eq!(left.image.height(), REC_HEIGHT);
         assert_eq!(left.tw, rec_width(100, 20), "as long as the column is tall");
         assert_eq!(box_rec_width(&b), left.tw);
@@ -251,7 +245,7 @@ mod tests {
         assert!(ink.cols[..30].iter().all(|&c| c) && !ink.cols[40..].iter().any(|&c| c), "{:?}", ink.cols);
         assert_eq!((ink.y0, ink.y1), (0, 8));
         // Turned right: the top is at the right, and the right side at the bottom.
-        let ink = rec_crop(&img, b, Turn::Right).unwrap().ink.unwrap();
+        let ink = rec_crop(&img, b, Turn::Right, true).unwrap().ink.unwrap();
         assert!(ink.cols[70..].iter().all(|&c| c) && !ink.cols[..60].iter().any(|&c| c), "{:?}", ink.cols);
         assert_eq!((ink.y0, ink.y1), (12, 20));
         assert_eq!(first_turns(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 40.0, quad: None }), [Turn::Upright]);
@@ -271,6 +265,44 @@ mod tests {
     }
 
     /// Edits between `a` and `b`, in characters.
+    struct FakeReader(Vec<Glyph>);
+
+    impl BoxReader for FakeReader {
+        fn read(&self, crops: &[(&RgbaImage, bool)]) -> Result<Vec<Vec<Glyph>>> {
+            Ok(crops.iter().map(|_| self.0.clone()).collect())
+        }
+    }
+
+    #[test]
+    fn another_recognizer_s_characters_get_their_spans_and_word_gaps_on_the_capture() {
+        let mut img = RgbaImage::from_pixel(260, 40, Rgba([255, 255, 255, 255]));
+        let blocks = [(20u32, 44u32), (50, 74), (200, 224)];
+        for (x0, x1) in blocks {
+            for x in x0..x1 {
+                for y in 10..30 {
+                    img.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+                }
+            }
+        }
+        let b = TextBox { x0: 10.0, y0: 5.0, x1: 240.0, y1: 35.0, quad: None };
+        // Along the crop, which starts at x = 10.
+        let glyph = |ch, from: f32| Glyph { ch, from, to: from + 24.0, score: 0.9 };
+        let reader = FakeReader(vec![glyph('日', 10.0), glyph('本', 40.0), glyph('語', 190.0)]);
+        let lines = recognize_boxes_with(&img, &[b], &reader);
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        // The wide gap before 語 is a space, as in PP-OCR's lines.
+        assert_eq!(line.text, "日本 語");
+        assert_eq!(line.flow, Flow::Across);
+        let glyphs: Vec<&OcrChar> = line.chars.iter().filter(|c| !c.ch.is_whitespace()).collect();
+        for (c, (x0, x1)) in glyphs.iter().zip(blocks) {
+            let mid = (c.x0 + c.x1) / 2.0;
+            assert!(mid > x0 as f32 && mid < x1 as f32, "{} at {}..{}", c.ch, c.x0, c.x1);
+        }
+        // A reader that reads nothing drops the box.
+        assert!(recognize_boxes_with(&img, &[b], &FakeReader(Vec::new())).is_empty());
+    }
+
     fn edits(a: &str, b: &str) -> usize {
         let b: Vec<char> = b.chars().collect();
         let mut row: Vec<usize> = (0..=b.len()).collect();
@@ -570,7 +602,8 @@ struct RecCrop {
     ink: Option<ink::Ink>,
 }
 
-fn rec_crop(img: &RgbaImage, b: TextBox, turn: Turn) -> Option<RecCrop> {
+/// With `resize` off, `image` is the turned crop at capture resolution (for a `BoxReader`).
+fn rec_crop(img: &RgbaImage, b: TextBox, turn: Turn, resize: bool) -> Option<RecCrop> {
     let (iw, ih) = img.dimensions();
     let (x, y, cw, ch, mut crop) = if let Some(q) = &b.quad {
         // A turned box is straightened first, as Lookupper's recognizer does.
@@ -595,6 +628,9 @@ fn rec_crop(img: &RgbaImage, b: TextBox, turn: Turn) -> Option<RecCrop> {
     let (w, h) = crop.dimensions();
     let lum: Vec<u8> = crop.pixels().map(|p| ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8).collect();
     let ink = ink::measure(&lum, w as usize, h as usize);
+    if !resize {
+        return Some(RecCrop { b, x, y, cw, ch, turn, tw: w, image: crop, ink });
+    }
     let tw = rec_width(w, h);
     let image = image::imageops::resize(&crop, tw, REC_HEIGHT, FilterType::Triangle);
     Some(RecCrop { b, x, y, cw, ch, turn, tw, image, ink })
@@ -773,15 +809,15 @@ pub struct PaddleOcr {
 
 /// A successful GPU session load does not guarantee that a later, larger input will fit.
 /// Keep recovery inside the session lock so foreground and overlay OCR share the CPU replacement.
-struct InferenceSession<S = Session> {
-    session: Option<S>,
-    on_gpu: Arc<AtomicBool>,
-    cpu_path: PathBuf,
-    stage: &'static str,
+pub(crate) struct InferenceSession<S = Session> {
+    pub(crate) session: Option<S>,
+    pub(crate) on_gpu: Arc<AtomicBool>,
+    pub(crate) cpu_path: PathBuf,
+    pub(crate) stage: &'static str,
 }
 
 impl<S> InferenceSession<S> {
-    fn run<T>(
+    pub(crate) fn run<T>(
         &mut self,
         create_cpu: impl FnOnce(&Path) -> Result<S>,
         mut infer: impl FnMut(&mut S) -> Result<T>,
@@ -816,7 +852,7 @@ fn threads() -> usize {
         .clamp(1, 4)
 }
 
-fn cpu_session(path: &Path) -> Result<Session> {
+pub(crate) fn cpu_session(path: &Path) -> Result<Session> {
     // On Linux the session's worker threads take this thread's priority (platform/priority.rs).
     crate::platform::priority::raise_this_thread();
     let b = ortx!(Session::builder());
@@ -828,7 +864,7 @@ fn cpu_session(path: &Path) -> Result<Session> {
 
 // `choice` is the card the user picked (Configurações › OCR); `None` keeps the API's default.
 #[cfg(windows)]
-fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
+pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
     use ort::ep::directml::PerformancePreference;
     use ort::ep::DirectML;
     let b = ortx!(Session::builder());
@@ -852,7 +888,7 @@ fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
 // from the power preference (high performance when unset). The context is shared by every session
 // and released with the last one, so a new preference applies when the engine is rebuilt.
 #[cfg(target_os = "linux")]
-fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
+pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
     use ort::ep::webgpu::DawnBackendType;
     use ort::ep::{ArbitrarilyConfigurableExecutionProvider, WebGPU};
     // Dawn's and the session's threads take this thread's priority (platform/priority.rs).
@@ -873,7 +909,7 @@ fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-fn gpu_session(_path: &Path, _choice: Option<GpuPreference>) -> Result<Session> {
+pub(crate) fn gpu_session(_path: &Path, _choice: Option<GpuPreference>) -> Result<Session> {
     bail!("GPU inference is only available on Windows (DirectML) and Linux (WebGPU)")
 }
 
@@ -1175,7 +1211,7 @@ impl PaddleOcr {
 
     /// Reads box `b` turned `turn`, and keeps the reading in `best` if it is better.
     fn read_turn(&self, img: &RgbaImage, b: TextBox, turn: Turn, best: &mut Option<Reading>) -> Result<()> {
-        let Some(crop) = rec_crop(img, b, turn) else { return Ok(()) };
+        let Some(crop) = rec_crop(img, b, turn, true) else { return Ok(()) };
         let pw = rec_padded_width(&self.rec_model, crop.tw) as usize;
         let mut data = vec![0f32; 3 * REC_HEIGHT as usize * pw];
         fill_rec_input(&mut data, &crop.image, pw);
@@ -1224,7 +1260,7 @@ impl PaddleOcr {
     /// Reads `boxes[i]` turned `t` for every `(i, t)` of `reads` in one recognizer run, and keeps
     /// in `best[i]` the better reading.
     fn read_batch(&self, img: &RgbaImage, boxes: &[TextBox], reads: &[(usize, Turn)], best: &mut [Option<Reading>]) -> Result<()> {
-        let crops: Vec<(usize, RecCrop)> = reads.iter().filter_map(|&(i, t)| rec_crop(img, boxes[i], t).map(|c| (i, c))).collect();
+        let crops: Vec<(usize, RecCrop)> = reads.iter().filter_map(|&(i, t)| rec_crop(img, boxes[i], t, true).map(|c| (i, c))).collect();
         if crops.is_empty() {
             return Ok(());
         }
@@ -1267,16 +1303,6 @@ impl PaddleOcr {
         if steps == 0 || classes == 0 {
             return None;
         }
-        let b = crop.b;
-        // Where the line starts and how long it is in capture pixels, and its ends: across, or
-        // down a turned crop (from the top for `Turn::Left`; `Turn::Right` is mirrored below).
-        let (start, len, lo, hi) = match (crop.turn, b.quad.is_some()) {
-            // A straightened crop: positions along it, mapped onto the capture below.
-            (Turn::Upright, true) => (0, crop.cw, 0.0, crop.cw as f32),
-            (_, true) => (0, crop.ch, 0.0, crop.ch as f32),
-            (Turn::Upright, false) => (crop.x, crop.cw, b.x0, b.x1),
-            (_, false) => (crop.y, crop.ch, b.y0, b.y1),
-        };
         // In a batch, the steps past this crop's own width only see padding.
         let content_steps = steps as f32 * crop.tw as f32 / padded_w as f32;
         let valid = (content_steps.ceil() as usize).clamp(1, steps);
@@ -1312,15 +1338,107 @@ impl PaddleOcr {
             }
             prev = best;
         }
+        // Each CTC step covers an equal slice of the padded input, so of the crop's length.
+        let step_w = crop.length().1 as f32 / content_steps;
+        line_from(crop, decoded, step_w, sure / read.max(1) as f32)
+    }
+
+}
+
+/// Recognizes the boxes with another recognizer than PP-OCR's (`BoxReader`), `READ_RUN` boxes
+/// to a call; boxes without readable text are dropped. Columns are read top to bottom only.
+pub fn recognize_boxes_with(img: &RgbaImage, boxes: &[TextBox], reader: &dyn BoxReader) -> Vec<OcrLine> {
+    let mut lines = Vec::with_capacity(boxes.len());
+    for run in boxes.chunks(READ_RUN) {
+        let crops: Vec<RecCrop> = run.iter().filter_map(|b| rec_crop(img, *b, first_turns(b)[0], false)).collect();
+        // A column goes to the reader standing, as it is on the screen.
+        let standing: Vec<Option<RgbaImage>> = crops
+            .iter()
+            .map(|c| (c.turn == Turn::Left).then(|| image::imageops::rotate90(&c.image)))
+            .collect();
+        let inputs: Vec<(&RgbaImage, bool)> =
+            crops.iter().zip(&standing).map(|(c, u)| (u.as_ref().unwrap_or(&c.image), c.turn == Turn::Left)).collect();
+        let read = match reader.read(&inputs) {
+            Ok(read) => read,
+            Err(e) => {
+                log::warn!("recognition failed: {e:#}");
+                continue;
+            }
+        };
+        for (crop, glyphs) in crops.iter().zip(read) {
+            if let Some(reading) = line_from_glyphs(crop, glyphs) {
+                lines.push(reading.line);
+            }
+        }
+    }
+    lines.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));
+    lines
+}
+
+/// Boxes a `BoxReader` gets at once in `recognize_boxes_with`.
+const READ_RUN: usize = 16;
+
+/// A character another recognizer read (`BoxReader`), with where it lies along its crop, in the
+/// crop's pixels (capture pixels, or the straightened crop's for a turned box), and its score.
+#[derive(Clone, Copy, Debug)]
+pub struct Glyph {
+    pub ch: char,
+    pub from: f32,
+    pub to: f32,
+    pub score: f32,
+}
+
+/// A recognizer reading the detector's boxes instead of PP-OCR's (ocr/meiki.rs). It gets each box's
+/// crop at capture resolution, a line upright or (`true`) a column standing, and gives each crop's
+/// characters in reading order.
+pub trait BoxReader: Send + Sync {
+    fn read(&self, crops: &[(&RgbaImage, bool)]) -> Result<Vec<Vec<Glyph>>>;
+}
+
+impl RecCrop {
+    /// Where the line starts and how long it is in capture pixels, and its ends: across, or down a
+    /// turned crop (from the top for `Turn::Left`; `Turn::Right` is mirrored in `line_from`).
+    fn length(&self) -> (u32, u32, f32, f32) {
+        let b = self.b;
+        match (self.turn, b.quad.is_some()) {
+            // A straightened crop: positions along it, mapped onto the capture in `line_from`.
+            (Turn::Upright, true) => (0, self.cw, 0.0, self.cw as f32),
+            (_, true) => (0, self.ch, 0.0, self.ch as f32),
+            (Turn::Upright, false) => (self.x, self.cw, b.x0, b.x1),
+            (_, false) => (self.y, self.ch, b.y0, b.y1),
+        }
+    }
+
+    /// The crop's height across the line, in capture pixels.
+    fn across(&self) -> f32 {
+        (if self.turn == Turn::Upright { self.ch } else { self.cw }) as f32
+    }
+}
+
+/// A `BoxReader`'s characters as PP-OCR's would be: each on the step of a 48-pixel-high recognizer
+/// (a sixth of the line's height) where its centre lies, so word gaps, ink and spans are found as
+/// for PP-OCR's lines. Its score is the mean of its characters'.
+fn line_from_glyphs(crop: &RecCrop, glyphs: Vec<Glyph>) -> Option<Reading> {
+    if glyphs.is_empty() {
+        return None;
+    }
+    let step_w = (crop.across() / 6.0).max(1.0);
+    let score = glyphs.iter().map(|g| g.score).sum::<f32>() / glyphs.len() as f32;
+    let decoded = glyphs.iter().map(|g| (g.ch, (((g.from + g.to) / 2.0).max(0.0) / step_w) as usize)).collect();
+    line_from(crop, decoded, step_w, score)
+}
+
+/// The line of `crop` from its characters, each with its recognizer step (`step_w` crop pixels
+/// long): spaces at wide gaps, word edges snapped to the ink, spans mapped onto the capture.
+fn line_from(crop: &RecCrop, decoded: Vec<(char, usize)>, step_w: f32, score: f32) -> Option<Reading> {
+    {
+        let b = crop.b;
+        let (start, _, lo, hi) = crop.length();
         let decoded = split_wide_gaps(decoded);
         if decoded.iter().all(|(c, _)| c.is_whitespace()) {
             return None;
         }
-
-        // Each CTC step covers an equal slice of the padded input, so of the crop's length.
-        let step_w = len as f32 / content_steps;
-        // The crop's height across the line, in capture pixels.
-        let across = (if crop.turn == Turn::Upright { crop.ch } else { crop.cw }) as f32;
+        let across = crop.across();
         let decoded = match &crop.ink {
             Some(ink) => split_at_ink_gaps(decoded, ink, step_w, across),
             None => decoded,
@@ -1396,6 +1514,6 @@ impl PaddleOcr {
             Turn::Right => Flow::Up,
         };
         let line = OcrLine { text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, chars, ink_y, flow, tilt, look: Default::default() };
-        Some(Reading { line, score: sure / read.max(1) as f32 })
+        Some(Reading { line, score })
     }
 }
