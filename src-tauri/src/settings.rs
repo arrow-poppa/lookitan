@@ -16,6 +16,9 @@ pub enum OcrEngineKind {
     /// PP-OCR's detector with MeikiOCR's recognizer (ocr/meiki.rs), for Japanese; its models are
     /// downloaded when it is chosen.
     Meiki,
+    /// Chrome's Screen AI library (ocr/screenai.rs), any language, in a helper process; its files
+    /// are downloaded when it is chosen.
+    ScreenAi,
 }
 
 impl From<String> for OcrEngineKind {
@@ -24,6 +27,7 @@ impl From<String> for OcrEngineKind {
             "paddle" => Self::Paddle,
             "lens" => Self::Lens,
             "meiki" => Self::Meiki,
+            "screenai" => Self::ScreenAi,
             other => {
                 log::warn!("unknown OCR engine {other:?}; using PP-OCRv6");
                 Self::Paddle
@@ -276,6 +280,11 @@ impl Settings {
     /// Whether either engine is MeikiOCR.
     pub fn wants_meiki(&self) -> bool {
         self.ocr_engine == OcrEngineKind::Meiki || self.screen_ocr_engine == Some(OcrEngineKind::Meiki)
+    }
+
+    /// Whether either engine is Chrome ScreenAI.
+    pub fn wants_screenai(&self) -> bool {
+        self.ocr_engine == OcrEngineKind::ScreenAi || self.screen_ocr_engine == Some(OcrEngineKind::ScreenAi)
     }
 
     pub fn engine_for(&self, whole_screen: bool) -> OcrEngineKind {
@@ -655,6 +664,9 @@ mod tests {
         assert_eq!(serde_json::to_value(OcrEngineKind::Lens).unwrap(), "lens");
         let meiki: Settings = serde_json::from_str(r#"{"screenOcrEngine": "meiki"}"#).unwrap();
         assert!(meiki.wants_meiki() && meiki.engine_for(true) == OcrEngineKind::Meiki && meiki.engine_for(false) == OcrEngineKind::Paddle);
+        let screenai: Settings = serde_json::from_str(r#"{"ocrEngine": "screenai"}"#).unwrap();
+        assert!(screenai.wants_screenai() && !screenai.wants_meiki());
+        assert_eq!(serde_json::to_value(OcrEngineKind::ScreenAi).unwrap(), "screenai");
     }
 
     #[test]

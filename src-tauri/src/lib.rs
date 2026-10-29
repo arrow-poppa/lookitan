@@ -45,6 +45,7 @@ use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
 use crate::ocr::meiki::MeikiRec;
 use crate::ocr::models;
+use crate::ocr::screenai::ScreenAi;
 use crate::ocr::paddle::{recognize_boxes_with, split_focus, EnginePlan, PaddleOcr, TextBox};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
@@ -98,8 +99,10 @@ pub struct AppState {
     lens: Mutex<Option<Arc<LensOcr>>>,
     /// MeikiOCR's recognizer, and whether it was asked for the GPU.
     meiki: Mutex<Option<(bool, Arc<MeikiRec>)>>,
-    /// The state of MeikiOCR's models' download while it runs, or why it failed.
-    meiki_download: Mutex<Option<String>>,
+    /// Chrome ScreenAI's helper process, started with its first lookup.
+    screenai: ScreenAi,
+    /// Each downloaded engine's download while it runs, or why it failed (`Downloaded::id`).
+    downloads: Mutex<HashMap<&'static str, String>>,
     recognition: Mutex<Option<Recognition>>,
     ocr_cache: Mutex<OcrCache>,
     recognition_seq: AtomicU64,
@@ -217,10 +220,9 @@ pub struct EngineStatus {
     pub segmenter: Option<String>,
     /// Whether that analyzer's files are downloaded.
     pub segmenter_installed: Option<bool>,
-    /// MeikiOCR (ocr/meiki.rs): whether its models are downloaded, their download while it runs
-    /// (or why it failed), and where its recognizer runs once loaded.
-    pub meiki_installed: bool,
-    pub meiki_download: Option<String>,
+    /// The engines whose files are downloaded when chosen, by `Downloaded::id`.
+    pub models: HashMap<&'static str, ModelState>,
+    /// Where MeikiOCR's recognizer runs, once loaded.
     pub meiki_on_gpu: Option<bool>,
 }
 
@@ -744,14 +746,22 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" }));
     let mut key = key_of(kind);
     let mut notice = None;
-    if kind == OcrEngineKind::Lens {
-        match cached_lens(state, image, key, settings) {
+    // Engines that read the whole image at once; when one fails, PP-OCRv6 reads.
+    let page = match kind {
+        OcrEngineKind::Lens => Some(("Google Lens", cached_page(state, key, || {
+            lens_engine(state)?.recognize(image, &settings.lens_api_key, &settings.ocr_language)
+        }))),
+        OcrEngineKind::ScreenAi => Some(("Chrome ScreenAI", cached_page(state, key, || state.screenai.recognize(image)))),
+        OcrEngineKind::Paddle | OcrEngineKind::Meiki => None,
+    };
+    if let Some((name, read)) = page {
+        match read {
             Ok(mut lines) => {
                 layout::look(image, &mut lines);
-                return Ok(OcrPass { lines, engine: "Google Lens".into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None });
+                return Ok(OcrPass { lines, engine: name.into(), kind, rest: Vec::new(), paddle: None, notice, key, block: None });
             }
             Err(e) => {
-                notice = Some(format!("O Google Lens falhou e o OCR local (PP-OCRv6) leu no lugar: {e:#}"));
+                notice = Some(format!("O {name} falhou e o OCR local (PP-OCRv6) leu no lugar: {e:#}"));
                 key = key_of(OcrEngineKind::Paddle);
             }
         }
@@ -842,8 +852,8 @@ fn meiki_engine(state: &AppState, settings: &Settings) -> Result<Arc<MeikiRec>> 
     if ocr::language(&settings.ocr_language).tag != "ja-JP" {
         bail!("ele lê só japonês");
     }
-    if !models::MEIKI.installed() {
-        match state.meiki_download.lock().clone() {
+    if !Downloaded::Meiki.installed() {
+        match state.downloads.lock().get(Downloaded::Meiki.id()).cloned() {
             Some(state) => bail!("os modelos dele {state}"),
             None => bail!("os modelos dele não estão baixados (Configurações › OCR)"),
         }
@@ -863,50 +873,130 @@ fn meiki_engine(state: &AppState, settings: &Settings) -> Result<Arc<MeikiRec>> 
     Ok(m)
 }
 
-const MEIKI_DOWNLOADING: &str = "estão sendo baixados";
+/// The engines whose files are not in the installers but downloaded when the user picks them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Downloaded {
+    Meiki,
+    ScreenAi,
+}
 
-/// Downloads MeikiOCR's models in the background, one download at a time; Settings › OCR follows it.
-fn download_meiki(app: &AppHandle) {
+/// A downloaded engine's files, for Settings › OCR.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelState {
+    pub installed: bool,
+    /// The download while it runs ("estão sendo baixados (40%)"), or why it failed.
+    pub download: Option<String>,
+}
+
+const DOWNLOADING: &str = "estão sendo baixados";
+
+impl Downloaded {
+    const ALL: [Downloaded; 2] = [Downloaded::Meiki, Downloaded::ScreenAi];
+
+    /// Its name in Settings and in the `models` map: the engine's own (`OcrEngineKind`).
+    fn id(self) -> &'static str {
+        match self {
+            Downloaded::Meiki => "meiki",
+            Downloaded::ScreenAi => "screenai",
+        }
+    }
+
+    fn of(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.id() == id)
+    }
+
+    fn supported(self) -> bool {
+        self != Downloaded::ScreenAi || ocr::screenai::supported()
+    }
+
+    fn installed(self) -> bool {
+        match self {
+            Downloaded::Meiki => models::MEIKI.installed(),
+            Downloaded::ScreenAi => ocr::screenai::installed(),
+        }
+    }
+
+    fn bytes(self) -> u64 {
+        match self {
+            Downloaded::Meiki => models::MEIKI.bytes(),
+            Downloaded::ScreenAi => ocr::screenai::bytes(),
+        }
+    }
+
+    fn ensure(self, progress: &dyn Fn(u64)) -> Result<()> {
+        match self {
+            Downloaded::Meiki => models::MEIKI.ensure(progress).map(|_| ()),
+            Downloaded::ScreenAi => ocr::screenai::ensure(progress),
+        }
+    }
+
+    /// Ends what holds its files open, then deletes them.
+    fn remove(self, state: &AppState) -> Result<()> {
+        match self {
+            Downloaded::Meiki => {
+                *state.meiki.lock() = None;
+                models::MEIKI.remove()
+            }
+            Downloaded::ScreenAi => {
+                state.screenai.stop();
+                ocr::screenai::remove()
+            }
+        }
+    }
+}
+
+/// Downloads an engine's files in the background, one download each at a time; Settings › OCR
+/// follows it.
+fn download_models(app: &AppHandle, which: Downloaded) {
     let state = app.state::<AppState>();
     {
-        let mut download = state.meiki_download.lock();
-        if models::MEIKI.installed() || download.as_deref().is_some_and(|d| d.starts_with(MEIKI_DOWNLOADING)) {
+        let mut downloads = state.downloads.lock();
+        if !which.supported() || which.installed() || downloads.get(which.id()).is_some_and(|d| d.starts_with(DOWNLOADING)) {
             return;
         }
-        *download = Some(format!("{MEIKI_DOWNLOADING} (0%)"));
+        downloads.insert(which.id(), format!("{DOWNLOADING} (0%)"));
     }
     let _ = app.emit("engine-status", ());
     let app = app.clone();
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
-        let total = models::MEIKI.bytes().max(1);
+        let total = which.bytes().max(1);
         let progress = |done: u64| {
-            *state.meiki_download.lock() = Some(format!("{MEIKI_DOWNLOADING} ({}%)", done * 100 / total));
+            state.downloads.lock().insert(which.id(), format!("{DOWNLOADING} ({}%)", done * 100 / total));
             let _ = app.emit("engine-status", ());
         };
-        let result = models::MEIKI.ensure(&progress);
-        if let Err(e) = &result {
-            log::warn!("MeikiOCR download failed: {e:#}");
+        let result = which.ensure(&progress);
+        let mut downloads = state.downloads.lock();
+        match result {
+            Ok(()) => {
+                downloads.remove(which.id());
+            }
+            Err(e) => {
+                log::warn!("{} download failed: {e:#}", which.id());
+                downloads.insert(which.id(), format!("não puderam ser baixados: {e:#}"));
+            }
         }
-        *state.meiki_download.lock() = result.err().map(|e| format!("não puderam ser baixados: {e:#}"));
+        drop(downloads);
         let _ = app.emit("engine-status", ());
     });
 }
 
-/// Settings › OCR: downloads MeikiOCR's models.
+/// Settings › OCR: downloads an engine's files (`Downloaded::id`).
 #[tauri::command]
-fn install_meiki(app: AppHandle) {
-    download_meiki(&app);
+fn install_ocr_models(app: AppHandle, engine: String) {
+    if let Some(which) = Downloaded::of(&engine) {
+        download_models(&app, which);
+    }
 }
 
-/// Settings › OCR: deletes MeikiOCR's models; a pass asked for MeikiOCR then reads with PP-OCR's
-/// own recognizer.
+/// Settings › OCR: deletes an engine's files; a pass asked for that engine then reads with
+/// PP-OCRv6.
 #[tauri::command]
-fn remove_meiki(app: AppHandle, state: tauri::State<'_, AppState>) -> std::result::Result<(), String> {
-    // The sessions hold the files open.
-    *state.meiki.lock() = None;
-    let removed = models::MEIKI.remove().map_err(|e| format!("{e:#}"));
-    *state.meiki_download.lock() = None;
+fn remove_ocr_models(app: AppHandle, state: tauri::State<'_, AppState>, engine: String) -> std::result::Result<(), String> {
+    let which = Downloaded::of(&engine).ok_or_else(|| format!("unknown engine {engine}"))?;
+    let removed = which.remove(&state).map_err(|e| format!("{e:#}"));
+    state.downloads.lock().remove(which.id());
     let _ = app.emit("engine-status", ());
     removed
 }
@@ -919,13 +1009,15 @@ fn cached_recognize(state: &AppState, engine: &BoxEngine, image: &image::RgbaIma
     lines
 }
 
-fn cached_lens(state: &AppState, image: &image::RgbaImage, key: FrameKey, settings: &Settings) -> Result<Vec<OcrLine>> {
+/// The lines of an engine that reads the whole image at once (`read`), cached under `key` with a
+/// box per line.
+fn cached_page(state: &AppState, key: FrameKey, read: impl FnOnce() -> Result<Vec<OcrLine>>) -> Result<Vec<OcrLine>> {
     let cached = {
         let mut cache = state.ocr_cache.lock();
         cache.boxes(key).and_then(|boxes| cache.lines(key, &boxes))
     };
     if let Some(lines) = cached { return Ok(lines); }
-    let lines = lens_engine(state)?.recognize(image, &settings.lens_api_key, &settings.ocr_language)?;
+    let lines = read()?;
     let boxes: Vec<TextBox> = lines.iter().map(|line| TextBox { x0: line.x0, y0: line.y0, x1: line.x1, y1: line.y1, quad: None }).collect();
     let mut cache = state.ocr_cache.lock();
     cache.save_boxes(key, &boxes);
@@ -1422,13 +1514,17 @@ fn warm_engine_in_background(app: &AppHandle) {
         }
         let settings = state.settings.read().clone();
         if settings.wants_meiki() && ocr::language(&settings.ocr_language).tag == "ja-JP" {
-            if models::MEIKI.installed() {
+            if Downloaded::Meiki.installed() {
                 if let Err(e) = meiki_engine(&state, &settings) {
                     log::warn!("MeikiOCR unavailable: {e:#}");
                 }
             } else {
-                download_meiki(&app);
+                download_models(&app, Downloaded::Meiki);
             }
+        }
+        // ScreenAI's helper starts with its first lookup; only its files are fetched here.
+        if settings.wants_screenai() && Downloaded::ScreenAi.supported() && !Downloaded::ScreenAi.installed() {
+            download_models(&app, Downloaded::ScreenAi);
         }
         let _ = app.emit("engine-status", ());
     });
@@ -1633,8 +1729,14 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
         error: state.engine_error.read().clone(),
         segmenter: segment::status(&state.settings.read().ocr_language),
         segmenter_installed: segment::installed(&state.settings.read().ocr_language),
-        meiki_installed: models::MEIKI.installed(),
-        meiki_download: state.meiki_download.try_lock().and_then(|d| d.clone()),
+        models: {
+            let downloads = state.downloads.try_lock().map(|d| d.clone()).unwrap_or_default();
+            Downloaded::ALL
+                .iter()
+                .filter(|d| d.supported())
+                .map(|d| (d.id(), ModelState { installed: d.installed(), download: downloads.get(d.id()).cloned() }))
+                .collect()
+        },
         meiki_on_gpu: state.meiki.try_lock().and_then(|m| m.as_ref().map(|(_, m)| m.on_gpu())),
     }
 }
@@ -2017,6 +2119,13 @@ pub fn run() {
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    // Chrome ScreenAI's helper process (ocr/screenai.rs): this executable, without the app.
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if let Some(i) = args.iter().position(|a| a == ocr::screenai::HELPER_ARG) {
+        let dir = args.get(i + 1).map(PathBuf::from).unwrap_or_default();
+        std::process::exit(ocr::screenai::helper_main(&dir));
+    }
+
     let wants_scan = std::env::args().any(|a| a == "--scan");
 
     tauri::Builder::default()
@@ -2060,7 +2169,8 @@ pub fn run() {
                 ort_ready: Mutex::new(None),
                 lens: Mutex::new(None),
                 meiki: Mutex::new(None),
-                meiki_download: Mutex::new(None),
+                screenai: ScreenAi::default(),
+                downloads: Mutex::new(HashMap::new()),
                 recognition: Mutex::new(None),
                 ocr_cache: Mutex::new(OcrCache::default()),
                 recognition_seq: AtomicU64::new(0),
@@ -2191,8 +2301,8 @@ pub fn run() {
             engine_status,
             install_segmenter,
             remove_segmenter,
-            install_meiki,
-            remove_meiki,
+            install_ocr_models,
+            remove_ocr_models,
             ocr_languages,
             list_dictionaries,
             add_dictionary,

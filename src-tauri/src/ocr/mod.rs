@@ -16,6 +16,7 @@ pub mod meiki;
 pub mod models;
 pub mod paddle;
 pub mod quad;
+pub mod screenai;
 
 use serde::Serialize;
 

@@ -679,19 +679,19 @@ test('whole-screen OCR engine is chosen separately and defaults to the pointer e
     await fixture.finish();
 });
 
-test('MeikiOCR is offered for Japanese only, and its models row shows while it is chosen', async () => {
+test('MeikiOCR is offered for Japanese only, ScreenAI always, and their files rows show while they are chosen', async () => {
     const offered = (root, title) => {
         const row = descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
         return descendants(row).filter((node) => node.tagName === 'option').map((node) => node.value);
     };
     const english = await settingsFixture({ocrLanguage: 'en-US', ocrEngine: 'paddle'});
-    assert.deepEqual(offered(english.root, 'OCR em volta do cursor'), ['paddle', 'lens']);
+    assert.deepEqual(offered(english.root, 'OCR em volta do cursor'), ['paddle', 'screenai', 'lens']);
     await english.finish();
 
     const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'paddle', screenOcrEngine: null});
     const {root, settings} = fixture;
     const modelsRow = () => descendants(root).some((node) => node.className === 'card-row' && node.textContent.includes('Modelos do MeikiOCR'));
-    assert.deepEqual(offered(root, 'OCR em volta do cursor'), ['paddle', 'meiki', 'lens']);
+    assert.deepEqual(offered(root, 'OCR em volta do cursor'), ['paddle', 'meiki', 'screenai', 'lens']);
     assert(!modelsRow());
     const control = () => descendants(descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes('OCR em volta do cursor')))
         .find((node) => node.tagName === 'select');
@@ -699,6 +699,13 @@ test('MeikiOCR is offered for Japanese only, and its models row shows while it i
     control().dispatch('change');
     assert.equal(settings.ocrEngine, 'meiki');
     assert(modelsRow(), 'the models row appears with MeikiOCR');
+    const screenControl = () => descendants(descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes('OCR da tela inteira')))
+        .find((node) => node.tagName === 'select');
+    screenControl().value = 'screenai';
+    screenControl().dispatch('change');
+    assert.equal(settings.screenOcrEngine, 'screenai');
+    assert(modelsRow(), 'MeikiOCR still reads around the pointer');
+    assert(descendants(root).some((node) => node.className === 'card-row' && node.textContent.includes('Arquivos do Chrome ScreenAI')));
     await fixture.finish();
 });
 

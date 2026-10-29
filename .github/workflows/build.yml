@@ -100,6 +100,22 @@ jobs:
           python scripts/fetch-ocr-models.py MEIKI "$LOOKITAN_MEIKI"
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::meiki::tests::real_meiki -- --ignored --nocapture
 
+      # Chrome ScreenAI is not in the installers either (the app downloads it when the user picks
+      # it): the CIPD instance pinned in ocr/screenai.rs, fetched as the app does, for its real test.
+      - name: Cache Chrome ScreenAI
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/screenai
+          key: screenai-${{ matrix.platform }}-${{ hashFiles('src-tauri/src/ocr/screenai.rs') }}
+
+      - name: Test Chrome ScreenAI with the real library
+        shell: bash
+        env:
+          LOOKITAN_SCREENAI: ${{ runner.temp }}/screenai/resources
+        run: |
+          python scripts/fetch-ocr-models.py SCREENAI:${{ matrix.platform }} "${{ runner.temp }}/screenai"
+          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::screenai::tests::real_screenai -- --ignored --nocapture
+
       # The word analyzers' dictionaries (segment/mod.rs PACKS), as the app downloads them.
       - name: Cache word analyzer dictionaries
         uses: actions/cache@v4

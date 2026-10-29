@@ -47,10 +47,14 @@ pub fn set_root(dir: PathBuf) {
     let _ = ROOT.set(dir);
 }
 
+/// The folder every optional model set lives in.
+pub fn root() -> Result<PathBuf> {
+    ROOT.get().cloned().context("the OCR models folder is not set")
+}
+
 impl ModelSet {
     pub fn dir(&self) -> Result<PathBuf> {
-        let root = ROOT.get().context("the OCR models folder is not set")?;
-        Ok(root.join(format!("{}-{}", self.id, &self.revision[..8])))
+        Ok(root()?.join(format!("{}-{}", self.id, &self.revision[..8])))
     }
 
     pub fn bytes(&self) -> u64 {
