@@ -1694,9 +1694,9 @@ fn warm_engine_in_background(app: &AppHandle) {
         let state = app.state::<AppState>();
         let settings = state.settings.read().clone();
         free_unused_engines(&state, &settings);
-        // PP-OCRv6 is loaded even when Google Lens is selected: it is the fallback. The pointer's
-        // engine last, so it is the one kept first.
-        for kind in [OcrEngineKind::Paddle, settings.engine_for(false)] {
+        // Each selector's PP-OCR (PP-OCRv6's for a page engine such as Google Lens: its fallback);
+        // the pointer's last, so it is the one kept first.
+        for kind in [settings.engine_for(true), settings.engine_for(false)] {
             if let Err(e) = ensure_paddle(&state, kind) {
                 log::warn!("OCR engine unavailable: {e:#}");
             }

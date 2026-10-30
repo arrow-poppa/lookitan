@@ -354,11 +354,12 @@ impl Settings {
         [self.engine_for(false), self.engine_for(true)].into_iter().any(|k| self.recognizer_for(k) == recognizer)
     }
 
-    /// The PP-OCR recognizers and plans these settings read with: PP-OCRv6's own (every engine's
-    /// fallback) and the two selectors' engines'. Any other loaded one is unused.
+    /// The PP-OCR recognizers and plans the two selectors' engines read with: a local engine's own
+    /// (its recognizer's fallback is PP-OCR on the same plan), PP-OCRv6's for a page engine (its
+    /// fallback, and what finds the block under the pointer). Any other loaded one is unused.
     pub fn paddle_configs(&self) -> Vec<(&'static str, crate::ocr::paddle::EnginePlan)> {
         let mut configs = Vec::new();
-        for kind in [OcrEngineKind::Paddle, self.engine_for(false), self.engine_for(true)] {
+        for kind in [self.engine_for(false), self.engine_for(true)] {
             let config = (self.rec_model_for(kind), self.plan_for(kind));
             if !configs.contains(&config) {
                 configs.push(config);
@@ -945,8 +946,13 @@ mod tests {
         assert_eq!(s.recognizer_for(OcrEngineKind::OneOcr), Recognizer::Paddle);
         let again: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!((again.ocr_engine, again.ocr_models.clone()), (OcrEngineKind::Custom, s.ocr_models.clone()));
-        // What stays loaded: PP-OCRv6's plan and the custom engine's, once each.
-        assert_eq!(s.paddle_configs(), vec![(s.rec_model(), s.engine_plan()), (s.rec_model_for(OcrEngineKind::Custom), s.plan_for(OcrEngineKind::Custom))]);
+        // What stays loaded: the custom engine's plan alone, though PP-OCRv6's differs.
+        assert_ne!(s.plan_for(OcrEngineKind::Custom), s.engine_plan());
+        assert_eq!(s.paddle_configs(), vec![(s.rec_model_for(OcrEngineKind::Custom), s.plan_for(OcrEngineKind::Custom))]);
+        // With a page engine, PP-OCRv6's too: its fallback and block finder.
+        s.screen_ocr_engine = Some(OcrEngineKind::OneOcr);
+        assert_eq!(s.paddle_configs(), vec![(s.rec_model_for(OcrEngineKind::Custom), s.plan_for(OcrEngineKind::Custom)), (s.rec_model(), s.engine_plan())]);
+        s.screen_ocr_engine = None;
         s.ocr_engine = OcrEngineKind::Paddle;
         assert_eq!(s.paddle_configs(), vec![(s.rec_model(), s.engine_plan())], "one, when both selectors read as PP-OCRv6");
         assert!(!s.reads_with(Recognizer::Meiki) && !s.reads_with(Recognizer::Indra));
