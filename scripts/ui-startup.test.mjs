@@ -522,7 +522,7 @@ test('PP-OCRv6\'s detector and each model\'s device are chosen under it, from Lo
     assert.deepEqual(switchesIn(cpuDetector)[0].children.map((b) => b.className), ['on', ''], 'and on the CPU');
 });
 
-test('IndraOCR reads with its own LineNet, MeikiOCR with PP-OCRv6\'s detectors, each with its own devices', async () => {
+test('IndraOCR reads with its own LineNet, MeikiOCR with its own detector or PP-OCRv6\'s, each with its own devices', async () => {
     const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'meiki', screenOcrEngine: 'indra',
         ocrModels: {indra: {det: 'paddle:det_small', detGpu: true, rec: 'indra', recGpu: false}}});
     const {root, settings} = fixture;
@@ -535,7 +535,9 @@ test('IndraOCR reads with its own LineNet, MeikiOCR with PP-OCRv6\'s detectors, 
     assert.equal(indra.disabled, true);
     assert.equal(selectIn(modelRow(root, 'indra', 'Reconhecimento')).value, 'indra');
     const meiki = modelRow(root, 'meiki', 'Detecção');
-    assert.deepEqual(selectIn(meiki).children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small']);
+    assert.deepEqual(selectIn(meiki).children.map((o) => o.value), ['meiki:det960', 'meiki:det320', 'paddle:det_tiny', 'paddle:det_small']);
+    assert.equal(selectIn(meiki).value, 'meiki:det960', 'its own, never set');
+    assert(descendants(root).some((node) => node.textContent === 'Detecção do MeikiOCR (29 MB)'), 'its detector\'s download row shows');
     selectIn(meiki).value = 'paddle:det_tiny';
     selectIn(meiki).dispatch('change');
     switchesIn(modelRow(root, 'meiki', 'Detecção'))[0].children[0].dispatch('click');
@@ -554,7 +556,7 @@ test('the custom engine mixes any detector with any recognizer, each on the CPU 
     const det = () => selectIn(modelRow(root, 'custom', 'Detecção'));
     const rec = () => selectIn(modelRow(root, 'custom', 'Reconhecimento'));
     assert(modelRow(root, 'paddle', 'Detecção'), 'the whole screen\'s PP-OCRv6 has its own rows');
-    assert.deepEqual(det().children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small', 'indra:linenet', 'manga:det', 'ctd:comic']);
+    assert.deepEqual(det().children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small', 'indra:linenet', 'manga:det', 'ctd:comic', 'meiki:det960', 'meiki:det320']);
     assert.equal(det().value, 'paddle:det_small');
     det().value = 'paddle:det_tiny';
     det().dispatch('change');
@@ -623,7 +625,7 @@ test('a page engine has only the detector that finds the pointer\'s block, in th
     await fixture.finish();
     const block = modelRow(root, 'oneocr', 'Achar o bloco sob o cursor');
     assert(block, 'the pointer\'s page engine finds its block');
-    assert.deepEqual(selectIn(block).children.map((o) => o.value), ['page:own', 'paddle:det_tiny', 'paddle:det_small', 'indra:linenet', 'manga:det', 'ctd:comic']);
+    assert.deepEqual(selectIn(block).children.map((o) => o.value), ['page:own', 'paddle:det_tiny', 'paddle:det_small', 'indra:linenet', 'manga:det', 'ctd:comic', 'meiki:det960', 'meiki:det320']);
     assert.equal(selectIn(block).children[0].textContent, 'A do próprio OneOCR (lê a tela inteira, toda clicável)');
     selectIn(block).value = 'page:own';
     selectIn(block).dispatch('change');

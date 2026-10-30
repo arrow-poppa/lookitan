@@ -60,6 +60,27 @@ pub static MEIKI: ModelSet = ModelSet {
     ],
 };
 
+/// MeikiOCR's line detectors v0.1 (rtr46, weights LGPL-3.0; `main` on 2026-10-30, the commit
+/// marupop pins): 960×544 and 320×192, both downloaded when either is chosen (`ocr::meiki_det`).
+pub static MEIKI_DET: ModelSet = ModelSet {
+    id: "meiki-det-v0.1",
+    repo: "rtr46/meiki.text.detect.v0",
+    revision: "a9cffa4f60cbf72ddb87edf19c6f98a01cd042e6",
+    source: Source::HuggingFace,
+    files: &[
+        ModelFile {
+            name: "meiki.text.detect.v0.1.960x544.onnx",
+            bytes: 14_503_825,
+            sha256: "40b6a016667745cae7d3055929ae3b8b1e7716aac795f5904cd3c2c7c3b8404b",
+        },
+        ModelFile {
+            name: "meiki.text.detect.v0.1.320x192.onnx",
+            bytes: 14_084_361,
+            sha256: "8cdc5daa5c13a5f93adb40ee2e53ad1a3d2f7e372584c5c665b038adeb74ae6d",
+        },
+    ],
+};
+
 /// IndraOCR's line detector (LineNet, since 2026-10-29) and its recognizers for the groups
 /// Lookitan's languages read with (datalab-to, commit
 /// bd02167f, `main` on 2026-10-28; its files are byte for byte those of tag v1.1.0, a1283c4b, which
@@ -188,7 +209,7 @@ mod tests {
 
     #[test]
     fn model_sets_are_pinned() {
-        for set in [&MEIKI, &INDRA, &MANGA, &CTD] {
+        for set in [&MEIKI, &MEIKI_DET, &INDRA, &MANGA, &CTD] {
             if matches!(set.source, Source::HuggingFace) {
                 assert_eq!(set.revision.len(), 40);
             }
@@ -199,6 +220,7 @@ mod tests {
             }
         }
         assert_eq!(MEIKI.bytes(), 31_466_215);
+        assert_eq!(MEIKI_DET.bytes(), 28_588_186);
         assert_eq!(INDRA.bytes(), 20_647_456);
         assert_eq!(MANGA.bytes(), 22_984_494);
         assert_eq!(MANGA.files[1].file(), "manga_rec_v0.2.onnx", "saved without its folder");

@@ -274,7 +274,7 @@ fn suppress(mut glyphs: Vec<Glyph>) -> Vec<Glyph> {
 /// The model with every 1-D weight of a MatMul given as a one-column matrix, when only Reshapes
 /// read those MatMuls' products (so nothing downstream changes); `None` when there is none. ONNX's
 /// protobuf is read and written field by field, the rest kept byte for byte.
-fn for_gpu(model: &[u8]) -> Result<Option<Vec<u8>>> {
+pub(super) fn for_gpu(model: &[u8]) -> Result<Option<Vec<u8>>> {
     // ModelProto.graph; GraphProto.node and .initializer; NodeProto.input, .output and .op_type;
     // TensorProto.dims and .name.
     const GRAPH: u64 = 7;

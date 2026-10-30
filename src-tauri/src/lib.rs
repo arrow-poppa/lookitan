@@ -45,6 +45,7 @@ use crate::ocr::bing::BingOcr;
 use crate::ocr::lens::LensOcr;
 use crate::ocr::cache::{frame_key, FrameKey, OcrCache};
 use crate::ocr::ctd::CtdDet;
+use crate::ocr::meiki_det::MeikiDet;
 use crate::ocr::indra::{Group as IndraGroup, IndraDet, IndraRec};
 use crate::ocr::meiki::MeikiRec;
 use crate::ocr::models;
@@ -111,6 +112,8 @@ pub struct AppState {
     linenet: Mutex<Option<(bool, Arc<IndraDet>)>>,
     /// comic-text-detector, and whether it was asked for the GPU.
     ctd: Mutex<Option<(bool, Arc<CtdDet>)>>,
+    /// MeikiOCR's detector: whether it is the 320×192 one, whether it was asked for the GPU.
+    meiki_det: Mutex<Option<(bool, bool, Arc<MeikiDet>)>>,
     /// Chrome ScreenAI's and OneOCR's helper processes, started with their first lookup.
     screenai: ScreenAi,
     oneocr: OneOcr,
@@ -842,13 +845,18 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     let boxes = match cached_boxes {
         Some(boxes) => boxes,
         None => {
-            let mut boxes = p.finder.detect_boxes(image)?;
+            // MeikiOCR's detector finds the automatic capture's block around the pointer only:
+            // those lines are not the whole capture's, so they are not kept for its other passes.
+            let around = reading == Reading::Block && p.finder.reads_around();
+            let mut boxes = if around { p.finder.detect_around(image, px, py)? } else { p.finder.detect_boxes(image)? };
             // PP-OCRv6 Manga's recognizer reads each column whole and without its furigana, as
             // Fushi gives it them (ocr/manga_layout.rs).
             if settings.models(kind).rec == Recognizer::Manga {
                 boxes = ocr::manga_layout::tidy(boxes, ocr::language(&settings.ocr_language).tag == "ja-JP");
             }
-            state.ocr_cache.lock().save_boxes(key, &boxes);
+            if !around {
+                state.ocr_cache.lock().save_boxes(key, &boxes);
+            }
             boxes
         }
     };
@@ -880,9 +888,14 @@ fn pointer_block(state: &AppState, settings: &Settings, kind: OcrEngineKind, ima
     let boxes = match cached {
         Some(boxes) => boxes,
         None => {
-            let boxes = finder(state, settings, kind)?.detect_boxes(image)?;
-            state.ocr_cache.lock().save_boxes(key, &boxes);
-            boxes
+            let finder = finder(state, settings, kind)?;
+            if finder.reads_around() {
+                finder.detect_around(image, px, py)?
+            } else {
+                let boxes = finder.detect_boxes(image)?;
+                state.ocr_cache.lock().save_boxes(key, &boxes);
+                boxes
+            }
         }
     };
     let under: Vec<TextBox> = block::under(&boxes, px, py).into_iter().map(|i| boxes[i]).collect();
@@ -905,12 +918,13 @@ fn device_name(gpu: bool) -> &'static str {
 }
 
 /// What finds a pass's lines: PP-OCR's detector (PP-OCRv6's or PP-OCRv6 Manga's), IndraOCR's
-/// LineNet or comic-text-detector.
+/// LineNet, comic-text-detector or MeikiOCR's.
 #[derive(Clone)]
 enum Finder {
     Paddle(Arc<PaddleOcr>),
     LineNet(Arc<IndraDet>),
     Ctd(Arc<CtdDet>),
+    Meiki(Arc<MeikiDet>),
 }
 
 impl Finder {
@@ -919,6 +933,21 @@ impl Finder {
             Finder::Paddle(p) => p.detect_boxes(image),
             Finder::LineNet(d) => d.detect_boxes(image),
             Finder::Ctd(d) => d.detect_boxes(image),
+            Finder::Meiki(d) => d.detect_boxes(image),
+        }
+    }
+
+    /// Whether it finds the block under the pointer by reading around it (MeikiOCR's, as marupop),
+    /// not the whole capture.
+    fn reads_around(&self) -> bool {
+        matches!(self, Finder::Meiki(_))
+    }
+
+    /// The lines around the pointer (`reads_around`), or the whole capture's.
+    fn detect_around(&self, image: &image::RgbaImage, px: f32, py: f32) -> Result<Vec<TextBox>> {
+        match self {
+            Finder::Meiki(d) => d.detect_around(image, px, py),
+            _ => self.detect_boxes(image),
         }
     }
 
@@ -927,6 +956,7 @@ impl Finder {
             Finder::Paddle(p) => format!("PP-OCRv6 {} · {}", p.det_model(), device_name(p.det_on_gpu())),
             Finder::LineNet(d) => format!("LineNet · {}", device_name(d.on_gpu())),
             Finder::Ctd(d) => format!("comic-text-detector · {}", device_name(d.on_gpu())),
+            Finder::Meiki(d) => format!("MeikiOCR {} · {}", d.size_name(), device_name(d.on_gpu())),
         }
     }
 }
@@ -1032,12 +1062,34 @@ fn ctd_engine(state: &AppState, settings: &Settings, gpu: bool) -> Result<Arc<Ct
     Ok(d)
 }
 
+/// MeikiOCR's detector (the 320×192 one with `small`), loaded once its models are downloaded, on
+/// the GPU when `gpu`.
+fn meiki_det_engine(state: &AppState, settings: &Settings, small: bool, gpu: bool) -> Result<Arc<MeikiDet>> {
+    require(state, Downloaded::MeikiDet, "da detecção do MeikiOCR")?;
+    ensure_ort(state)?;
+    let mut slot = state.meiki_det.lock();
+    if let Some((s, on, d)) = slot.as_ref() {
+        if *s == small && *on == gpu {
+            return Ok(d.clone());
+        }
+    }
+    // Drop the previous session before loading its replacement.
+    *slot = None;
+    let d = Arc::new(MeikiDet::new(&models::MEIKI_DET.dir()?, small, gpu, settings.gpu_choice())?);
+    d.warm_up();
+    *slot = Some((small, gpu, d.clone()));
+    Ok(d)
+}
+
 /// What finds `kind`'s lines, or, for a page engine, the block under the pointer.
 fn finder(state: &AppState, settings: &Settings, kind: OcrEngineKind) -> Result<Finder> {
     let m = settings.models(kind);
     match m.det {
         Detector::LineNet => Ok(Finder::LineNet(linenet_engine(state, settings, m.det_gpu).context("A detecção do IndraOCR (LineNet) não carregou")?)),
         Detector::Ctd => Ok(Finder::Ctd(ctd_engine(state, settings, m.det_gpu).context("O comic-text-detector não carregou")?)),
+        Detector::MeikiDet | Detector::MeikiDetSmall => Ok(Finder::Meiki(
+            meiki_det_engine(state, settings, m.det == Detector::MeikiDetSmall, m.det_gpu).context("A detecção do MeikiOCR não carregou")?,
+        )),
         Detector::PaddleTiny | Detector::PaddleSmall | Detector::MangaDet => Ok(Finder::Paddle(ensure_paddle(state, settings, kind)?)),
         Detector::Page => bail!("{kind:?} finds its lines by itself"),
     }
@@ -1130,6 +1182,8 @@ enum Downloaded {
     Manga,
     /// comic-text-detector's model (GPL-3.0), chosen as a detector.
     Ctd,
+    /// MeikiOCR's detectors (LGPL-3.0), chosen as a detector.
+    MeikiDet,
 }
 
 /// A downloaded engine's files, for Settings › OCR.
@@ -1144,7 +1198,8 @@ pub struct ModelState {
 const DOWNLOADING: &str = "estão sendo baixados";
 
 impl Downloaded {
-    const ALL: [Downloaded; 6] = [Downloaded::Meiki, Downloaded::ScreenAi, Downloaded::OneOcr, Downloaded::Indra, Downloaded::Manga, Downloaded::Ctd];
+    const ALL: [Downloaded; 7] =
+        [Downloaded::Meiki, Downloaded::ScreenAi, Downloaded::OneOcr, Downloaded::Indra, Downloaded::Manga, Downloaded::Ctd, Downloaded::MeikiDet];
 
     /// Its name in Settings and in the `models` map: the engine's own (`OcrEngineKind`).
     fn id(self) -> &'static str {
@@ -1155,6 +1210,7 @@ impl Downloaded {
             Downloaded::Indra => "indra",
             Downloaded::Manga => "manga",
             Downloaded::Ctd => "ctd",
+            Downloaded::MeikiDet => "meikidet",
         }
     }
 
@@ -1164,7 +1220,7 @@ impl Downloaded {
 
     fn supported(self) -> bool {
         match self {
-            Downloaded::Meiki | Downloaded::Indra | Downloaded::Manga | Downloaded::Ctd => true,
+            Downloaded::Meiki | Downloaded::Indra | Downloaded::Manga | Downloaded::Ctd | Downloaded::MeikiDet => true,
             Downloaded::ScreenAi => ocr::screenai::supported(),
             Downloaded::OneOcr => ocr::oneocr::supported(),
         }
@@ -1178,6 +1234,7 @@ impl Downloaded {
             Downloaded::Indra => models::INDRA.installed(),
             Downloaded::Manga => models::MANGA.installed(),
             Downloaded::Ctd => models::CTD.installed(),
+            Downloaded::MeikiDet => models::MEIKI_DET.installed(),
         }
     }
 
@@ -1190,6 +1247,7 @@ impl Downloaded {
             Downloaded::Indra => models::INDRA.bytes(),
             Downloaded::Manga => models::MANGA.bytes(),
             Downloaded::Ctd => models::CTD.bytes(),
+            Downloaded::MeikiDet => models::MEIKI_DET.bytes(),
         }
     }
 
@@ -1201,6 +1259,7 @@ impl Downloaded {
             Downloaded::Indra => models::INDRA.ensure(progress).map(|_| ()),
             Downloaded::Manga => models::MANGA.ensure(progress).map(|_| ()),
             Downloaded::Ctd => models::CTD.ensure(progress).map(|_| ()),
+            Downloaded::MeikiDet => models::MEIKI_DET.ensure(progress).map(|_| ()),
         }
     }
 
@@ -1231,6 +1290,10 @@ impl Downloaded {
             Downloaded::Ctd => {
                 *state.ctd.lock() = None;
                 models::CTD.remove()
+            }
+            Downloaded::MeikiDet => {
+                *state.meiki_det.lock() = None;
+                models::MEIKI_DET.remove()
             }
         }
     }
@@ -1815,6 +1878,13 @@ fn free_unused_engines(state: &AppState, settings: &Settings) {
     if !settings.detects_with(Detector::Ctd) {
         *state.ctd.lock() = None;
     }
+    {
+        let mut slot = state.meiki_det.lock();
+        let small = slot.as_ref().is_some_and(|(small, _, _)| *small);
+        if !settings.detects_with(if small { Detector::MeikiDetSmall } else { Detector::MeikiDet }) {
+            *slot = None;
+        }
+    }
     let japanese = ocr::language(&settings.ocr_language).tag == "ja-JP";
     if !(settings.reads_with(Recognizer::Meiki) && japanese) {
         *state.meiki.lock() = None;
@@ -1863,6 +1933,13 @@ fn warm_engine_in_background(app: &AppHandle) {
                     download_models(&app, Downloaded::Ctd);
                 } else if let Err(e) = ctd_engine(&state, &settings, m.det_gpu) {
                     log::warn!("comic-text-detector unavailable: {e:#}");
+                }
+            }
+            if matches!(m.det, Detector::MeikiDet | Detector::MeikiDetSmall) {
+                if !Downloaded::MeikiDet.installed() {
+                    download_models(&app, Downloaded::MeikiDet);
+                } else if let Err(e) = meiki_det_engine(&state, &settings, m.det == Detector::MeikiDetSmall, m.det_gpu) {
+                    log::warn!("MeikiOCR's detector unavailable: {e:#}");
                 }
             }
             if settings.paddle_use(kind).is_some() {
@@ -2144,6 +2221,13 @@ fn engines_status(state: &AppState, settings: &Settings) -> Vec<[String; 2]> {
             Some(gpu) => format!("comic-text-detector na {}", device(gpu)),
             None => format!("comic-text-detector ({waiting})"),
         },
+        Detector::MeikiDet | Detector::MeikiDetSmall => {
+            let name = if settings.models(kind).det == Detector::MeikiDetSmall { "MeikiOCR 320×192" } else { "MeikiOCR 960×544" };
+            match state.meiki_det.try_lock().and_then(|d| d.as_ref().map(|(_, _, d)| d.on_gpu())) {
+                Some(gpu) => format!("{name} na {}", device(gpu)),
+                None => format!("{name} ({waiting})"),
+            }
+        }
         Detector::Page => "do próprio motor".to_string(),
         det => match loaded(kind) {
             Some(p) => format!("PP-OCRv6 {} na {}", p.det_model(), device(p.det_on_gpu())),
@@ -2616,6 +2700,7 @@ pub fn run() {
                 indra: Mutex::new(None),
                 linenet: Mutex::new(None),
                 ctd: Mutex::new(None),
+                meiki_det: Mutex::new(None),
                 screenai: ScreenAi::default(),
                 oneocr: OneOcr::default(),
                 downloads: Mutex::new(HashMap::new()),

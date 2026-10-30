@@ -299,6 +299,10 @@ const DOWNLOADED_ENGINES = {
         desc: 'Detecção de texto de mangá e quadrinhos (dmMaze/comic-text-detector, licença GPL-3.0), o modelo publicado pelo manga-image-translator; baixado uma vez e conferido.',
         removeAsk: 'Apagar o comic-text-detector? Enquanto não for baixado de novo, a detecção dele não acha nada.',
         removeTitle: 'Apagar o comic-text-detector'},
+    meikidet: {title: 'Detecção do MeikiOCR (29 MB)',
+        desc: 'Os dois detectores do MeikiOCR (960×544 e 320×192), de rtr46/meiki.text.detect.v0 no Hugging Face, licença LGPL-3.0: uma versão fixa, baixada uma vez e conferida.',
+        removeAsk: 'Apagar a detecção do MeikiOCR? Enquanto não for baixada de novo, ela não acha nada.',
+        removeTitle: 'Apagar a detecção do MeikiOCR'},
     meiki: {title: 'Modelos do MeikiOCR (31 MB)',
         desc: 'De rtr46/meikiocr no Hugging Face, licença LGPL-3.0; baixados uma vez e conferidos.',
         removeAsk: 'Apagar os modelos do MeikiOCR? Enquanto não forem baixados de novo, ele não lê.',
@@ -337,7 +341,7 @@ function fillModelsRows(rows) {
         chosen.add(engine);
         if (modelRows(engine, pointer).length === 0) { continue; }
         const c = currentChoice(engine, pointer);
-        const downloads = {'indra:linenet': 'indra', 'manga:det': 'manga', 'ctd:comic': 'ctd'};
+        const downloads = {'indra:linenet': 'indra', 'manga:det': 'manga', 'ctd:comic': 'ctd', 'meiki:det960': 'meikidet', 'meiki:det320': 'meikidet'};
         if (downloads[c.det]) { chosen.add(downloads[c.det]); }
         if (engine === 'custom') { chosen.add(c.rec); }
     }
@@ -430,22 +434,28 @@ function paddleRecognizer() {
 
 /** The detectors (`Detector::id` in settings.rs), by name. */
 const DETECTORS = {'paddle:det_tiny': 'PP-OCRv6 Tiny', 'paddle:det_small': 'PP-OCRv6 Small', 'indra:linenet': 'IndraOCR LineNet',
-    'manga:det': 'PP-OCRv6 Manga', 'ctd:comic': 'comic-text-detector', 'page:own': 'A do próprio motor'};
+    'manga:det': 'PP-OCRv6 Manga', 'ctd:comic': 'comic-text-detector', 'meiki:det960': 'MeikiOCR 960×544',
+    'meiki:det320': 'MeikiOCR 320×192 (mais rápida)', 'page:own': 'A do próprio motor'};
 /** Engines that find and read the text themselves. */
 const PAGE_ENGINES = {oneocr: 'OneOCR', screenai: 'Chrome ScreenAI', lens: 'Google Lens', bing: 'Bing'};
 const LOCAL_NAMES = {paddle: 'PP-OCRv6', meiki: 'MeikiOCR', indra: 'IndraOCR', custom: 'Personalizado', manga: 'PP-OCRv6 Manga'};
 
 /** Detectors made for one script: offered only with its languages (`mangaLanguage`). */
 const MANGA_DETECTORS = ['manga:det', 'ctd:comic'];
+/** MeikiOCR's detectors, trained on Japanese game text: offered with Japanese. */
+const MEIKI_DETECTORS = ['meiki:det960', 'meiki:det320'];
 
-/** The detectors an engine can be set to (`OcrEngineKind::offers`): each engine its own (PP-OCRv6's
- * for MeikiOCR until its own comes), the custom engine any local one, a page engine's block any
- * local one or its own. PP-OCRv6 Manga's and comic-text-detector only for Japanese and Chinese,
- * or while `chosen`. */
+/** The detectors an engine can be set to (`OcrEngineKind::offers`): each engine its own (MeikiOCR
+ * its own or PP-OCRv6's), the custom engine any local one, a page engine's block any local one or
+ * its own. PP-OCRv6 Manga's and comic-text-detector only for Japanese and Chinese, MeikiOCR's for
+ * Japanese, or while `chosen`. */
 function offeredDetectors(engine, chosen) {
-    const local = Object.keys(DETECTORS).filter((d) => d !== 'page:own' && (!MANGA_DETECTORS.includes(d) || mangaLanguage() || d === chosen));
+    const japanese = String(store.settings.ocrLanguage || '').toLowerCase() === 'ja-jp';
+    const forLanguage = (d) => (MANGA_DETECTORS.includes(d) ? mangaLanguage() : !MEIKI_DETECTORS.includes(d) || japanese);
+    const local = Object.keys(DETECTORS).filter((d) => d !== 'page:own' && (forLanguage(d) || d === chosen));
     if (engine === 'indra') { return ['indra:linenet']; }
-    if (engine === 'paddle' || engine === 'meiki') { return ['paddle:det_tiny', 'paddle:det_small']; }
+    if (engine === 'paddle') { return ['paddle:det_tiny', 'paddle:det_small']; }
+    if (engine === 'meiki') { return [...MEIKI_DETECTORS, 'paddle:det_tiny', 'paddle:det_small']; }
     if (engine === 'manga') { return MANGA_DETECTORS; }
     if (engine === 'custom') { return local; }
     return ['page:own', ...local];
@@ -468,7 +478,7 @@ function choiceKey(engine, pointer) {
 function currentChoice(engine, pointer = true) {
     const s = store.settings;
     const gpu = s.useGpu !== false;
-    const ownDet = {indra: 'indra:linenet', manga: 'manga:det'}[engine] || `paddle:${gpu ? 'det_small' : 'det_tiny'}`;
+    const ownDet = {indra: 'indra:linenet', manga: 'manga:det', meiki: 'meiki:det960'}[engine] || `paddle:${gpu ? 'det_small' : 'det_tiny'}`;
     const own = engine === 'custom'
         ? {det: 'paddle:det_small', detGpu: true, rec: 'paddle', recGpu: true}
         : {det: ownDet, detGpu: gpu, rec: ['meiki', 'indra', 'manga'].includes(engine) ? engine : 'paddle', recGpu: gpu};
@@ -516,16 +526,16 @@ function modelRows(engine, pointer) {
         const own = c.det === 'page:own';
         const blockDesc = own
             ? `O ${name} lê a tela inteira: o pop-up abre na palavra sob o cursor e as outras palavras da tela ficam clicáveis. Mais lento, e a tela vai reduzida como na leitura da tela inteira.`
-            : `Na captura automática, a detecção acha o bloco de texto sob o cursor e o ${name} lê só esse bloco, sem reduzir. A LineNet precisa dos modelos do IndraOCR; a do PP-OCRv6 Manga e o comic-text-detector são baixados quando escolhidos.`;
+            : `Na captura automática, a detecção acha o bloco de texto sob o cursor e o ${name} lê só esse bloco, sem reduzir. A LineNet precisa dos modelos do IndraOCR; a do PP-OCRv6 Manga, o comic-text-detector e a do MeikiOCR são baixados quando escolhidos.`;
         // Its own reading runs where the engine runs: no device to choose.
         return [row('Achar o bloco sob o cursor', blockDesc, own ? det : controls(det, 'detGpu'))];
     }
     const detDesc = {
         paddle: 'O small acha mais, mas na CPU é bem mais lento; o tiny ganha pouco na GPU.',
-        meiki: 'Por enquanto, a do PP-OCRv6; a do próprio MeikiOCR vem numa próxima versão.',
+        meiki: 'A do próprio MeikiOCR (29 MB, baixada quando escolhida), treinada em texto de jogos: em volta do cursor, lê um retângulo que cresce até pegar o bloco inteiro, como o marupop; na tela inteira, lê a tela em partes. A 320×192 é mais rápida e menos precisa. Ou a do PP-OCRv6.',
         indra: 'A do próprio IndraOCR (LineNet), leve. Acha linhas na horizontal.',
         manga: 'A do PP-OCRv6 Manga, treinada em mangá, ou o comic-text-detector (95 MB, baixado quando escolhido). As duas leem a tela reduzida (960 e 1024 px no lado maior), como uma página de mangá.',
-        custom: 'Qualquer uma das detecções locais (a do PP-OCRv6 Manga e o comic-text-detector só em japonês e chinês). A LineNet precisa dos modelos do IndraOCR; a do PP-OCRv6 Manga e o comic-text-detector são baixados quando escolhidos.',
+        custom: 'Qualquer uma das detecções locais (a do PP-OCRv6 Manga e o comic-text-detector só em japonês e chinês, a do MeikiOCR só em japonês). A LineNet precisa dos modelos do IndraOCR; a do PP-OCRv6 Manga, o comic-text-detector e a do MeikiOCR são baixados quando escolhidos.',
     }[engine];
     const rows = [row('Detecção', `Acha as linhas de texto. ${detDesc} Se a GPU falhar, segue na CPU.`, controls(det, 'detGpu'))];
     const paddle = paddleRecognizer();
@@ -571,7 +581,7 @@ function engineDesc(engine) {
     switch (engine) {
     case 'lens': return 'Envia a captura ao Google (API não oficial). Se falhar, a consulta mostra o erro.';
     case 'bing': return 'Envia a captura à Microsoft, pelo site do Bing (não é uma API oficial e pode mudar sem aviso), como o owocr faz. Se falhar, a consulta mostra o erro.';
-    case 'meiki': return `A detecção do PP-OCRv6 acha as linhas e o MeikiOCR, treinado em texto de jogos japoneses, as lê. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, ele não lê.' : 'Ele lê só japonês: neste idioma, não lê.'}`;
+    case 'meiki': return `A detecção e o reconhecimento do próprio MeikiOCR, treinados em texto de jogos japoneses. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, ele não lê.' : 'Ele lê só japonês: neste idioma, não lê.'}`;
     case 'indra': return 'A detecção e o reconhecimento do próprio IndraOCR, leves e feitos para a CPU (experimental). Roda no seu computador. Sem os modelos baixados, ele não lê.';
     case 'manga': return 'O PP-OCRv6 treinado em mangá, webtoons e ilustrações, em japonês e chinês: balões, texto vertical e kanji raros. Roda no seu computador. Sem os modelos baixados, ele não lê.';
     case 'oneocr': return 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador ou baixados do servidor da Microsoft. Roda no seu computador, nada sai dele; sem os arquivos, ele não lê.';
