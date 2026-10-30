@@ -1830,6 +1830,12 @@ fn free_unused_engines(state: &AppState, settings: &Settings) {
     if !selected.contains(&OcrEngineKind::OneOcr) {
         state.oneocr.stop();
     }
+    if !selected.contains(&OcrEngineKind::Lens) {
+        *state.lens.lock() = None;
+    }
+    if !selected.contains(&OcrEngineKind::Bing) {
+        *state.bing.lock() = None;
+    }
 }
 
 fn warm_engine_in_background(app: &AppHandle) {
