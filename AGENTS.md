@@ -369,6 +369,8 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-30 (Claude, `tests`): Configurações › OCR lined up (the user saw it askew): an engine's model rows are indented inside (`padding-left`), not narrower, so their controls line up with the selectors', and a selector without models keeps its chevron's place (`collapse-space`). Tests: ui-startup's OCR tests.
+
 - 2026-10-29 (Claude, `tests`): each engine reads with its own models, chosen under its selector (folding rows; the manual mode, `recognizer-row` and "Usar a placa de vídeo" removed, `migrate` keeps the manual choices as PP-OCRv6's); IndraOCR's own detector LineNet (`IndraDet`, `det.onnx` added to `models::INDRA`); no engine falls back to PP-OCRv6, and PP-OCR loads only the detector or recognizer an engine in use needs (`PaddleUse`, `PaddleOcr::load`); "Estado do motor" per selector. Tests: settings.rs (own models, migration, per-engine), indra.rs (`linenet_s_cores…`, `real_indra_linenet…` on CI), models.rs, ui-startup's OCR tests.
 
 - 2026-10-29 (Claude, `tests`): unused OCR models are dropped at every warm-up (`free_unused_engines`: PP-OCR configs outside `Settings::paddle_configs`, MeikiOCR/IndraOCR no selector reads with). Tests: settings' per-engine test.

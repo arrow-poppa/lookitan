@@ -68,8 +68,11 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .card-row .ctl { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .card-row .ctl.wide { width: min(450px, 48%); }
 .card-row .ctl select, .card-row .ctl input { min-width: 220px; }
-/* An engine's models, under its selector in Configurações › OCR. */
-.card-row[data-sub] { margin-left: 28px; min-height: 60px; }
+/* An engine's models, under its selector in Configurações › OCR: indented inside a row as wide as
+   the others, so every control column lines up. */
+.card-row[data-sub] { padding-left: 52px; min-height: 60px; }
+/* Where a selector without models would have its chevron, so both selectors are as wide. */
+.collapse-space { visibility: hidden; }
 .detail-pane .card-row { flex-wrap: wrap; }
 .detail-pane .card-row .ctl { min-width: 0; max-width: 100%; }
 .detail-pane .card-row .ctl select, .detail-pane .card-row .ctl input { min-width: 0; }

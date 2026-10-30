@@ -564,12 +564,14 @@ function engineRows(pointer) {
         save();
         rerender();
     });
-    let control = choose;
+    // A selector without models keeps the chevron's place, so both selectors are as wide.
+    let chevron = el('button', {class: 'ghost icon collapse-space', type: 'button', disabled: true, tabindex: '-1', 'aria-hidden': 'true', html: icon('chevronDown', 'sm')});
     if (models.length) {
         const collapse = collapser(`ocrModels.${pointer ? 'pointer' : 'screen'}`, () => models);
-        control = el('div', {class: 'model-controls'}, choose, collapse.button);
+        chevron = collapse.button;
         collapse.apply();
     }
+    const control = el('div', {class: 'model-controls'}, choose, chevron);
     const title = pointer ? 'OCR em volta do cursor' : 'OCR da tela inteira';
     const lead = pointer ? 'Lê a palavra sob o cursor.' : 'Usado quando o atalho é apertado fora de uma palavra; depois é só clicar na palavra.';
     const note = shared && LOCAL_NAMES[engine] ? ' Com os mesmos modelos do OCR em volta do cursor.' : '';
