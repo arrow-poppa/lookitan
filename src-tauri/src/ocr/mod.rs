@@ -9,6 +9,7 @@ macro_rules! ortx {
 }
 
 pub mod lens;
+pub mod manga_layout;
 pub mod bing;
 pub mod cache;
 pub mod ctd;

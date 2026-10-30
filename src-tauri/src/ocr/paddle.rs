@@ -151,6 +151,14 @@ mod tests {
 "));
             assert!(cer <= 0.10, "CER {cer}");
         }
+        // A detector-only load of the same detector shares the full one's session.
+        let plan = EnginePlan { manual: true, det: MANGA_DET, det_gpu: false, rec_gpu: false, gpu_choice: None };
+        let full = Arc::new(PaddleOcr::load(&resources.join("models"), Some(&dir), PaddleUse { det: true, rec: Some(MANGA_REC), plan }).unwrap());
+        let det_only = PaddleOcr::load_sharing(&resources.join("models"), Some(&dir), PaddleUse { det: true, rec: None, plan }, &[full.clone()]).unwrap();
+        assert!(Arc::ptr_eq(&full.det, &det_only.det), "one detector session");
+        assert_eq!(det_only.detect_boxes(&img).unwrap().len(), full.detect_boxes(&img).unwrap().len());
+        let other = PaddleOcr::load_sharing(&resources.join("models"), Some(&dir), PaddleUse { det: true, rec: None, plan: EnginePlan { det: "det_tiny", ..plan } }, &[full.clone()]).unwrap();
+        assert!(!Arc::ptr_eq(&full.det, &other.det), "another detector is its own");
     }
 
     #[test]
@@ -887,10 +895,20 @@ fn det_max_side(on_gpu: bool) -> f32 {
     if on_gpu { DET_MAX_SIDE_GPU } else { DET_MAX_SIDE_CPU }
 }
 
+/// What a detector was loaded as: the manual mode or Lookupper's plan, the model, whether it was
+/// asked for the GPU, and which card. Two `PaddleOcr`s with the same one share its session.
+type DetKey = (bool, &'static str, bool, Option<GpuPreference>);
+/// What a recognizer was loaded as: the model, whether it was asked for the GPU, and which card.
+type RecKey = (&'static str, bool, Option<GpuPreference>);
+
 pub struct PaddleOcr {
-    det: Mutex<InferenceSession>,
-    rec: Mutex<InferenceSession>,
-    dict: Vec<String>,
+    /// Shared with the other loaded `PaddleOcr`s that read with the same detector or recognizer
+    /// (`load_sharing`), so one model is in memory once.
+    det: Arc<Mutex<InferenceSession>>,
+    rec: Arc<Mutex<InferenceSession>>,
+    dict: Arc<Vec<String>>,
+    det_key: Option<DetKey>,
+    rec_key: Option<RecKey>,
     det_on_gpu: Arc<AtomicBool>,
     /// The detector on the GPU and on the CPU (`EnginePlan::det_models`).
     det_models: (&'static str, &'static str),
@@ -1024,7 +1042,17 @@ impl PaddleOcr {
     /// PP-OCR with the models a pass uses (`PaddleUse`): one not loaded takes no memory, and would
     /// load on the CPU if asked for. PP-OCRv6 Manga's are read from `manga_dir`.
     pub fn load(models_dir: &Path, manga_dir: Option<&Path>, parts: PaddleUse) -> Result<Self> {
+        Self::load_sharing(models_dir, manga_dir, parts, &[])
+    }
+
+    /// `load`, taking the detector or the recognizer from one of `loaded` that has the same one
+    /// (model, device asked for, card): two engines on PP-OCR's det_small hold it once.
+    pub fn load_sharing(models_dir: &Path, manga_dir: Option<&Path>, parts: PaddleUse, loaded: &[Arc<PaddleOcr>]) -> Result<Self> {
         let PaddleUse { det: has_det, rec, plan } = parts;
+        let det_key: Option<DetKey> = has_det.then_some((plan.manual, plan.det, plan.det_gpu, plan.gpu_choice));
+        let rec_key: Option<RecKey> = rec.map(|r| (r, if plan.manual { plan.rec_gpu } else { plan.det_gpu }, plan.gpu_choice));
+        let shared_det = det_key.and_then(|k| loaded.iter().find(|o| o.det_key == Some(k)));
+        let shared_rec = rec_key.and_then(|k| loaded.iter().find(|o| o.rec_key == Some(k)));
         let gpu_choice = plan.gpu_choice;
         let (det_gpu_model, det_cpu_model) = plan.det_models();
         let det_gpu_path = model_path(models_dir, manga_dir, det_gpu_model);
@@ -1039,61 +1067,74 @@ impl PaddleOcr {
             bail!("recognition model not found: {}", rec_path.display());
         }
 
-        let (det, det_model, det_on_gpu) = if !has_det {
-            (None, det_cpu_model, false)
-        } else if plan.det_gpu {
-            match gpu_session(&det_gpu_path, gpu_choice) {
-                Ok(s) => (Some(s), det_gpu_model, true),
-                Err(e) => {
-                    log::warn!("Ocr.GpuFallback.Detection: {e:#}");
-                    (Some(cpu_session(&det_cpu_path)?), det_cpu_model, false)
-                }
+        let (det, det_on_gpu) = match shared_det {
+            Some(other) => (other.det.clone(), other.det_on_gpu.clone()),
+            None => {
+                let (session, on_gpu) = if !has_det {
+                    (None, false)
+                } else if plan.det_gpu {
+                    match gpu_session(&det_gpu_path, gpu_choice) {
+                        Ok(s) => (Some(s), true),
+                        Err(e) => {
+                            log::warn!("Ocr.GpuFallback.Detection: {e:#}");
+                            (Some(cpu_session(&det_cpu_path)?), false)
+                        }
+                    }
+                } else {
+                    (Some(cpu_session(&det_cpu_path)?), false)
+                };
+                let on_gpu = Arc::new(AtomicBool::new(on_gpu));
+                let session = InferenceSession { session, on_gpu: on_gpu.clone(), cpu_path: det_cpu_path, stage: "Detection" };
+                (Arc::new(Mutex::new(session)), on_gpu)
             }
-        } else {
-            (Some(cpu_session(&det_cpu_path)?), det_cpu_model, false)
         };
+        let det_gpu_now = det_on_gpu.load(Ordering::Relaxed);
         // Automatic: the recognizer goes where the detector went; manual: where the user put it.
-        let rec_wants_gpu = if plan.manual { plan.rec_gpu } else { det_on_gpu };
-        let (rec_session, rec_on_gpu) = if rec.is_none() {
-            (None, false)
-        } else if rec_wants_gpu {
-            match gpu_session(&rec_path, gpu_choice) {
-                Ok(s) => (Some(s), true),
-                Err(e) => {
-                    log::warn!("Ocr.GpuFallback.Recognition: {e:#}");
+        let rec_wants_gpu = if plan.manual { plan.rec_gpu } else { det_gpu_now };
+        let (rec_session, rec_on_gpu, dict) = match shared_rec {
+            Some(other) => (other.rec.clone(), other.rec_on_gpu.clone(), other.dict.clone()),
+            None => {
+                let (session, on_gpu) = if rec.is_none() {
+                    (None, false)
+                } else if rec_wants_gpu {
+                    match gpu_session(&rec_path, gpu_choice) {
+                        Ok(s) => (Some(s), true),
+                        Err(e) => {
+                            log::warn!("Ocr.GpuFallback.Recognition: {e:#}");
+                            (Some(cpu_session(&rec_path)?), false)
+                        }
+                    }
+                } else {
                     (Some(cpu_session(&rec_path)?), false)
-                }
+                };
+                let dict: Vec<String> = if rec.is_some() {
+                    serde_json::from_slice(&std::fs::read(&dict_path).with_context(|| format!("read {}", dict_path.display()))?)?
+                } else {
+                    Vec::new()
+                };
+                let on_gpu = Arc::new(AtomicBool::new(on_gpu));
+                let session = InferenceSession { session, on_gpu: on_gpu.clone(), cpu_path: rec_path, stage: "Recognition" };
+                (Arc::new(Mutex::new(session)), on_gpu, Arc::new(dict))
             }
-        } else {
-            (Some(cpu_session(&rec_path)?), false)
-        };
-        let dict: Vec<String> = if rec.is_some() {
-            serde_json::from_slice(&std::fs::read(&dict_path).with_context(|| format!("read {}", dict_path.display()))?)?
-        } else {
-            Vec::new()
         };
         let device = |gpu: bool| if gpu { "GPU" } else { "CPU" };
+        let shared = |yes: bool| if yes { ", shared" } else { "" };
+        let det_model = if det_gpu_now { det_gpu_model } else { det_cpu_model };
         log::info!(
             "OCR engine ready: {}, {}",
-            if has_det { format!("{det_model} on {}", device(det_on_gpu)) } else { "no detector".into() },
-            if rec.is_some() { format!("{rec_stem} on {}, {} characters", device(rec_on_gpu), dict.len()) } else { "no recognizer".into() },
+            if has_det { format!("{det_model} on {}{}", device(det_gpu_now), shared(shared_det.is_some())) } else { "no detector".into() },
+            if rec.is_some() {
+                format!("{rec_stem} on {}, {} characters{}", device(rec_on_gpu.load(Ordering::Relaxed)), dict.len(), shared(shared_rec.is_some()))
+            } else {
+                "no recognizer".into()
+            },
         );
-        let det_on_gpu = Arc::new(AtomicBool::new(det_on_gpu));
-        let rec_on_gpu = Arc::new(AtomicBool::new(rec_on_gpu));
         Ok(Self {
-            det: Mutex::new(InferenceSession {
-                session: det,
-                on_gpu: det_on_gpu.clone(),
-                cpu_path: det_cpu_path,
-                stage: "Detection",
-            }),
-            rec: Mutex::new(InferenceSession {
-                session: rec_session,
-                on_gpu: rec_on_gpu.clone(),
-                cpu_path: rec_path,
-                stage: "Recognition",
-            }),
+            det,
+            rec: rec_session,
             dict,
+            det_key,
+            rec_key,
             det_on_gpu,
             det_models: (det_gpu_model, det_cpu_model),
             rec_model: rec_stem.to_string(),

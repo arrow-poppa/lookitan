@@ -316,8 +316,10 @@ fn ensure_paddle(state: &AppState, settings: &Settings, kind: OcrEngineKind) -> 
     let models = state.resource_dir.join("models");
     // Drop the oldest cached models before allocating new ones.
     cache.truncate(KEPT - 1);
+    // A detector or recognizer the kept one has is shared, not loaded again.
+    let loaded: Vec<Arc<PaddleOcr>> = cache.iter().map(|(_, e)| e.clone()).collect();
     let manga = models::MANGA.dir().ok();
-    match PaddleOcr::load(&models, manga.as_deref(), parts) {
+    match PaddleOcr::load_sharing(&models, manga.as_deref(), parts, &loaded) {
         Ok(engine) => {
             let engine = Arc::new(engine);
             engine.warm_up();
@@ -839,7 +841,12 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     let boxes = match cached_boxes {
         Some(boxes) => boxes,
         None => {
-            let boxes = p.finder.detect_boxes(image)?;
+            let mut boxes = p.finder.detect_boxes(image)?;
+            // PP-OCRv6 Manga's recognizer reads each column whole and without its furigana, as
+            // Fushi gives it them (ocr/manga_layout.rs).
+            if settings.models(kind).rec == Recognizer::Manga {
+                boxes = ocr::manga_layout::tidy(boxes, ocr::language(&settings.ocr_language).tag == "ja-JP");
+            }
             state.ocr_cache.lock().save_boxes(key, &boxes);
             boxes
         }
