@@ -375,6 +375,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-30 (Claude, `tests`): `free_unused_engines` also ends ScreenAI's and OneOCR's helpers when neither selector (pointer, whole screen) is on that engine, so changing engines frees their memory now instead of after the 5-minute idle (the user's PC ran out of commit with several engines loaded; Windows logged lookitan.exe at 1.9–2.6 GB before each `0xc0000409` abort).
 - 2026-10-30 (Claude, `tests`): PP-OCR's detector and recognizer sessions are shared between cached configurations that load the same one (`PaddleOcr::load_sharing`, `DetKey`/`RecKey`); PP-OCRv6 Manga's recognizer gets Fushi's line layout (`ocr/manga_layout.rs`: direction vote, furigana filter for Japanese, split columns joined). Tests: manga_layout.rs, `real_manga…` (sharing) on CI.
 
 - 2026-10-30 (Claude, `tests`): MeikiOCR (ja), PP-OCRv6 Manga and comic-text-detector (ja/zh) are offered in the custom engine and the page engines' block row only for their languages, or while chosen. Tests: ui-startup's custom and page-engine tests.

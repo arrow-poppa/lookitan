@@ -1821,6 +1821,14 @@ fn free_unused_engines(state: &AppState, settings: &Settings) {
     if !settings.reads_with(Recognizer::Indra) {
         *state.indra.lock() = None;
     }
+    // A page engine no selector reads with ends its helper now, not after `IDLE`.
+    let selected = [settings.engine_for(false), settings.engine_for(true)];
+    if !selected.contains(&OcrEngineKind::ScreenAi) {
+        state.screenai.stop();
+    }
+    if !selected.contains(&OcrEngineKind::OneOcr) {
+        state.oneocr.stop();
+    }
 }
 
 fn warm_engine_in_background(app: &AppHandle) {
