@@ -589,6 +589,34 @@ test('the custom engine mixes any detector with any recognizer, each on the CPU 
     await fixture.finish();
 });
 
+test('the custom engine in both selectors has a mix for each, the whole screen\'s starting as the pointer\'s', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'custom',
+        ocrModels: {custom: {det: 'manga:det', detGpu: true, rec: 'meiki', recGpu: true}}});
+    const {root, settings} = fixture;
+    fixture.languages.resolve([{tag: 'ja-JP', name: 'Japanese', rec: 'rec_small'}]);
+    fixture.status.resolve({session: 'windows'});
+    await fixture.initialization;
+    // The pointer's rows first, then the whole screen's.
+    const rows = (title) => descendants(root).filter((node) => node.className === 'card-row' && node.attributes['data-sub'] === 'custom' && node.textContent.startsWith(title));
+    assert.equal(rows('Detecção').length, 2, 'each selector shows its rows');
+    assert(!descendants(root).some((node) => (node.textContent || '').includes('Com os mesmos modelos do OCR em volta do cursor')));
+    const [pointerRec, screenRec] = rows('Reconhecimento').map(selectIn);
+    assert.equal(screenRec.value, 'meiki', 'never set: the pointer\'s mix');
+    screenRec.value = 'indra';
+    screenRec.dispatch('change');
+    assert.equal(JSON.stringify(settings.ocrModels.customScreen), JSON.stringify({det: 'manga:det', detGpu: true, rec: 'indra', recGpu: true}));
+    assert.equal(settings.ocrModels.custom.rec, 'meiki', 'the pointer\'s mix stays');
+    assert.equal(pointerRec.value, 'meiki');
+    const [, screenDet] = rows('Detecção').map(selectIn);
+    screenDet.value = 'paddle:det_small';
+    screenDet.dispatch('change');
+    assert.equal(settings.ocrModels.customScreen.det, 'paddle:det_small');
+    assert.equal(settings.ocrModels.custom.det, 'manga:det');
+    assert(descendants(root).some((node) => node.textContent === 'Modelos do MeikiOCR (31 MB)') && descendants(root).some((node) => node.textContent === 'Modelos do IndraOCR (21 MB)'),
+        'each selector\'s recognizer has its models row');
+    await fixture.finish();
+});
+
 test('a page engine has only the detector that finds the pointer\'s block, in the automatic capture; one engine on both selectors shows its models once', async () => {
     const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'oneocr', screenOcrEngine: 'screenai', captureAuto: true});
     const {view, root, settings} = fixture;

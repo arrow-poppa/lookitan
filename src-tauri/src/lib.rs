@@ -781,7 +781,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         OcrEngineKind::ScreenAi => Some("Chrome ScreenAI"),
         OcrEngineKind::OneOcr => Some("OneOCR"),
         OcrEngineKind::Bing => Some("Bing"),
-        OcrEngineKind::Paddle | OcrEngineKind::Meiki | OcrEngineKind::Indra | OcrEngineKind::Custom | OcrEngineKind::Manga => None,
+        OcrEngineKind::Paddle | OcrEngineKind::Meiki | OcrEngineKind::Indra | OcrEngineKind::Custom | OcrEngineKind::CustomScreen | OcrEngineKind::Manga => None,
     };
     if let Some(name) = page {
         let read_page = |img: &image::RgbaImage| -> Result<Vec<OcrLine>> {
@@ -2123,7 +2123,7 @@ fn engine_name(kind: OcrEngineKind) -> &'static str {
         OcrEngineKind::OneOcr => "OneOCR",
         OcrEngineKind::Bing => "Bing",
         OcrEngineKind::Indra => "IndraOCR",
-        OcrEngineKind::Custom => "Personalizado",
+        OcrEngineKind::Custom | OcrEngineKind::CustomScreen => "Personalizado",
         OcrEngineKind::Manga => "PP-OCRv6 Manga",
     }
 }
@@ -2177,7 +2177,9 @@ fn engines_status(state: &AppState, settings: &Settings) -> Vec<[String; 2]> {
         }
     };
     let (pointer, screen) = (settings.engine_for(false), settings.engine_for(true));
-    if pointer == screen && pointer.is_local() {
+    // The custom engine in both selectors with the same mix reads as one too.
+    if (pointer == screen || (pointer == OcrEngineKind::Custom && screen == OcrEngineKind::CustomScreen && settings.models(pointer) == settings.models(screen)))
+        && pointer.is_local() {
         return vec![["Cursor e tela inteira".into(), describe(pointer, false)]];
     }
     vec![["Cursor".into(), describe(pointer, false)], ["Tela inteira".into(), describe(screen, true)]]

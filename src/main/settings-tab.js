@@ -336,7 +336,7 @@ function fillModelsRows(rows) {
         const engine = selectorEngine(pointer);
         chosen.add(engine);
         if (modelRows(engine, pointer).length === 0) { continue; }
-        const c = currentChoice(engine);
+        const c = currentChoice(engine, pointer);
         const downloads = {'indra:linenet': 'indra', 'manga:det': 'manga', 'ctd:comic': 'ctd'};
         if (downloads[c.det]) { chosen.add(downloads[c.det]); }
         if (engine === 'custom') { chosen.add(c.rec); }
@@ -456,16 +456,24 @@ function mangaLanguage() {
     return /^(ja|zh)\b/i.test(String(store.settings.ocrLanguage || ''));
 }
 
+/** Where a selector's choice for `engine` is kept in Settings `ocrModels`: the custom engine has
+ * one for each selector (`OcrEngineKind::CustomScreen`), the others one for both. */
+function choiceKey(engine, pointer) {
+    return engine === 'custom' && !pointer ? 'customScreen' : engine;
+}
+
 /** An engine's models as `Settings::models` reads them: those chosen for it (Settings
- * `ocrModels`), or its own, where "Usar a placa de vídeo" (`useGpu`) said. */
-function currentChoice(engine) {
+ * `ocrModels`; the whole screen's custom mix, never set, is the pointer's), or its own, where
+ * "Usar a placa de vídeo" (`useGpu`) said. */
+function currentChoice(engine, pointer = true) {
     const s = store.settings;
     const gpu = s.useGpu !== false;
     const ownDet = {indra: 'indra:linenet', manga: 'manga:det'}[engine] || `paddle:${gpu ? 'det_small' : 'det_tiny'}`;
     const own = engine === 'custom'
         ? {det: 'paddle:det_small', detGpu: true, rec: 'paddle', recGpu: true}
         : {det: ownDet, detGpu: gpu, rec: ['meiki', 'indra', 'manga'].includes(engine) ? engine : 'paddle', recGpu: gpu};
-    const saved = s.ocrModels?.[engine];
+    const key = choiceKey(engine, pointer);
+    const saved = s.ocrModels?.[key] || (key === 'customScreen' ? s.ocrModels?.custom : undefined);
     if (!saved) { return own; }
     return {
         det: offeredDetectors(engine, saved.det).includes(saved.det) ? saved.det : own.det,
@@ -475,9 +483,9 @@ function currentChoice(engine) {
     };
 }
 
-function setChoice(engine, field, value) {
+function setChoice(engine, field, value, pointer = true) {
     const s = store.settings;
-    s.ocrModels = {...(s.ocrModels || {}), [engine]: {...currentChoice(engine), [field]: value}};
+    s.ocrModels = {...(s.ocrModels || {}), [choiceKey(engine, pointer)]: {...currentChoice(engine, pointer), [field]: value}};
     save();
 }
 
@@ -489,10 +497,10 @@ function setChoice(engine, field, value) {
  */
 function modelRows(engine, pointer) {
     const s = store.settings;
-    const c = currentChoice(engine);
+    const c = currentChoice(engine, pointer);
     const name = LOCAL_NAMES[engine] || PAGE_ENGINES[engine] || engine;
     const device = (field) => segmented([{value: 'cpu', label: 'CPU'}, {value: 'gpu', label: 'GPU'}], c[field] ? 'gpu' : 'cpu',
-        (v) => setChoice(engine, field, v === 'gpu'));
+        (v) => setChoice(engine, field, v === 'gpu', pointer));
     const controls = (control, field) => el('div', {class: 'model-controls'}, control, device(field));
     const row = (title, desc, control) => {
         const r = cardRow({icon: 'scan', title, desc, wide: true, control});
@@ -501,7 +509,7 @@ function modelRows(engine, pointer) {
     };
     const offered = offeredDetectors(engine, c.det);
     const det = select(offered.map((d) => ({value: d, label: d === 'page:own' ? `A do próprio ${name} (lê a tela inteira, toda clicável)` : DETECTORS[d]})), c.det,
-        (v) => { setChoice(engine, 'det', v); refreshOcrRows(); });
+        (v) => { setChoice(engine, 'det', v, pointer); refreshOcrRows(); });
     det.disabled = offered.length < 2;
     if (PAGE_ENGINES[engine]) {
         if (!pointer || s.captureAuto !== true) { return []; }
@@ -530,7 +538,7 @@ function modelRows(engine, pointer) {
             ...(japanese || c.rec === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (japonês)'}] : []),
             {value: 'indra', label: 'IndraOCR (experimental)'},
             ...(mangaLanguage() || c.rec === 'manga' ? [{value: 'manga', label: 'PP-OCRv6 Manga (japonês e chinês)'}] : []),
-        ], c.rec, (v) => { setChoice('custom', 'rec', v); refreshOcrRows(); });
+        ], c.rec, (v) => { setChoice('custom', 'rec', v, pointer); refreshOcrRows(); });
         const recDesc = c.rec === 'meiki' && !japanese
             ? 'O MeikiOCR lê só japonês: neste idioma, ele não lê.'
             : c.rec === 'manga' && !mangaLanguage()
@@ -574,11 +582,12 @@ function engineDesc(engine) {
 }
 
 /** A selector's row, its engine's models under it (folded with the chevron), as `modelRows`. The
- * whole screen's shows none when it reads with the pointer's engine: the same models. */
+ * whole screen's shows none when it reads with the pointer's engine: the same models (but the
+ * custom engine's, a mix of its own). */
 function engineRows(pointer) {
     const s = store.settings;
     const engine = selectorEngine(pointer);
-    const shared = !pointer && engine === selectorEngine(true);
+    const shared = !pointer && engine === selectorEngine(true) && engine !== 'custom';
     const models = shared ? [] : modelRows(engine, pointer);
     const japanese = s.ocrLanguage === 'ja-JP';
     const windows = (status?.session || 'windows') === 'windows';

@@ -30,6 +30,10 @@ pub enum OcrEngineKind {
     /// The custom engine ("Personalizado"): the detector and the recognizer the user picked, each
     /// from any local engine, to try them together (`Settings::ocr_models["custom"]`).
     Custom,
+    /// The custom engine as the whole screen's selector reads with it: its own choice
+    /// (`ocr_models["customScreen"]`, else the pointer's). Never stored: `engine_for` gives it for
+    /// `Custom` over the whole screen, so each selector can try its own mix.
+    CustomScreen,
     /// PP-OCRv6 Manga (`models::MANGA`): PP-OCR's pipeline with its detector and recognizer
     /// fine-tuned on manga, for Japanese and Chinese; its models are downloaded when it is chosen.
     Manga,
@@ -47,6 +51,7 @@ impl OcrEngineKind {
             Self::Bing => "bing",
             Self::Indra => "indra",
             Self::Custom => "custom",
+            Self::CustomScreen => "customScreen",
             Self::Manga => "manga",
         }
     }
@@ -54,7 +59,7 @@ impl OcrEngineKind {
     /// Whether it reads with a detector and a recognizer of Lookitan's (the others read the whole
     /// image they get by themselves).
     pub fn is_local(self) -> bool {
-        matches!(self, Self::Paddle | Self::Meiki | Self::Indra | Self::Custom | Self::Manga)
+        matches!(self, Self::Paddle | Self::Meiki | Self::Indra | Self::Custom | Self::CustomScreen | Self::Manga)
     }
 
     /// The detectors it can be set to: each engine its own (PP-OCRv6's for MeikiOCR until its own
@@ -66,7 +71,7 @@ impl OcrEngineKind {
             Self::Indra => det == Detector::LineNet,
             Self::Paddle | Self::Meiki => matches!(det, Detector::PaddleTiny | Detector::PaddleSmall),
             Self::Manga => matches!(det, Detector::MangaDet | Detector::Ctd),
-            Self::Custom => det != Detector::Page,
+            Self::Custom | Self::CustomScreen => det != Detector::Page,
             Self::Lens | Self::ScreenAi | Self::OneOcr | Self::Bing => true,
         }
     }
@@ -505,7 +510,7 @@ impl Settings {
             OcrEngineKind::Meiki => Recognizer::Meiki,
             OcrEngineKind::Indra => Recognizer::Indra,
             OcrEngineKind::Manga => Recognizer::Manga,
-            OcrEngineKind::Paddle | OcrEngineKind::Custom => Recognizer::Paddle,
+            OcrEngineKind::Paddle | OcrEngineKind::Custom | OcrEngineKind::CustomScreen => Recognizer::Paddle,
             OcrEngineKind::Lens | OcrEngineKind::ScreenAi | OcrEngineKind::OneOcr | OcrEngineKind::Bing => Recognizer::Page,
         };
         let on_gpu = gpu && self.use_gpu;
@@ -521,15 +526,18 @@ impl Settings {
             rec_gpu: on_gpu,
             automatic: !matches!(kind, OcrEngineKind::Indra | OcrEngineKind::Manga),
         };
-        let chosen = match self.ocr_models.get(kind.id()) {
+        let custom = matches!(kind, OcrEngineKind::Custom | OcrEngineKind::CustomScreen);
+        // The whole screen's custom mix starts as the pointer's.
+        let saved = self.ocr_models.get(kind.id()).or_else(|| if kind == OcrEngineKind::CustomScreen { self.ocr_models.get("custom") } else { None });
+        let chosen = match saved {
             Some(c) => c.clone(),
-            None if kind == OcrEngineKind::Custom => ModelChoice::default(),
+            None if custom => ModelChoice::default(),
             None => return own,
         };
-        let rec = match (kind, chosen.rec.as_str()) {
-            (OcrEngineKind::Custom, "meiki") => Recognizer::Meiki,
-            (OcrEngineKind::Custom, "indra") => Recognizer::Indra,
-            (OcrEngineKind::Custom, "manga") => Recognizer::Manga,
+        let rec = match (custom, chosen.rec.as_str()) {
+            (true, "meiki") => Recognizer::Meiki,
+            (true, "indra") => Recognizer::Indra,
+            (true, "manga") => Recognizer::Manga,
             _ => own_rec,
         };
         Models {
@@ -557,7 +565,11 @@ impl Settings {
     }
 
     pub fn engine_for(&self, whole_screen: bool) -> OcrEngineKind {
-        if whole_screen { self.screen_ocr_engine.unwrap_or(self.ocr_engine) } else { self.ocr_engine }
+        match (whole_screen, self.screen_ocr_engine.unwrap_or(self.ocr_engine)) {
+            (false, _) => self.ocr_engine,
+            (true, OcrEngineKind::Custom) => OcrEngineKind::CustomScreen,
+            (true, kind) => kind,
+        }
     }
 
     /// The card OCR asks for, or `None` to leave the choice to the GPU API.
@@ -1132,6 +1144,25 @@ mod tests {
         s.screen_ocr_engine = Some(OcrEngineKind::Indra);
         assert!(s.reads_with(Recognizer::Indra) && s.detects_with(Detector::LineNet));
         assert_eq!(serde_json::from_str::<OcrEngineKind>(r#""custom""#).unwrap(), OcrEngineKind::Custom);
+    }
+
+    #[test]
+    fn the_custom_engine_has_a_mix_for_each_selector_the_whole_screen_s_starting_as_the_pointer_s() {
+        let mut s: Settings = serde_json::from_str(r#"{"ocrEngine": "custom", "ocrLanguage": "ja-JP"}"#).unwrap();
+        assert_eq!((s.engine_for(false), s.engine_for(true)), (OcrEngineKind::Custom, OcrEngineKind::CustomScreen));
+        s.ocr_models.insert("custom".into(), ModelChoice { det: "manga:det".into(), det_gpu: true, rec: "meiki".into(), rec_gpu: true });
+        assert_eq!(s.models(OcrEngineKind::CustomScreen), s.models(OcrEngineKind::Custom), "never set: the pointer's mix");
+        assert!(s.wants_meiki() && !s.reads_with(Recognizer::Indra));
+        s.ocr_models.insert("customScreen".into(), ModelChoice { det: "paddle:det_small".into(), det_gpu: true, rec: "indra".into(), rec_gpu: false });
+        assert_eq!((s.models(OcrEngineKind::Custom).det, s.recognizer_for(OcrEngineKind::Custom)), (Detector::MangaDet, Recognizer::Meiki));
+        assert_eq!((s.models(OcrEngineKind::CustomScreen).det, s.recognizer_for(OcrEngineKind::CustomScreen)), (Detector::PaddleSmall, Recognizer::Indra));
+        assert!(s.wants_meiki() && s.reads_with(Recognizer::Indra), "each selector's recognizer is in use");
+        // Another engine over the whole screen: its mix is unused, and so are its models.
+        s.screen_ocr_engine = Some(OcrEngineKind::Paddle);
+        assert_eq!(s.engine_for(true), OcrEngineKind::Paddle);
+        assert!(!s.reads_with(Recognizer::Indra));
+        let again: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!((again.ocr_engine, again.ocr_models.clone()), (OcrEngineKind::Custom, s.ocr_models.clone()));
     }
 
     #[test]
