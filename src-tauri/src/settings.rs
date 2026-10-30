@@ -30,6 +30,9 @@ pub enum OcrEngineKind {
     /// The custom engine ("Personalizado"): the detector and the recognizer the user picked, each
     /// from any local engine, to try them together (`Settings::ocr_models["custom"]`).
     Custom,
+    /// PP-OCRv6 Manga (`models::MANGA`): PP-OCR's pipeline with its detector and recognizer
+    /// fine-tuned on manga, for Japanese and Chinese; its models are downloaded when it is chosen.
+    Manga,
 }
 
 impl OcrEngineKind {
@@ -44,23 +47,27 @@ impl OcrEngineKind {
             Self::Bing => "bing",
             Self::Indra => "indra",
             Self::Custom => "custom",
+            Self::Manga => "manga",
         }
     }
 
     /// Whether it reads with a detector and a recognizer of Lookitan's (the others read the whole
     /// image they get by themselves).
     pub fn is_local(self) -> bool {
-        matches!(self, Self::Paddle | Self::Meiki | Self::Indra | Self::Custom)
+        matches!(self, Self::Paddle | Self::Meiki | Self::Indra | Self::Custom | Self::Manga)
     }
 
     /// The detectors it can be set to: each engine its own (PP-OCRv6's for MeikiOCR until its own
-    /// comes), the custom engine any, and so a page engine, whose detector only finds the block of
-    /// text under the pointer.
+    /// comes; PP-OCRv6 Manga's and comic-text-detector for PP-OCRv6 Manga), the custom engine any
+    /// local one, and a page engine, whose detector only finds the block of text under the pointer,
+    /// any local one or its own (the whole capture read, the block under the pointer kept).
     pub fn offers(self, det: Detector) -> bool {
         match self {
             Self::Indra => det == Detector::LineNet,
-            Self::Paddle | Self::Meiki => det != Detector::LineNet,
-            _ => true,
+            Self::Paddle | Self::Meiki => matches!(det, Detector::PaddleTiny | Detector::PaddleSmall),
+            Self::Manga => matches!(det, Detector::MangaDet | Detector::Ctd),
+            Self::Custom => det != Detector::Page,
+            Self::Lens | Self::ScreenAi | Self::OneOcr | Self::Bing => true,
         }
     }
 }
@@ -72,6 +79,8 @@ pub enum Recognizer {
     Paddle,
     Meiki,
     Indra,
+    /// PP-OCRv6 Manga's (`paddle::MANGA_REC`), PP-OCR's recognizer fine-tuned on manga.
+    Manga,
     /// A page engine (Lens, ScreenAI, OneOCR, Bing), which finds and reads the text by itself.
     Page,
 }
@@ -83,10 +92,16 @@ pub enum Detector {
     PaddleSmall,
     /// IndraOCR's own (`ocr::indra::IndraDet`), downloaded with its recognizers.
     LineNet,
+    /// PP-OCRv6 Manga's (`paddle::MANGA_DET`), PP-OCR's tiny detector fine-tuned on manga.
+    MangaDet,
+    /// comic-text-detector's line map (`ocr::ctd::CtdDet`), downloaded when chosen.
+    Ctd,
+    /// A page engine's own: it reads the whole capture and the block under the pointer is kept.
+    Page,
 }
 
 impl Detector {
-    const ALL: [Detector; 3] = [Detector::PaddleTiny, Detector::PaddleSmall, Detector::LineNet];
+    const ALL: [Detector; 6] = [Detector::PaddleTiny, Detector::PaddleSmall, Detector::LineNet, Detector::MangaDet, Detector::Ctd, Detector::Page];
 
     /// Its name in `ModelChoice::det`.
     pub fn id(self) -> &'static str {
@@ -94,6 +109,9 @@ impl Detector {
             Detector::PaddleTiny => "paddle:det_tiny",
             Detector::PaddleSmall => "paddle:det_small",
             Detector::LineNet => "indra:linenet",
+            Detector::MangaDet => "manga:det",
+            Detector::Ctd => "ctd:comic",
+            Detector::Page => "page:own",
         }
     }
 
@@ -101,12 +119,13 @@ impl Detector {
         Self::ALL.into_iter().find(|d| d.id() == id)
     }
 
-    /// PP-OCR's model, for one of PP-OCRv6's detectors.
+    /// PP-OCR's model, for a detector PP-OCR runs (PP-OCRv6's and PP-OCRv6 Manga's).
     pub fn paddle_model(self) -> Option<&'static str> {
         match self {
             Detector::PaddleTiny => Some("det_tiny"),
             Detector::PaddleSmall => Some("det_small"),
-            Detector::LineNet => None,
+            Detector::MangaDet => Some(crate::ocr::paddle::MANGA_DET),
+            Detector::LineNet | Detector::Ctd | Detector::Page => None,
         }
     }
 }
@@ -125,7 +144,7 @@ pub struct Models {
 
 /// An engine's models as the user chose them (Configurações › OCR, under its selector): the
 /// detector (`Detector::id`), the recognizer (the custom engine's only: `"paddle"`, the language's
-/// PP-OCR model; `"meiki"`; `"indra"`) and whether each runs on the GPU.
+/// PP-OCR model; `"meiki"`; `"indra"`; `"manga"`) and whether each runs on the GPU.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ModelChoice {
@@ -152,6 +171,7 @@ impl From<String> for OcrEngineKind {
             "bing" => Self::Bing,
             "indra" => Self::Indra,
             "custom" => Self::Custom,
+            "manga" => Self::Manga,
             other => {
                 log::warn!("unknown OCR engine {other:?}; using PP-OCRv6");
                 Self::Paddle
@@ -442,7 +462,11 @@ impl Settings {
     pub fn paddle_use(&self, kind: OcrEngineKind) -> Option<crate::ocr::paddle::PaddleUse> {
         let m = self.models(kind);
         let det = m.det.paddle_model().is_some();
-        let rec = (m.rec == Recognizer::Paddle).then(|| self.rec_model());
+        let rec = match m.rec {
+            Recognizer::Paddle => Some(self.rec_model()),
+            Recognizer::Manga => Some(crate::ocr::paddle::MANGA_REC),
+            Recognizer::Meiki | Recognizer::Indra | Recognizer::Page => None,
+        };
         if !det && rec.is_none() {
             return None;
         }
@@ -471,15 +495,16 @@ impl Settings {
     }
 
     /// The models `kind` reads with: those chosen for it (`ocr_models`; the custom engine's start
-    /// from `ModelChoice::default`), or its own: IndraOCR's LineNet and recognizer, PP-OCRv6's
-    /// detector as Lookupper picks it for the others (`Models::automatic`), each where `use_gpu`
-    /// says. A detector the engine does not offer (`OcrEngineKind::offers`) reads as its own; only
+    /// from `ModelChoice::default`), or its own: IndraOCR's LineNet and recognizer, PP-OCRv6
+    /// Manga's detector and recognizer, PP-OCRv6's detector as Lookupper picks it for the others
+    /// (`Models::automatic`), each where `use_gpu` says. A detector the engine does not offer (`OcrEngineKind::offers`) reads as its own; only
     /// the custom engine chooses its recognizer. The GPU only where OCR has one (Windows, Linux).
     pub fn models(&self, kind: OcrEngineKind) -> Models {
         let gpu = cfg!(any(windows, target_os = "linux"));
         let own_rec = match kind {
             OcrEngineKind::Meiki => Recognizer::Meiki,
             OcrEngineKind::Indra => Recognizer::Indra,
+            OcrEngineKind::Manga => Recognizer::Manga,
             OcrEngineKind::Paddle | OcrEngineKind::Custom => Recognizer::Paddle,
             OcrEngineKind::Lens | OcrEngineKind::ScreenAi | OcrEngineKind::OneOcr | OcrEngineKind::Bing => Recognizer::Page,
         };
@@ -487,13 +512,14 @@ impl Settings {
         let own = Models {
             det: match kind {
                 OcrEngineKind::Indra => Detector::LineNet,
+                OcrEngineKind::Manga => Detector::MangaDet,
                 _ if on_gpu => Detector::PaddleSmall,
                 _ => Detector::PaddleTiny,
             },
             det_gpu: on_gpu,
             rec: own_rec,
             rec_gpu: on_gpu,
-            automatic: kind != OcrEngineKind::Indra,
+            automatic: !matches!(kind, OcrEngineKind::Indra | OcrEngineKind::Manga),
         };
         let chosen = match self.ocr_models.get(kind.id()) {
             Some(c) => c.clone(),
@@ -503,6 +529,7 @@ impl Settings {
         let rec = match (kind, chosen.rec.as_str()) {
             (OcrEngineKind::Custom, "meiki") => Recognizer::Meiki,
             (OcrEngineKind::Custom, "indra") => Recognizer::Indra,
+            (OcrEngineKind::Custom, "manga") => Recognizer::Manga,
             _ => own_rec,
         };
         Models {
@@ -1105,6 +1132,37 @@ mod tests {
         s.screen_ocr_engine = Some(OcrEngineKind::Indra);
         assert!(s.reads_with(Recognizer::Indra) && s.detects_with(Detector::LineNet));
         assert_eq!(serde_json::from_str::<OcrEngineKind>(r#""custom""#).unwrap(), OcrEngineKind::Custom);
+    }
+
+    #[test]
+    fn pp_ocrv6_manga_reads_with_its_own_models_or_comic_text_detector() {
+        use crate::ocr::paddle::{MANGA_DET, MANGA_REC};
+        let mut s: Settings = serde_json::from_str(r#"{"ocrEngine": "manga", "ocrLanguage": "ja-JP"}"#).unwrap();
+        let m = s.models(OcrEngineKind::Manga);
+        assert_eq!((m.det, m.rec, m.automatic), (Detector::MangaDet, Recognizer::Manga, false));
+        let parts = s.paddle_configs();
+        assert_eq!(parts.iter().map(|u| (u.det, u.rec, u.plan.det)).collect::<Vec<_>>(), [(true, Some(MANGA_REC), MANGA_DET)]);
+        s.ocr_models.insert("manga".into(), ModelChoice { det: "ctd:comic".into(), det_gpu: true, rec: "manga".into(), rec_gpu: true });
+        assert!(s.detects_with(Detector::Ctd));
+        assert_eq!(s.paddle_configs().iter().map(|u| (u.det, u.rec)).collect::<Vec<_>>(), [(false, Some(MANGA_REC))], "its recognizer alone");
+        s.ocr_models.get_mut("manga").unwrap().det = "paddle:det_small".into();
+        assert_eq!(s.models(OcrEngineKind::Manga).det, Detector::MangaDet, "PP-OCRv6's detectors are not its own");
+        // The custom engine takes any of them; only a page engine reads by itself.
+        s.ocr_engine = OcrEngineKind::Custom;
+        s.ocr_models.insert("custom".into(), ModelChoice { det: "ctd:comic".into(), det_gpu: false, rec: "manga".into(), rec_gpu: true });
+        assert_eq!((s.models(OcrEngineKind::Custom).det, s.recognizer_for(OcrEngineKind::Custom)), (Detector::Ctd, Recognizer::Manga));
+        s.ocr_models.get_mut("custom").unwrap().det = "page:own".into();
+        assert_eq!(s.models(OcrEngineKind::Custom).det, s.models(OcrEngineKind::Paddle).det, "a page engine's own reads as PP-OCRv6's");
+        assert_eq!(serde_json::from_str::<OcrEngineKind>(r#""manga""#).unwrap(), OcrEngineKind::Manga);
+    }
+
+    #[test]
+    fn a_page_engine_finds_the_pointer_s_block_with_its_own_reading_when_chosen() {
+        let mut s: Settings = serde_json::from_str(r#"{"ocrEngine": "oneocr", "screenOcrEngine": "screenai"}"#).unwrap();
+        assert_eq!(s.paddle_configs().len(), 1, "PP-OCRv6's detector finds the block");
+        s.ocr_models.insert("oneocr".into(), ModelChoice { det: "page:own".into(), ..ModelChoice::default() });
+        assert_eq!(s.models(OcrEngineKind::OneOcr).det, Detector::Page);
+        assert!(s.paddle_configs().is_empty(), "nothing of PP-OCR");
     }
 
     #[test]

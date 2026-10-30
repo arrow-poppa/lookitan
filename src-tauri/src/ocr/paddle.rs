@@ -105,6 +105,55 @@ mod tests {
     }
 
     #[test]
+    fn pp_ocrv6_manga_reads_with_its_model_card_s_values_from_its_own_folder() {
+        assert_eq!(db_params(MANGA_DET), (0.15, 0.25, 1.4));
+        assert_eq!(db_params("det_small"), (DET_THRESH, 0.45, UNCLIP_RATIO));
+        // Its wide-line rule: at most 640, or 2400 past 2000.
+        assert_eq!(manga_rec_width(480, 48), 480);
+        assert_eq!(manga_rec_width(1200, 48), 640, "squeezed");
+        assert_eq!(manga_rec_width(2100, 48), 2100);
+        assert_eq!(manga_rec_width(3000, 48), 2400);
+        assert_eq!(rec_width(1200, 48), 1200, "the others keep their width");
+        let (models, manga) = (Path::new("models"), Path::new("manga"));
+        assert_eq!(model_path(models, Some(manga), MANGA_REC), manga.join("manga_rec_v0.2.onnx"));
+        assert_eq!(model_path(models, Some(manga), "det_tiny"), models.join("det_tiny.onnx"));
+    }
+
+    /// PP-OCRv6 Manga's detector and recognizer on the Japanese fixture (dark on white and light on
+    /// dark blue; game text, not its manga), on the CPU, and on Windows also asked for the GPU.
+    /// Needs the fetched ONNX Runtime and models, and PP-OCRv6 Manga's in `LOOKITAN_MANGA` (CI
+    /// downloads them; the test is skipped without them).
+    #[test]
+    #[ignore]
+    fn real_manga_reads_the_japanese_fixture() {
+        use unicode_normalization::UnicodeNormalization;
+        let Some(dir) = std::env::var_os("LOOKITAN_MANGA").map(PathBuf::from) else {
+            eprintln!("LOOKITAN_MANGA is not set; skipped");
+            return;
+        };
+        let resources = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let library = resources.join("ort").join(if cfg!(windows) { "onnxruntime.dll" } else { "libonnxruntime.so" });
+        ort::init_from(&library).expect("ONNX Runtime").with_name("lookitan-test").commit();
+        let want: Vec<char> = "今日はいい天気ですね。散歩に行きましょう！「本当に？」と彼女は小さな声で聞いた。セーブデータを読み込んでいます…東京駅から新幹線で大阪へ向かう。HPが足りない！回復アイテムを使いますか？".repeat(2).nfkc().filter(|c| !c.is_whitespace()).collect();
+        let img = image::load_from_memory(include_bytes!("fixtures/ja_lines.png")).unwrap().to_rgba8();
+        let devices: &[bool] = if cfg!(windows) { &[false, true] } else { &[false] };
+        for &gpu in devices {
+            let plan = EnginePlan { manual: true, det: MANGA_DET, det_gpu: gpu, rec_gpu: gpu, gpu_choice: None };
+            let ocr = PaddleOcr::load(&resources.join("models"), Some(&dir), PaddleUse { det: true, rec: Some(MANGA_REC), plan }).unwrap();
+            let boxes = ocr.detect_boxes(&img).unwrap();
+            let lines = ocr.recognize_boxes(&img, &boxes);
+            let got: Vec<char> = lines.iter().map(|l| l.text.as_str()).collect::<String>().nfkc().filter(|c| !c.is_whitespace()).collect();
+            let cer = edits(&got.iter().collect::<String>(), &want.iter().collect::<String>()) as f32 / want.len() as f32;
+            eprintln!("PP-OCRv6 Manga, asked {}: det on {}, rec on {}: {} boxes, CER {:.1}%
+{}", if gpu { "GPU" } else { "CPU" },
+                if ocr.det_on_gpu() { "GPU" } else { "CPU" }, if ocr.rec_on_gpu() { "GPU" } else { "CPU" }, boxes.len(), cer * 100.0,
+                lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("
+"));
+            assert!(cer <= 0.10, "CER {cer}");
+        }
+    }
+
+    #[test]
     fn successful_gpu_inference_does_not_load_cpu() {
         let mut session = fake_session(true);
         assert_eq!(session.run(|_| panic!("CPU must not load"), |_| Ok(42)).unwrap(), 42);
@@ -236,7 +285,7 @@ mod tests {
         });
         let b = TextBox { x0: 40.0, y0: 10.0, x1: 60.0, y1: 110.0, quad: None };
         assert_eq!(first_turns(&b), [Turn::Left], "a tall box is read top to bottom first");
-        let left = rec_crop(&img, b, Turn::Left, true).unwrap();
+        let left = rec_crop(&img, b, Turn::Left, true, rec_width).unwrap();
         assert_eq!(left.image.height(), REC_HEIGHT);
         assert_eq!(left.tw, rec_width(100, 20), "as long as the column is tall");
         assert_eq!(box_rec_width(&b), left.tw);
@@ -245,7 +294,7 @@ mod tests {
         assert!(ink.cols[..30].iter().all(|&c| c) && !ink.cols[40..].iter().any(|&c| c), "{:?}", ink.cols);
         assert_eq!((ink.y0, ink.y1), (0, 8));
         // Turned right: the top is at the right, and the right side at the bottom.
-        let ink = rec_crop(&img, b, Turn::Right, true).unwrap().ink.unwrap();
+        let ink = rec_crop(&img, b, Turn::Right, true, rec_width).unwrap().ink.unwrap();
         assert!(ink.cols[70..].iter().all(|&c| c) && !ink.cols[..60].iter().any(|&c| c), "{:?}", ink.cols);
         assert_eq!((ink.y0, ink.y1), (12, 20));
         assert_eq!(first_turns(&TextBox { x0: 0.0, y0: 0.0, x1: 100.0, y1: 40.0, quad: None }), [Turn::Upright]);
@@ -395,6 +444,12 @@ mod tests {
 /// Binarization of the probability map, as Lookupper (76 / 255) and PaddleOCR's default.
 const DET_THRESH: f32 = 0.3;
 const UNCLIP_RATIO: f32 = 1.35;
+/// PP-OCRv6 Manga's detector and recognizer (`models::MANGA`, downloaded): read from their own
+/// folder, the recognizer with rec_small's character list (the same file).
+pub const MANGA_DET: &str = "manga_det_v0.2";
+pub const MANGA_REC: &str = "manga_rec_v0.2";
+/// PP-OCRv6 Manga's recommended input: the long side at 960 on either device (its model card).
+const MANGA_DET_SIDE: f32 = 960.0;
 /// White border around the detector's image, in detector pixels, as Lookupper's WhitePadding:
 /// text touching the edge of a capture is still found whole.
 const DET_PADDING: u32 = 20;
@@ -502,6 +557,13 @@ fn rec_width(cw: u32, ch: u32) -> u32 {
     ((cw as f32 * REC_HEIGHT as f32 / ch as f32).round() as u32).clamp(16, 3200)
 }
 
+/// PP-OCRv6 Manga's recognizer width (its example's "wide-line rule"): at most 640, or 2400 for a
+/// line naturally over 2000 wide; a longer line is squeezed.
+fn manga_rec_width(cw: u32, ch: u32) -> u32 {
+    let natural = (cw as f32 * REC_HEIGHT as f32 / ch as f32).round() as u32;
+    natural.clamp(16, if natural > 2000 { 2400 } else { 640 })
+}
+
 fn box_rec_width(b: &TextBox) -> u32 {
     let (w, h) = b.size();
     // A vertical box is read on its side.
@@ -603,7 +665,8 @@ struct RecCrop {
 }
 
 /// With `resize` off, `image` is the turned crop at capture resolution (for a `BoxReader`).
-fn rec_crop(img: &RgbaImage, b: TextBox, turn: Turn, resize: bool) -> Option<RecCrop> {
+/// `b`'s crop, turned; resized to the recognizer's height with `width` when `resize`.
+fn rec_crop(img: &RgbaImage, b: TextBox, turn: Turn, resize: bool, width: fn(u32, u32) -> u32) -> Option<RecCrop> {
     let (iw, ih) = img.dimensions();
     let (x, y, cw, ch, mut crop) = if let Some(q) = &b.quad {
         // A turned box is straightened first, as Lookupper's recognizer does.
@@ -631,7 +694,7 @@ fn rec_crop(img: &RgbaImage, b: TextBox, turn: Turn, resize: bool) -> Option<Rec
     if !resize {
         return Some(RecCrop { b, x, y, cw, ch, turn, tw: w, image: crop, ink });
     }
-    let tw = rec_width(w, h);
+    let tw = width(w, h);
     let image = image::imageops::resize(&crop, tw, REC_HEIGHT, FilterType::Triangle);
     Some(RecCrop { b, x, y, cw, ch, turn, tw, image, ink })
 }
@@ -795,9 +858,28 @@ impl EnginePlan {
 }
 
 /// The detector's box score threshold: the small model's maps are sharper (Lookupper's values,
-/// which it pairs with the GPU and the CPU).
+/// which it pairs with the GPU and the CPU); PP-OCRv6 Manga's is its model card's.
 fn box_thresh(det_model: &str) -> f32 {
-    if det_model == "det_small" { 0.45 } else { 0.4 }
+    match det_model {
+        "det_small" => 0.45,
+        MANGA_DET => 0.25,
+        _ => 0.4,
+    }
+}
+
+/// The DB post-processing of a detector: binarization threshold, box score threshold, unclip
+/// ratio. PP-OCRv6 Manga's are its model card's (0.15, 0.25, 1.4).
+fn db_params(det_model: &str) -> (f32, f32, f32) {
+    match det_model {
+        MANGA_DET => (0.15, box_thresh(det_model), 1.4),
+        _ => (DET_THRESH, box_thresh(det_model), UNCLIP_RATIO),
+    }
+}
+
+/// Where a model's file is: PP-OCRv6 Manga's in its downloaded folder, the others in the app's.
+fn model_path(models_dir: &Path, manga_dir: Option<&Path>, stem: &str) -> PathBuf {
+    let dir = if stem.starts_with("manga_") { manga_dir.unwrap_or(models_dir) } else { models_dir };
+    dir.join(format!("{stem}.onnx"))
 }
 
 /// Longest side of the detector's image on each device.
@@ -817,6 +899,8 @@ pub struct PaddleOcr {
     /// Which models were loaded (`load`): a pass may need only one.
     has_det: bool,
     has_rec: bool,
+    /// The recognizer's input width (`rec_width`; `manga_rec_width` for PP-OCRv6 Manga's).
+    rec_width: fn(u32, u32) -> u32,
 }
 
 /// A successful GPU session load does not guarantee that a later, larger input will fit.
@@ -934,20 +1018,23 @@ fn gpu_builder(_choice: Option<GpuPreference>) -> Result<SessionBuilder> {
 
 impl PaddleOcr {
     pub fn new(models_dir: &Path, rec_stem: &'static str, plan: EnginePlan) -> Result<Self> {
-        Self::load(models_dir, PaddleUse { det: true, rec: Some(rec_stem), plan })
+        Self::load(models_dir, None, PaddleUse { det: true, rec: Some(rec_stem), plan })
     }
 
     /// PP-OCR with the models a pass uses (`PaddleUse`): one not loaded takes no memory, and would
-    /// load on the CPU if asked for.
-    pub fn load(models_dir: &Path, parts: PaddleUse) -> Result<Self> {
+    /// load on the CPU if asked for. PP-OCRv6 Manga's are read from `manga_dir`.
+    pub fn load(models_dir: &Path, manga_dir: Option<&Path>, parts: PaddleUse) -> Result<Self> {
         let PaddleUse { det: has_det, rec, plan } = parts;
         let gpu_choice = plan.gpu_choice;
         let (det_gpu_model, det_cpu_model) = plan.det_models();
-        let det_gpu_path = models_dir.join(format!("{det_gpu_model}.onnx"));
-        let det_cpu_path = models_dir.join(format!("{det_cpu_model}.onnx"));
+        let det_gpu_path = model_path(models_dir, manga_dir, det_gpu_model);
+        let det_cpu_path = model_path(models_dir, manga_dir, det_cpu_model);
         let rec_stem = rec.unwrap_or_default();
-        let rec_path = models_dir.join(format!("{rec_stem}.onnx"));
-        let dict_path = models_dir.join(format!("{rec_stem}.dict.json"));
+        let rec_path = model_path(models_dir, manga_dir, rec_stem);
+        let dict_path = models_dir.join(format!("{}.dict.json", if rec_stem == MANGA_REC { "rec_small" } else { rec_stem }));
+        if has_det && !det_gpu_path.exists() {
+            bail!("detection model not found: {}", det_gpu_path.display());
+        }
         if rec.is_some() && !rec_path.exists() {
             bail!("recognition model not found: {}", rec_path.display());
         }
@@ -1013,6 +1100,7 @@ impl PaddleOcr {
             rec_on_gpu,
             has_det,
             has_rec: rec.is_some(),
+            rec_width: if rec_stem == MANGA_REC { manga_rec_width } else { rec_width },
         })
     }
 
@@ -1030,7 +1118,7 @@ impl PaddleOcr {
     }
 
     fn det_max_side(&self) -> f32 {
-        det_max_side(self.det_on_gpu())
+        if self.det_models.0 == MANGA_DET { MANGA_DET_SIDE } else { det_max_side(self.det_on_gpu()) }
     }
 
     pub fn rec_on_gpu(&self) -> bool {
@@ -1166,84 +1254,7 @@ impl PaddleOcr {
             })?
         };
 
-        let box_thresh = box_thresh(self.det_model());
-        let sx = w as f32 / mw as f32;
-        let sy = h as f32 / mh as f32;
-        let mut visited = vec![false; mh * mw];
-        let mut boxes = Vec::new();
-        let mut stack: Vec<usize> = Vec::new();
-        let mut pixels: Vec<(usize, usize)> = Vec::new();
-        for start in 0..mh * mw {
-            if visited[start] || prob[start] <= DET_THRESH {
-                continue;
-            }
-            visited[start] = true;
-            stack.push(start);
-            let (mut minx, mut miny, mut maxx, mut maxy) = (usize::MAX, usize::MAX, 0usize, 0usize);
-            let mut sum = 0f32;
-            let mut count = 0usize;
-            pixels.clear();
-            while let Some(i) = stack.pop() {
-                let (x, y) = (i % mw, i / mw);
-                pixels.push((x, y));
-                minx = minx.min(x);
-                maxx = maxx.max(x);
-                miny = miny.min(y);
-                maxy = maxy.max(y);
-                sum += prob[i];
-                count += 1;
-                let mut visit = |j: usize, stack: &mut Vec<usize>| {
-                    if !visited[j] && prob[j] > DET_THRESH {
-                        visited[j] = true;
-                        stack.push(j);
-                    }
-                };
-                if x > 0 {
-                    visit(i - 1, &mut stack);
-                }
-                if x + 1 < mw {
-                    visit(i + 1, &mut stack);
-                }
-                if y > 0 {
-                    visit(i - mw, &mut stack);
-                }
-                if y + 1 < mh {
-                    visit(i + mw, &mut stack);
-                }
-            }
-            let bw = (maxx - minx + 1) as f32;
-            let bh = (maxy - miny + 1) as f32;
-            if count == 0 || sum / (count as f32) < box_thresh {
-                continue;
-            }
-            // As Lookupper, the kernel's smallest rectangle, which is turned with a turned line.
-            if let Some(r) = turned_kernel(&pixels, miny, maxy) {
-                if 2.0 * r.half_w.min(r.half_h) < 3.0 {
-                    continue;
-                }
-                let (kw, kh) = (2.0 * r.half_w, 2.0 * r.half_h);
-                let q = r.grown(kw * kh * UNCLIP_RATIO / (2.0 * (kw + kh))).corners().map(|p| [p[0] * sx, p[1] * sy]);
-                let (x0, y0, x1, y1) = quad::bounds(&q);
-                let (x0, y0, x1, y1) = (x0.max(0.0), y0.max(0.0), x1.min(w as f32), y1.min(h as f32));
-                if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
-                    boxes.push(TextBox { x0, y0, x1, y1, quad: Some(q) });
-                }
-                continue;
-            }
-            if bw < 3.0 || bh < 3.0 {
-                continue;
-            }
-            // DB predicts shrunk text kernels; grow them back by area * ratio / perimeter.
-            let d = bw * bh * UNCLIP_RATIO / (2.0 * (bw + bh));
-            let x0 = ((minx as f32 - d) * sx).max(0.0);
-            let y0 = ((miny as f32 - d) * sy).max(0.0);
-            let x1 = (((maxx + 1) as f32 + d) * sx).min(w as f32);
-            let y1 = (((maxy + 1) as f32 + d) * sy).min(h as f32);
-            if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
-                boxes.push(TextBox { x0, y0, x1, y1, quad: None });
-            }
-        }
-        Ok(boxes)
+        Ok(db_boxes(&prob, mw, mh, (w as f32 / mw as f32, h as f32 / mh as f32), (w as f32, h as f32), db_params(self.det_model())))
     }
 
     fn recognize_box(&self, img: &RgbaImage, b: TextBox) -> Result<Option<OcrLine>> {
@@ -1259,7 +1270,7 @@ impl PaddleOcr {
 
     /// Reads box `b` turned `turn`, and keeps the reading in `best` if it is better.
     fn read_turn(&self, img: &RgbaImage, b: TextBox, turn: Turn, best: &mut Option<Reading>) -> Result<()> {
-        let Some(crop) = rec_crop(img, b, turn, true) else { return Ok(()) };
+        let Some(crop) = rec_crop(img, b, turn, true, self.rec_width) else { return Ok(()) };
         let pw = rec_padded_width(&self.rec_model, crop.tw) as usize;
         let mut data = vec![0f32; 3 * REC_HEIGHT as usize * pw];
         fill_rec_input(&mut data, &crop.image, pw);
@@ -1308,7 +1319,7 @@ impl PaddleOcr {
     /// Reads `boxes[i]` turned `t` for every `(i, t)` of `reads` in one recognizer run, and keeps
     /// in `best[i]` the better reading.
     fn read_batch(&self, img: &RgbaImage, boxes: &[TextBox], reads: &[(usize, Turn)], best: &mut [Option<Reading>]) -> Result<()> {
-        let crops: Vec<(usize, RecCrop)> = reads.iter().filter_map(|&(i, t)| rec_crop(img, boxes[i], t, true).map(|c| (i, c))).collect();
+        let crops: Vec<(usize, RecCrop)> = reads.iter().filter_map(|&(i, t)| rec_crop(img, boxes[i], t, true, self.rec_width).map(|c| (i, c))).collect();
         if crops.is_empty() {
             return Ok(());
         }
@@ -1393,12 +1404,95 @@ impl PaddleOcr {
 
 }
 
+/// The boxes of a DB detector's probability map (`mw` × `mh`): 4-connected kernels over `thresh`
+/// whose mean is at least `box_thresh`, grown back by area × `unclip` / perimeter, in the image's
+/// pixels (`scale` image pixels to one of the map's, at most `limit`). As Lookupper, a turned
+/// kernel keeps its smallest rectangle. Shared with comic-text-detector (ctd.rs).
+pub(crate) fn db_boxes(prob: &[f32], mw: usize, mh: usize, scale: (f32, f32), limit: (f32, f32), params: (f32, f32, f32)) -> Vec<TextBox> {
+    let ((sx, sy), (w, h), (thresh, box_thresh, unclip)) = (scale, limit, params);
+    let mut visited = vec![false; mh * mw];
+    let mut boxes = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
+    let mut pixels: Vec<(usize, usize)> = Vec::new();
+    for start in 0..mh * mw {
+        if visited[start] || prob[start] <= thresh {
+            continue;
+        }
+        visited[start] = true;
+        stack.push(start);
+        let (mut minx, mut miny, mut maxx, mut maxy) = (usize::MAX, usize::MAX, 0usize, 0usize);
+        let mut sum = 0f32;
+        let mut count = 0usize;
+        pixels.clear();
+        while let Some(i) = stack.pop() {
+            let (x, y) = (i % mw, i / mw);
+            pixels.push((x, y));
+            minx = minx.min(x);
+            maxx = maxx.max(x);
+            miny = miny.min(y);
+            maxy = maxy.max(y);
+            sum += prob[i];
+            count += 1;
+            let mut visit = |j: usize, stack: &mut Vec<usize>| {
+                if !visited[j] && prob[j] > thresh {
+                    visited[j] = true;
+                    stack.push(j);
+                }
+            };
+            if x > 0 {
+                visit(i - 1, &mut stack);
+            }
+            if x + 1 < mw {
+                visit(i + 1, &mut stack);
+            }
+            if y > 0 {
+                visit(i - mw, &mut stack);
+            }
+            if y + 1 < mh {
+                visit(i + mw, &mut stack);
+            }
+        }
+        let bw = (maxx - minx + 1) as f32;
+        let bh = (maxy - miny + 1) as f32;
+        if count == 0 || sum / (count as f32) < box_thresh {
+            continue;
+        }
+        // As Lookupper, the kernel's smallest rectangle, which is turned with a turned line.
+        if let Some(r) = turned_kernel(&pixels, miny, maxy) {
+            if 2.0 * r.half_w.min(r.half_h) < 3.0 {
+                continue;
+            }
+            let (kw, kh) = (2.0 * r.half_w, 2.0 * r.half_h);
+            let q = r.grown(kw * kh * unclip / (2.0 * (kw + kh))).corners().map(|p| [p[0] * sx, p[1] * sy]);
+            let (x0, y0, x1, y1) = quad::bounds(&q);
+            let (x0, y0, x1, y1) = (x0.max(0.0), y0.max(0.0), x1.min(w), y1.min(h));
+            if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
+                boxes.push(TextBox { x0, y0, x1, y1, quad: Some(q) });
+            }
+            continue;
+        }
+        if bw < 3.0 || bh < 3.0 {
+            continue;
+        }
+        // DB predicts shrunk text kernels; grow them back by area * ratio / perimeter.
+        let d = bw * bh * unclip / (2.0 * (bw + bh));
+        let x0 = ((minx as f32 - d) * sx).max(0.0);
+        let y0 = ((miny as f32 - d) * sy).max(0.0);
+        let x1 = (((maxx + 1) as f32 + d) * sx).min(w);
+        let y1 = (((maxy + 1) as f32 + d) * sy).min(h);
+        if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
+            boxes.push(TextBox { x0, y0, x1, y1, quad: None });
+        }
+    }
+    boxes
+}
+
 /// Recognizes the boxes with another recognizer than PP-OCR's (`BoxReader`), `READ_RUN` boxes
 /// to a call; boxes without readable text are dropped. Columns are read top to bottom only.
 pub fn recognize_boxes_with(img: &RgbaImage, boxes: &[TextBox], reader: &dyn BoxReader) -> Vec<OcrLine> {
     let mut lines = Vec::with_capacity(boxes.len());
     for run in boxes.chunks(READ_RUN) {
-        let crops: Vec<RecCrop> = run.iter().filter_map(|b| rec_crop(img, *b, first_turns(b)[0], false)).collect();
+        let crops: Vec<RecCrop> = run.iter().filter_map(|b| rec_crop(img, *b, first_turns(b)[0], false, rec_width)).collect();
         // A column goes to the reader standing, as it is on the screen.
         let standing: Vec<Option<RgbaImage>> = crops
             .iter()

@@ -554,26 +554,30 @@ test('the custom engine mixes any detector with any recognizer, each on the CPU 
     const det = () => selectIn(modelRow(root, 'custom', 'Detecção'));
     const rec = () => selectIn(modelRow(root, 'custom', 'Reconhecimento'));
     assert(modelRow(root, 'paddle', 'Detecção'), 'the whole screen\'s PP-OCRv6 has its own rows');
-    assert.deepEqual(det().children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small', 'indra:linenet']);
+    assert.deepEqual(det().children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small', 'indra:linenet', 'manga:det', 'ctd:comic']);
     assert.equal(det().value, 'paddle:det_small');
     det().value = 'paddle:det_tiny';
     det().dispatch('change');
     assert.equal(JSON.stringify(settings.ocrModels.custom), JSON.stringify({det: 'paddle:det_tiny', detGpu: true, rec: 'paddle', recGpu: true}));
     switchesIn(modelRow(root, 'custom', 'Reconhecimento'))[0].children[0].dispatch('click');
     assert.equal(settings.ocrModels.custom.recGpu, false, 'the recognizer on the CPU');
-    assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'meiki', 'indra']);
+    assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'meiki', 'indra', 'manga']);
     rec().value = 'meiki';
     rec().dispatch('change');
     assert.equal(settings.ocrModels.custom.rec, 'meiki');
     assert(descendants(root).some((node) => node.textContent === 'Modelos do MeikiOCR (31 MB)'), 'its models row shows');
-    // Away from Japanese MeikiOCR stays listed while chosen, and says it does not read.
+    // Away from Japanese every recognizer stays listed, each saying what it reads.
     const language = view.document.getElementById('ocr-language');
     language.value = 'pt-BR';
     language.dispatch('change');
     assert(modelRow(root, 'custom', 'Reconhecimento').textContent.includes('O MeikiOCR lê só japonês'));
+    assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'meiki', 'indra', 'manga'], 'every local recognizer, whatever the language');
+    rec().value = 'manga';
+    rec().dispatch('change');
+    assert(modelRow(root, 'custom', 'Reconhecimento').textContent.includes('treinado em japonês e chinês'));
+    assert(descendants(root).some((node) => node.textContent === 'Modelos do PP-OCRv6 Manga (23 MB)'), 'its models row shows');
     rec().value = 'paddle';
     rec().dispatch('change');
-    assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'indra'], 'MeikiOCR only for Japanese');
     assert.deepEqual(selectIn(modelRow(root, 'custom', 'Modelo do PP-OCRv6')).children.map((o) => o.textContent), ['Tiny (padrão)', 'Small'],
         'PP-OCRv6\'s recognizer has its language\'s choice');
     det().value = 'indra:linenet';
@@ -588,7 +592,17 @@ test('a page engine has only the detector that finds the pointer\'s block, in th
     await fixture.finish();
     const block = modelRow(root, 'oneocr', 'Achar o bloco sob o cursor');
     assert(block, 'the pointer\'s page engine finds its block');
-    assert.deepEqual(selectIn(block).children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small', 'indra:linenet']);
+    assert.deepEqual(selectIn(block).children.map((o) => o.value), ['page:own', 'paddle:det_tiny', 'paddle:det_small', 'indra:linenet', 'manga:det', 'ctd:comic']);
+    assert.equal(selectIn(block).children[0].textContent, 'A do próprio OneOCR (lê a tela inteira)');
+    selectIn(block).value = 'page:own';
+    selectIn(block).dispatch('change');
+    assert.equal(settings.ocrModels.oneocr.det, 'page:own');
+    const own = modelRow(root, 'oneocr', 'Achar o bloco sob o cursor');
+    assert.equal(switchesIn(own).length, 0, 'its own reading has no device to choose');
+    assert(own.textContent.includes('lê a tela inteira e fica com o bloco'));
+    selectIn(own).value = 'ctd:comic';
+    selectIn(own).dispatch('change');
+    assert(descendants(root).some((node) => node.textContent === 'comic-text-detector (95 MB)'), 'its model row shows');
     assert.equal(modelRow(root, 'oneocr', 'Reconhecimento'), undefined, 'it reads by itself');
     assert.equal(descendants(root).filter((node) => node.attributes?.['data-sub'] === 'screenai').length, 0, 'the whole screen\'s reads it all');
     const preset = view.document.getElementById('capture-preset');
@@ -601,6 +615,21 @@ test('a page engine has only the detector that finds the pointer\'s block, in th
     assert.equal(descendants(both.root).filter((node) => node.attributes?.['data-sub'] === 'indra' && node.textContent.startsWith('Detecção')).length, 1);
     const screenRow = descendants(both.root).find((node) => node.className === 'card-row' && node.textContent.startsWith('OCR da tela inteira'));
     assert(screenRow.textContent.includes('Com os mesmos modelos do OCR em volta do cursor'));
+});
+
+test('PP-OCRv6 Manga reads with its own detector or comic-text-detector, and its own recognizer', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'zh-Hans-CN', ocrEngine: 'manga'});
+    const {root, settings} = fixture;
+    await fixture.finish();
+    const det = selectIn(modelRow(root, 'manga', 'Detecção'));
+    assert.deepEqual(det.children.map((o) => o.value), ['manga:det', 'ctd:comic']);
+    assert.equal(det.value, 'manga:det');
+    assert.equal(selectIn(modelRow(root, 'manga', 'Reconhecimento')).value, 'manga');
+    assert(descendants(root).some((node) => node.textContent === 'Modelos do PP-OCRv6 Manga (23 MB)'));
+    det.value = 'ctd:comic';
+    det.dispatch('change');
+    assert.equal(JSON.stringify(settings.ocrModels.manga), JSON.stringify({det: 'ctd:comic', detGpu: true, rec: 'manga', recGpu: true}));
+    assert(descendants(root).some((node) => node.textContent === 'comic-text-detector (95 MB)'));
 });
 
 test('the chevron folds an engine\'s models under its selector', async () => {
@@ -764,7 +793,7 @@ test('whole-screen OCR engine is chosen separately and defaults to the pointer e
     await fixture.finish();
 });
 
-test('MeikiOCR is offered for Japanese only, ScreenAI always and OneOCR on Windows, and their files rows show while they are chosen', async () => {
+test('MeikiOCR is offered for Japanese only, PP-OCRv6 Manga for Japanese and Chinese, ScreenAI always and OneOCR on Windows, and their files rows show while they are chosen', async () => {
     const offered = (root, title) => {
         const row = descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
         return descendants(row).filter((node) => node.tagName === 'option').map((node) => node.value);
@@ -776,7 +805,7 @@ test('MeikiOCR is offered for Japanese only, ScreenAI always and OneOCR on Windo
     const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'paddle', screenOcrEngine: null});
     const {root, settings} = fixture;
     const modelsRow = () => descendants(root).some((node) => node.className === 'card-row' && node.textContent.includes('Modelos do MeikiOCR'));
-    assert.deepEqual(offered(root, 'OCR em volta do cursor'), ['paddle', 'meiki', 'screenai', 'indra', 'custom', 'oneocr', 'lens', 'bing']);
+    assert.deepEqual(offered(root, 'OCR em volta do cursor'), ['paddle', 'meiki', 'manga', 'screenai', 'indra', 'custom', 'oneocr', 'lens', 'bing']);
     assert(!modelsRow());
     const control = () => descendants(descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes('OCR em volta do cursor')))
         .find((node) => node.tagName === 'select');

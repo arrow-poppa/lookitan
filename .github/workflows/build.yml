@@ -116,6 +116,27 @@ jobs:
           python scripts/fetch-ocr-models.py INDRA "$LOOKITAN_INDRA"
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::indra::tests::real_indra -- --ignored --nocapture
 
+      # PP-OCRv6 Manga's models and comic-text-detector's are downloaded by the app when chosen:
+      # fetched here, pinned in ocr/models.rs, for their real tests.
+      - name: Cache PP-OCRv6 Manga and comic-text-detector models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/manga
+            ${{ runner.temp }}/ctd
+          key: manga-ctd-${{ hashFiles('src-tauri/src/ocr/models.rs') }}
+
+      - name: Test PP-OCRv6 Manga and comic-text-detector with the real models
+        shell: bash
+        env:
+          LOOKITAN_MANGA: ${{ runner.temp }}/manga
+          LOOKITAN_CTD: ${{ runner.temp }}/ctd
+        run: |
+          python scripts/fetch-ocr-models.py MANGA "$LOOKITAN_MANGA"
+          python scripts/fetch-ocr-models.py CTD "$LOOKITAN_CTD"
+          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::paddle::tests::real_manga -- --ignored --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::ctd::tests::real_ctd -- --ignored --nocapture
+
       # Chrome ScreenAI is not in the installers either (the app downloads it when the user picks
       # it): CIPD's latest instance, fetched as the app does, for its real test.
       - name: Resolve Chrome ScreenAI

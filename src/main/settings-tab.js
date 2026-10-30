@@ -291,6 +291,14 @@ function segmenterRow() {
 
 /** The engines whose files the app downloads when they are chosen (`Downloaded` in lib.rs). */
 const DOWNLOADED_ENGINES = {
+    manga: {title: 'Modelos do PP-OCRv6 Manga (23 MB)',
+        desc: 'A detecção e o reconhecimento do PP-OCRv6 Manga, de Kellenok/PP-OCRv6_manga no Hugging Face (licença Apache-2.0): uma versão fixa, baixada uma vez e conferida.',
+        removeAsk: 'Apagar os modelos do PP-OCRv6 Manga? Enquanto não forem baixados de novo, ele não lê.',
+        removeTitle: 'Apagar o PP-OCRv6 Manga'},
+    ctd: {title: 'comic-text-detector (95 MB)',
+        desc: 'Detecção de texto de mangá e quadrinhos (dmMaze/comic-text-detector, licença GPL-3.0), o modelo publicado pelo manga-image-translator; baixado uma vez e conferido.',
+        removeAsk: 'Apagar o comic-text-detector? Enquanto não for baixado de novo, a detecção dele não acha nada.',
+        removeTitle: 'Apagar o comic-text-detector'},
     meiki: {title: 'Modelos do MeikiOCR (31 MB)',
         desc: 'De rtr46/meikiocr no Hugging Face, licença LGPL-3.0; baixados uma vez e conferidos.',
         removeAsk: 'Apagar os modelos do MeikiOCR? Enquanto não forem baixados de novo, ele não lê.',
@@ -329,7 +337,8 @@ function fillModelsRows(rows) {
         chosen.add(engine);
         if (modelRows(engine, pointer).length === 0) { continue; }
         const c = currentChoice(engine);
-        if (c.det === 'indra:linenet') { chosen.add('indra'); }
+        const downloads = {'indra:linenet': 'indra', 'manga:det': 'manga', 'ctd:comic': 'ctd'};
+        if (downloads[c.det]) { chosen.add(downloads[c.det]); }
         if (engine === 'custom') { chosen.add(c.rec); }
     }
     for (const engine of Object.keys(DOWNLOADED_ENGINES)) {
@@ -420,18 +429,27 @@ function paddleRecognizer() {
 }
 
 /** The detectors (`Detector::id` in settings.rs), by name. */
-const DETECTORS = {'paddle:det_tiny': 'PP-OCRv6 Tiny', 'paddle:det_small': 'PP-OCRv6 Small', 'indra:linenet': 'IndraOCR LineNet'};
+const DETECTORS = {'paddle:det_tiny': 'PP-OCRv6 Tiny', 'paddle:det_small': 'PP-OCRv6 Small', 'indra:linenet': 'IndraOCR LineNet',
+    'manga:det': 'PP-OCRv6 Manga', 'ctd:comic': 'comic-text-detector', 'page:own': 'A do próprio motor'};
 /** Engines that find and read the text themselves. */
 const PAGE_ENGINES = {oneocr: 'OneOCR', screenai: 'Chrome ScreenAI', lens: 'Google Lens', bing: 'Bing'};
-const LOCAL_NAMES = {paddle: 'PP-OCRv6', meiki: 'MeikiOCR', indra: 'IndraOCR', custom: 'Personalizado'};
+const LOCAL_NAMES = {paddle: 'PP-OCRv6', meiki: 'MeikiOCR', indra: 'IndraOCR', custom: 'Personalizado', manga: 'PP-OCRv6 Manga'};
 
 /** The detectors an engine can be set to (`OcrEngineKind::offers`): each engine its own (PP-OCRv6's
- * for MeikiOCR until its own comes), the custom engine and a page engine's block any. */
+ * for MeikiOCR until its own comes), the custom engine any local one, a page engine's block any
+ * local one or its own. */
 function offeredDetectors(engine) {
-    const all = Object.keys(DETECTORS);
+    const local = Object.keys(DETECTORS).filter((d) => d !== 'page:own');
     if (engine === 'indra') { return ['indra:linenet']; }
-    if (engine === 'paddle' || engine === 'meiki') { return all.filter((d) => d !== 'indra:linenet'); }
-    return all;
+    if (engine === 'paddle' || engine === 'meiki') { return ['paddle:det_tiny', 'paddle:det_small']; }
+    if (engine === 'manga') { return ['manga:det', 'ctd:comic']; }
+    if (engine === 'custom') { return local; }
+    return ['page:own', ...local];
+}
+
+/** Whether the OCR language is one PP-OCRv6 Manga was trained on. */
+function mangaLanguage() {
+    return /^(ja|zh)\b/i.test(String(store.settings.ocrLanguage || ''));
 }
 
 /** An engine's models as `Settings::models` reads them: those chosen for it (Settings
@@ -439,10 +457,10 @@ function offeredDetectors(engine) {
 function currentChoice(engine) {
     const s = store.settings;
     const gpu = s.useGpu !== false;
+    const ownDet = {indra: 'indra:linenet', manga: 'manga:det'}[engine] || `paddle:${gpu ? 'det_small' : 'det_tiny'}`;
     const own = engine === 'custom'
         ? {det: 'paddle:det_small', detGpu: true, rec: 'paddle', recGpu: true}
-        : {det: engine === 'indra' ? 'indra:linenet' : `paddle:${gpu ? 'det_small' : 'det_tiny'}`, detGpu: gpu,
-            rec: engine === 'meiki' || engine === 'indra' ? engine : 'paddle', recGpu: gpu};
+        : {det: ownDet, detGpu: gpu, rec: ['meiki', 'indra', 'manga'].includes(engine) ? engine : 'paddle', recGpu: gpu};
     const saved = s.ocrModels?.[engine];
     if (!saved) { return own; }
     return {
@@ -478,31 +496,41 @@ function modelRows(engine, pointer) {
         return r;
     };
     const offered = offeredDetectors(engine);
-    const det = select(offered.map((d) => ({value: d, label: DETECTORS[d]})), c.det, (v) => { setChoice(engine, 'det', v); refreshOcrRows(); });
+    const det = select(offered.map((d) => ({value: d, label: d === 'page:own' ? `A do próprio ${name} (lê a tela inteira)` : DETECTORS[d]})), c.det,
+        (v) => { setChoice(engine, 'det', v); refreshOcrRows(); });
     det.disabled = offered.length < 2;
     if (PAGE_ENGINES[engine]) {
         if (!pointer || s.captureAuto !== true) { return []; }
-        return [row('Achar o bloco sob o cursor', `Na captura automática, a detecção acha o bloco de texto sob o cursor e o ${name} lê só esse bloco. A LineNet precisa dos modelos do IndraOCR.`,
-            controls(det, 'detGpu'))];
+        const own = c.det === 'page:own';
+        const blockDesc = own
+            ? `O ${name} lê a tela inteira e fica com o bloco sob o cursor: mais lento, e a tela vai reduzida como na leitura da tela inteira.`
+            : `Na captura automática, a detecção acha o bloco de texto sob o cursor e o ${name} lê só esse bloco, sem reduzir. A LineNet precisa dos modelos do IndraOCR; a do PP-OCRv6 Manga e o comic-text-detector são baixados quando escolhidos.`;
+        // Its own reading runs where the engine runs: no device to choose.
+        return [row('Achar o bloco sob o cursor', blockDesc, own ? det : controls(det, 'detGpu'))];
     }
     const detDesc = {
         paddle: 'O small acha mais, mas na CPU é bem mais lento; o tiny ganha pouco na GPU.',
         meiki: 'Por enquanto, a do PP-OCRv6; a do próprio MeikiOCR vem numa próxima versão.',
         indra: 'A do próprio IndraOCR (LineNet), leve. Acha linhas na horizontal.',
-        custom: 'Qualquer uma das detecções locais. A LineNet precisa dos modelos do IndraOCR.',
+        manga: 'A do PP-OCRv6 Manga, treinada em mangá, ou o comic-text-detector (95 MB, baixado quando escolhido). As duas leem a tela reduzida (960 e 1024 px no lado maior), como uma página de mangá.',
+        custom: 'Qualquer uma das detecções locais. A LineNet precisa dos modelos do IndraOCR; a do PP-OCRv6 Manga e o comic-text-detector são baixados quando escolhidos.',
     }[engine];
     const rows = [row('Detecção', `Acha as linhas de texto. ${detDesc} Se a GPU falhar, segue na CPU.`, controls(det, 'detGpu'))];
     const paddle = paddleRecognizer();
     if (engine === 'custom') {
         const japanese = String(s.ocrLanguage || '').toLowerCase() === 'ja-jp';
+        // Every local recognizer, whatever the language: each says which it reads.
         const rec = select([
             {value: 'paddle', label: 'PP-OCRv6 (o modelo do idioma)'},
-            ...(japanese || c.rec === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (japonês)'}] : []),
+            {value: 'meiki', label: 'MeikiOCR (só japonês)'},
             {value: 'indra', label: 'IndraOCR (experimental)'},
+            {value: 'manga', label: 'PP-OCRv6 Manga (japonês e chinês)'},
         ], c.rec, (v) => { setChoice('custom', 'rec', v); refreshOcrRows(); });
         const recDesc = c.rec === 'meiki' && !japanese
             ? 'O MeikiOCR lê só japonês: neste idioma, ele não lê.'
-            : 'Lê as linhas que a detecção acha. Sem os modelos dele, não lê.';
+            : c.rec === 'manga' && !mangaLanguage()
+                ? 'O PP-OCRv6 Manga foi treinado em japonês e chinês: neste idioma, lê mal.'
+                : 'Lê as linhas que a detecção acha. Sem os modelos dele, não lê.';
         rows.push(row('Reconhecimento', recDesc, controls(rec, 'recGpu')));
         if (c.rec === 'paddle' && paddle && paddle.choices > 1) {
             rows.push(row('Modelo do PP-OCRv6', paddle.desc, paddle.control));
@@ -532,6 +560,7 @@ function engineDesc(engine) {
     case 'bing': return 'Envia a captura à Microsoft, pelo site do Bing (não é uma API oficial e pode mudar sem aviso), como o owocr faz. Se falhar, a consulta mostra o erro.';
     case 'meiki': return `A detecção do PP-OCRv6 acha as linhas e o MeikiOCR, treinado em texto de jogos japoneses, as lê. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, ele não lê.' : 'Ele lê só japonês: neste idioma, não lê.'}`;
     case 'indra': return 'A detecção e o reconhecimento do próprio IndraOCR, leves e feitos para a CPU (experimental). Roda no seu computador. Sem os modelos baixados, ele não lê.';
+    case 'manga': return 'O PP-OCRv6 treinado em mangá, webtoons e ilustrações, em japonês e chinês: balões, texto vertical e kanji raros. Roda no seu computador. Sem os modelos baixados, ele não lê.';
     case 'oneocr': return 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador ou baixados do servidor da Microsoft. Roda no seu computador, nada sai dele; sem os arquivos, ele não lê.';
     case 'custom': return 'A detecção e o reconhecimento que você escolher abaixo, de qualquer motor local, para testar combinações. Roda no seu computador.';
     case 'screenai': return 'A biblioteca de OCR do Chrome, que reconhece qualquer idioma e acha o de cada linha sozinha. Roda no seu computador, nada sai dele; sem os arquivos baixados, ele não lê.';
@@ -552,6 +581,8 @@ function engineRows(pointer) {
     const choose = select([
         {value: 'paddle', label: 'PP-OCRv6 (local)'},
         ...(japanese || engine === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (local, japonês)'}] : []),
+        // PP-OCRv6 Manga reads Japanese and Chinese: offered with them, and kept while chosen.
+        ...(mangaLanguage() || engine === 'manga' ? [{value: 'manga', label: 'PP-OCRv6 Manga (local, mangá em japonês e chinês)'}] : []),
         {value: 'screenai', label: 'Chrome ScreenAI (local, qualquer idioma)'},
         {value: 'indra', label: 'IndraOCR (local, experimental)'},
         {value: 'custom', label: 'Personalizado (DET + REC)'},
