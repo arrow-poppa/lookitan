@@ -566,18 +566,21 @@ test('the custom engine mixes any detector with any recognizer, each on the CPU 
     rec().dispatch('change');
     assert.equal(settings.ocrModels.custom.rec, 'meiki');
     assert(descendants(root).some((node) => node.textContent === 'Modelos do MeikiOCR (31 MB)'), 'its models row shows');
-    // Away from Japanese every recognizer stays listed, each saying what it reads.
+    rec().value = 'manga';
+    rec().dispatch('change');
+    assert(descendants(root).some((node) => node.textContent === 'Modelos do PP-OCRv6 Manga (23 MB)'), 'its models row shows');
+    rec().value = 'meiki';
+    rec().dispatch('change');
+    // Away from Japanese and Chinese their models are offered only while chosen, saying so.
     const language = view.document.getElementById('ocr-language');
     language.value = 'pt-BR';
     language.dispatch('change');
     assert(modelRow(root, 'custom', 'Reconhecimento').textContent.includes('O MeikiOCR lê só japonês'));
-    assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'meiki', 'indra', 'manga'], 'every local recognizer, whatever the language');
-    rec().value = 'manga';
-    rec().dispatch('change');
-    assert(modelRow(root, 'custom', 'Reconhecimento').textContent.includes('treinado em japonês e chinês'));
-    assert(descendants(root).some((node) => node.textContent === 'Modelos do PP-OCRv6 Manga (23 MB)'), 'its models row shows');
+    assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'meiki', 'indra'], 'MeikiOCR while chosen; PP-OCRv6 Manga not');
+    assert.deepEqual(det().children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small', 'indra:linenet'], 'no manga detectors');
     rec().value = 'paddle';
     rec().dispatch('change');
+    assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'indra'], 'MeikiOCR only for Japanese');
     assert.deepEqual(selectIn(modelRow(root, 'custom', 'Modelo do PP-OCRv6')).children.map((o) => o.textContent), ['Tiny (padrão)', 'Small'],
         'PP-OCRv6\'s recognizer has its language\'s choice');
     det().value = 'indra:linenet';
@@ -587,7 +590,7 @@ test('the custom engine mixes any detector with any recognizer, each on the CPU 
 });
 
 test('a page engine has only the detector that finds the pointer\'s block, in the automatic capture; one engine on both selectors shows its models once', async () => {
-    const fixture = await settingsFixture({ocrEngine: 'oneocr', screenOcrEngine: 'screenai', captureAuto: true});
+    const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'oneocr', screenOcrEngine: 'screenai', captureAuto: true});
     const {view, root, settings} = fixture;
     await fixture.finish();
     const block = modelRow(root, 'oneocr', 'Achar o bloco sob o cursor');
