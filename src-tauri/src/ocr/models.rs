@@ -41,7 +41,8 @@ pub static MEIKI: ModelSet = ModelSet {
     ],
 };
 
-/// IndraOCR's recognizers for the groups Lookitan's languages read with (datalab-to, commit
+/// IndraOCR's line detector (LineNet, since 2026-10-29) and its recognizers for the groups
+/// Lookitan's languages read with (datalab-to, commit
 /// bd02167f, `main` on 2026-10-28; its files are byte for byte those of tag v1.1.0, a1283c4b, which
 /// indra-ocr 1.1.2 pins, checked on 2026-10-29; the folder keeps its v1.1.0 name; weights under the modified AI Pubs Open RAIL-M licence, shipped with
 /// them as its §4 asks), and their vocabularies. Downloaded only after the user accepts it.
@@ -50,6 +51,7 @@ pub static INDRA: ModelSet = ModelSet {
     repo: "datalab-to/indra-ocr",
     revision: "bd02167fdf2005a19962cc15188f8496a2c87d3b",
     files: &[
+        ModelFile { name: "det.onnx", bytes: 389_948, sha256: "f2bd4cba23e9c328cf7ec824634e423e191a2c6aacbbf35c62bd79dd70f62f59" },
         ModelFile { name: "rec.onnx", bytes: 5_042_161, sha256: "475972a2710be4a3cbfeb2bc7f3624ffd563de07de42476fc7a290d4e1ece484" },
         ModelFile { name: "rec_cjk.onnx", bytes: 10_176_018, sha256: "4a035516a17e62cdf33a4fe2d88077654cb8841cff024685cdef4e351694ef50" },
         ModelFile { name: "rec_rtl.onnx", bytes: 4_812_710, sha256: "468796bd684486a8388c30c8b4ed2a26e3eeb1f8ff02831c24c2e12c79a2a834" },
@@ -82,6 +84,11 @@ impl ModelSet {
     /// moved into place only once whole, so its size tells it is there.
     pub fn installed(&self) -> bool {
         self.dir().is_ok_and(|dir| self.files.iter().all(|f| has(&dir.join(f.name), f.bytes)))
+    }
+
+    /// Whether some of its files are in place: downloaded once, by a version with fewer files.
+    pub fn partly_installed(&self) -> bool {
+        self.dir().is_ok_and(|dir| self.files.iter().any(|f| has(&dir.join(f.name), f.bytes)))
     }
 
     /// Downloads what is missing, reporting the bytes done of `bytes()`, and returns the folder.
@@ -136,6 +143,6 @@ mod tests {
             }
         }
         assert_eq!(MEIKI.bytes(), 31_466_215);
-        assert_eq!(INDRA.bytes(), 20_257_508);
+        assert_eq!(INDRA.bytes(), 20_647_456);
     }
 }

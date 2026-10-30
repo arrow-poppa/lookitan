@@ -100,8 +100,8 @@ jobs:
           python scripts/fetch-ocr-models.py MEIKI "$LOOKITAN_MEIKI"
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::meiki::tests::real_meiki -- --ignored --nocapture
 
-      # IndraOCR's recognizers are downloaded by the app only after the user accepts their licence:
-      # fetched here, pinned in ocr/models.rs, for their real test.
+      # IndraOCR's detector and recognizers are downloaded by the app only after the user accepts
+      # their licence: fetched here, pinned in ocr/models.rs, for their real tests.
       - name: Cache IndraOCR models
         uses: actions/cache@v4
         with:

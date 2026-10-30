@@ -24,8 +24,8 @@ pub enum OcrEngineKind {
     OneOcr,
     /// Bing's visual search OCR over the network (ocr/bing.rs).
     Bing,
-    /// PP-OCR's detector with IndraOCR's recognizer (ocr/indra.rs); its models are downloaded once
-    /// the user accepts their licence.
+    /// IndraOCR's own detector (LineNet) and recognizer (ocr/indra.rs); its models are downloaded
+    /// once the user accepts their licence.
     Indra,
     /// The custom engine ("Personalizado"): the detector and the recognizer the user picked, each
     /// from any local engine, to try them together (`Settings::ocr_models["custom"]`).
@@ -52,19 +52,79 @@ impl OcrEngineKind {
     pub fn is_local(self) -> bool {
         matches!(self, Self::Paddle | Self::Meiki | Self::Indra | Self::Custom)
     }
+
+    /// The detectors it can be set to: each engine its own (PP-OCRv6's for MeikiOCR until its own
+    /// comes), the custom engine any, and so a page engine, whose detector only finds the block of
+    /// text under the pointer.
+    pub fn offers(self, det: Detector) -> bool {
+        match self {
+            Self::Indra => det == Detector::LineNet,
+            Self::Paddle | Self::Meiki => det != Detector::LineNet,
+            _ => true,
+        }
+    }
 }
 
-/// The recognizer that reads a local engine's boxes.
+/// What reads a pass's text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Recognizer {
-    /// PP-OCR's model of the OCR language (`Settings::rec_model_for`).
+    /// PP-OCR's model of the OCR language (`Settings::rec_model`).
     Paddle,
     Meiki,
     Indra,
+    /// A page engine (Lens, ScreenAI, OneOCR, Bing), which finds and reads the text by itself.
+    Page,
 }
 
-/// A local engine's models in the manual mode, and always the custom engine's: the detector
-/// (`"paddle:det_small"` or `"paddle:det_tiny"`), the recognizer (`"paddle"`, the language's
+/// What finds a local engine's lines, or a page engine's block under the pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Detector {
+    PaddleTiny,
+    PaddleSmall,
+    /// IndraOCR's own (`ocr::indra::IndraDet`), downloaded with its recognizers.
+    LineNet,
+}
+
+impl Detector {
+    const ALL: [Detector; 3] = [Detector::PaddleTiny, Detector::PaddleSmall, Detector::LineNet];
+
+    /// Its name in `ModelChoice::det`.
+    pub fn id(self) -> &'static str {
+        match self {
+            Detector::PaddleTiny => "paddle:det_tiny",
+            Detector::PaddleSmall => "paddle:det_small",
+            Detector::LineNet => "indra:linenet",
+        }
+    }
+
+    fn of(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.id() == id)
+    }
+
+    /// PP-OCR's model, for one of PP-OCRv6's detectors.
+    pub fn paddle_model(self) -> Option<&'static str> {
+        match self {
+            Detector::PaddleTiny => Some("det_tiny"),
+            Detector::PaddleSmall => Some("det_small"),
+            Detector::LineNet => None,
+        }
+    }
+}
+
+/// What a pass with an engine reads with (`Settings::models`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Models {
+    pub det: Detector,
+    pub det_gpu: bool,
+    pub rec: Recognizer,
+    pub rec_gpu: bool,
+    /// None chosen, on PP-OCRv6's detector: Lookupper's choice (`EnginePlan::automatic`), det_small
+    /// on the GPU and det_tiny on the CPU, the recognizer where the detector is.
+    pub automatic: bool,
+}
+
+/// An engine's models as the user chose them (Configurações › OCR, under its selector): the
+/// detector (`Detector::id`), the recognizer (the custom engine's only: `"paddle"`, the language's
 /// PP-OCR model; `"meiki"`; `"indra"`) and whether each runs on the GPU.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
@@ -271,21 +331,26 @@ pub struct Settings {
     /// BCP 47 tag selecting the recognition model (see `ocr::languages`).
     pub ocr_language: String,
     /// Languages that read with `rec_tiny` and were switched to `rec_small` (Configurações › OCR,
-    /// "Modelo de reconhecimento"), each language on its own.
+    /// PP-OCRv6's "Reconhecimento"), each language on its own.
     pub small_recognizer: Vec<String>,
     /// Languages switched to their experimental recognizer (`ocr::experimental_rec`; only Russian,
-    /// to PP-OCRv6 Tiny RU), each on its own. Like `small_recognizer`, only in the manual mode.
+    /// to PP-OCRv6 Tiny RU), each on its own.
     pub experimental_recognizer: Vec<String>,
+    /// Where the engines run that the user has chosen no models for (`Settings::models`).
     pub use_gpu: bool,
-    /// "Escolher modelos manualmente" (Configurações › OCR): the detector and the device of each
-    /// model are the user's (`manual_*`, `engine_plan`); off, `use_gpu` and Lookupper's choice.
-    pub ocr_manual: bool,
-    /// The manual mode's detector: "det_small" or "det_tiny".
+    /// Settings saved while the models were chosen in one manual mode ("Escolher modelos
+    /// manualmente") and its PP-OCRv6 choices: `migrate` moves them into `ocr_models` and drops
+    /// them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ocr_manual: Option<bool>,
+    #[serde(skip_serializing)]
     pub manual_det: String,
+    #[serde(skip_serializing)]
     pub manual_det_gpu: bool,
+    #[serde(skip_serializing)]
     pub manual_rec_gpu: bool,
-    /// The models of each local engine but PP-OCRv6 (whose are `manual_*`) in the manual mode,
-    /// and the custom engine's, by `OcrEngineKind::id` (`model_choice`).
+    /// Each engine's models as the user chose them, by `OcrEngineKind::id`; an engine without
+    /// reads with its own (`Settings::models`).
     pub ocr_models: std::collections::BTreeMap<String, ModelChoice>,
     /// Off: the GPU API's own default (adapter 0 for DirectML, Dawn's default on Linux).
     /// On: OCR asks for the card in `gpu_preference`.
@@ -354,56 +419,104 @@ impl Settings {
         [self.engine_for(false), self.engine_for(true)].into_iter().any(|k| self.recognizer_for(k) == recognizer)
     }
 
-    /// The PP-OCR recognizers and plans the two selectors' engines read with: a local engine's own
-    /// (its recognizer's fallback is PP-OCR on the same plan), PP-OCRv6's for a page engine (its
-    /// fallback, and what finds the block under the pointer). Any other loaded one is unused.
-    pub fn paddle_configs(&self) -> Vec<(&'static str, crate::ocr::paddle::EnginePlan)> {
+    /// The engines a lookup runs Lookitan's models for: the selectors' local engines, and the
+    /// pointer's page engine in the automatic capture, whose detector finds the block under the
+    /// pointer.
+    pub fn engines_in_use(&self) -> Vec<OcrEngineKind> {
+        let mut kinds = Vec::new();
+        for (kind, whole_screen) in [(self.engine_for(false), false), (self.engine_for(true), true)] {
+            if (kind.is_local() || (!whole_screen && self.capture_auto)) && !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+        kinds
+    }
+
+    /// Whether an engine in use finds its lines (or its block) with `det`.
+    pub fn detects_with(&self, det: Detector) -> bool {
+        self.engines_in_use().into_iter().any(|k| self.models(k).det == det)
+    }
+
+    /// What `kind`'s pass loads of PP-OCR, if anything: its detector, its recognizer or both
+    /// (`ensure_paddle`). Nothing else of PP-OCR is loaded: no engine falls back to it.
+    pub fn paddle_use(&self, kind: OcrEngineKind) -> Option<crate::ocr::paddle::PaddleUse> {
+        let m = self.models(kind);
+        let det = m.det.paddle_model().is_some();
+        let rec = (m.rec == Recognizer::Paddle).then(|| self.rec_model());
+        if !det && rec.is_none() {
+            return None;
+        }
+        let mut plan = self.plan_for(kind);
+        // A part not loaded does not tell two uses apart.
+        if !det {
+            (plan.det, plan.det_gpu) = ("det_small", false);
+        }
+        if rec.is_none() {
+            plan.rec_gpu = false;
+        }
+        Some(crate::ocr::paddle::PaddleUse { det, rec, plan })
+    }
+
+    /// The PP-OCR uses the engines in use need, once each; any other loaded one is unused.
+    pub fn paddle_configs(&self) -> Vec<crate::ocr::paddle::PaddleUse> {
         let mut configs = Vec::new();
-        for kind in [self.engine_for(false), self.engine_for(true)] {
-            let config = (self.rec_model_for(kind), self.plan_for(kind));
-            if !configs.contains(&config) {
-                configs.push(config);
+        for kind in self.engines_in_use() {
+            if let Some(config) = self.paddle_use(kind) {
+                if !configs.contains(&config) {
+                    configs.push(config);
+                }
             }
         }
         configs
     }
 
-    /// The models a local engine reads with when they are the user's: PP-OCRv6's are `manual_*`;
-    /// another engine never set up starts from those, with its own recognizer.
-    pub fn model_choice(&self, kind: OcrEngineKind) -> ModelChoice {
-        let legacy = ModelChoice {
-            det: format!("paddle:{}", if self.manual_det == "det_tiny" { "det_tiny" } else { "det_small" }),
-            det_gpu: self.manual_det_gpu,
-            rec: match kind {
-                OcrEngineKind::Meiki | OcrEngineKind::Indra => kind.id().into(),
-                _ => "paddle".into(),
-            },
-            rec_gpu: self.manual_rec_gpu,
-        };
-        match kind {
-            OcrEngineKind::Paddle => legacy,
-            _ => self.ocr_models.get(kind.id()).cloned().unwrap_or(legacy),
-        }
-    }
-
-    /// Whether `kind` reads with the models chosen for it: in the manual mode, and the custom
-    /// engine always (choosing them is what it is for).
-    fn chosen_models(&self, kind: OcrEngineKind) -> bool {
-        kind.is_local() && (self.ocr_manual || kind == OcrEngineKind::Custom)
-    }
-
-    /// What reads a local engine's boxes; a page engine's fallback is PP-OCR's.
-    pub fn recognizer_for(&self, kind: OcrEngineKind) -> Recognizer {
-        match kind {
+    /// The models `kind` reads with: those chosen for it (`ocr_models`; the custom engine's start
+    /// from `ModelChoice::default`), or its own: IndraOCR's LineNet and recognizer, PP-OCRv6's
+    /// detector as Lookupper picks it for the others (`Models::automatic`), each where `use_gpu`
+    /// says. A detector the engine does not offer (`OcrEngineKind::offers`) reads as its own; only
+    /// the custom engine chooses its recognizer. The GPU only where OCR has one (Windows, Linux).
+    pub fn models(&self, kind: OcrEngineKind) -> Models {
+        let gpu = cfg!(any(windows, target_os = "linux"));
+        let own_rec = match kind {
             OcrEngineKind::Meiki => Recognizer::Meiki,
             OcrEngineKind::Indra => Recognizer::Indra,
-            OcrEngineKind::Custom => match self.model_choice(kind).rec.as_str() {
-                "meiki" => Recognizer::Meiki,
-                "indra" => Recognizer::Indra,
-                _ => Recognizer::Paddle,
+            OcrEngineKind::Paddle | OcrEngineKind::Custom => Recognizer::Paddle,
+            OcrEngineKind::Lens | OcrEngineKind::ScreenAi | OcrEngineKind::OneOcr | OcrEngineKind::Bing => Recognizer::Page,
+        };
+        let on_gpu = gpu && self.use_gpu;
+        let own = Models {
+            det: match kind {
+                OcrEngineKind::Indra => Detector::LineNet,
+                _ if on_gpu => Detector::PaddleSmall,
+                _ => Detector::PaddleTiny,
             },
-            _ => Recognizer::Paddle,
+            det_gpu: on_gpu,
+            rec: own_rec,
+            rec_gpu: on_gpu,
+            automatic: kind != OcrEngineKind::Indra,
+        };
+        let chosen = match self.ocr_models.get(kind.id()) {
+            Some(c) => c.clone(),
+            None if kind == OcrEngineKind::Custom => ModelChoice::default(),
+            None => return own,
+        };
+        let rec = match (kind, chosen.rec.as_str()) {
+            (OcrEngineKind::Custom, "meiki") => Recognizer::Meiki,
+            (OcrEngineKind::Custom, "indra") => Recognizer::Indra,
+            _ => own_rec,
+        };
+        Models {
+            det: Detector::of(&chosen.det).filter(|&d| kind.offers(d)).unwrap_or(own.det),
+            det_gpu: gpu && chosen.det_gpu,
+            rec,
+            rec_gpu: gpu && chosen.rec_gpu,
+            automatic: false,
         }
+    }
+
+    /// What reads `kind`'s text.
+    pub fn recognizer_for(&self, kind: OcrEngineKind) -> Recognizer {
+        self.models(kind).rec
     }
 
     /// Whether either engine is Chrome ScreenAI.
@@ -425,21 +538,10 @@ impl Settings {
         self.choose_gpu.then_some(self.gpu_preference)
     }
 
-    /// The recognition model of the OCR language for PP-OCRv6 (`rec_model_for`).
+    /// The OCR language's PP-OCR recognition model (`ocr::rec_model`): its own, or Small for a
+    /// language on Tiny (`small_recognizer`), or the experimental one (`experimental_recognizer`).
     pub fn rec_model(&self) -> &'static str {
-        self.rec_model_for(OcrEngineKind::Paddle)
-    }
-
-    /// The OCR language's PP-OCR recognition model for `kind` (`ocr::rec_model`): the language's
-    /// own; Tiny or Small (`small_recognizer`) and the experimental one (`experimental_recognizer`)
-    /// only where the models are chosen (`chosen_models`), where their choice is shown.
-    pub fn rec_model_for(&self, kind: OcrEngineKind) -> &'static str {
-        let kind = if kind.is_local() { kind } else { OcrEngineKind::Paddle };
-        if self.chosen_models(kind) {
-            crate::ocr::rec_model(&self.ocr_language, &self.small_recognizer, &self.experimental_recognizer)
-        } else {
-            crate::ocr::rec_model(&self.ocr_language, &[], &[])
-        }
+        crate::ocr::rec_model(&self.ocr_language, &self.small_recognizer, &self.experimental_recognizer)
     }
 
     /// PP-OCRv6's plan (`plan_for`).
@@ -447,30 +549,26 @@ impl Settings {
         self.plan_for(OcrEngineKind::Paddle)
     }
 
-    /// Which detector runs where for `kind`, and where its recognizer runs: the models chosen for
-    /// it (`model_choice`), or Lookupper's choice from `use_gpu`. A page engine's are PP-OCRv6's,
-    /// which reads in its place and finds the block under the pointer. The GPU only where OCR has
-    /// one (Windows, Linux).
+    /// Which of PP-OCR's detectors runs where for `kind`, and where PP-OCR's recognizer runs
+    /// (`models`): Lookupper's choice while none is chosen, else the one chosen.
     pub fn plan_for(&self, kind: OcrEngineKind) -> crate::ocr::paddle::EnginePlan {
-        let kind = if kind.is_local() { kind } else { OcrEngineKind::Paddle };
-        let gpu = cfg!(any(windows, target_os = "linux"));
-        if !self.chosen_models(kind) {
-            return crate::ocr::paddle::EnginePlan::automatic(gpu && self.use_gpu, self.gpu_choice());
+        let m = self.models(kind);
+        if m.automatic {
+            return crate::ocr::paddle::EnginePlan::automatic(m.det_gpu, self.gpu_choice());
         }
-        let c = self.model_choice(kind);
         crate::ocr::paddle::EnginePlan {
             manual: true,
-            det: if c.det == "paddle:det_tiny" { "det_tiny" } else { "det_small" },
-            det_gpu: gpu && c.det_gpu,
-            rec_gpu: gpu && c.rec_gpu,
+            det: m.det.paddle_model().unwrap_or("det_small"),
+            det_gpu: m.det_gpu,
+            rec_gpu: m.rec_gpu,
             gpu_choice: self.gpu_choice(),
         }
     }
 
-    /// Where `kind`'s recognizer runs: its own choice, or with the detector in the automatic plan.
+    /// Where `kind`'s recognizer runs: its own choice, or where the detector is in Lookupper's.
     pub fn rec_gpu_for(&self, kind: OcrEngineKind) -> bool {
-        let plan = self.plan_for(kind);
-        if plan.manual { plan.rec_gpu } else { plan.det_gpu }
+        let m = self.models(kind);
+        if m.automatic { m.det_gpu } else { m.rec_gpu }
     }
 }
 
@@ -489,7 +587,7 @@ impl Default for Settings {
             small_recognizer: Vec::new(),
             experimental_recognizer: Vec::new(),
             use_gpu: true,
-            ocr_manual: false,
+            ocr_manual: None,
             manual_det: "det_small".into(),
             manual_det_gpu: true,
             manual_rec_gpu: true,
@@ -708,6 +806,24 @@ pub fn migrate(mut s: Settings) -> Settings {
             s.dictionaries.insert(pos.min(s.dictionaries.len()), b);
         }
     }
+    // Each engine has its own models (2026-10-29): the manual mode's PP-OCRv6 choices become
+    // PP-OCRv6's own; out of it, the engines' choices and the recognizer switches were not read,
+    // and are dropped.
+    if let Some(manual) = s.ocr_manual.take() {
+        if manual {
+            if !s.ocr_models.contains_key("paddle") {
+                let det = if s.manual_det == "det_tiny" { Detector::PaddleTiny } else { Detector::PaddleSmall };
+                let choice = ModelChoice { det: det.id().into(), det_gpu: s.manual_det_gpu, rec: "paddle".into(), rec_gpu: s.manual_rec_gpu };
+                s.ocr_models.insert("paddle".into(), choice);
+            }
+        } else {
+            for kind in ["paddle", "meiki", "indra"] {
+                s.ocr_models.remove(kind);
+            }
+            s.small_recognizer.clear();
+            s.experimental_recognizer.clear();
+        }
+    }
     s
 }
 
@@ -901,37 +1017,62 @@ mod tests {
     }
 
     #[test]
-    fn the_engine_plan_is_automatic_until_the_manual_mode_is_on() {
-        let old: Settings = serde_json::from_str(r#"{"useGpu": true}"#).unwrap();
-        assert!(!old.ocr_manual, "settings saved before the option are automatic");
+    fn an_engine_without_chosen_models_reads_with_its_own() {
         let gpu = cfg!(any(windows, target_os = "linux"));
-        assert_eq!(old.engine_plan(), crate::ocr::paddle::EnginePlan::automatic(gpu, None));
-        let manual: Settings = serde_json::from_str(r#"{"ocrManual": true, "manualDet": "det_tiny", "manualDetGpu": false, "manualRecGpu": true, "useGpu": false}"#).unwrap();
+        let old: Settings = serde_json::from_str(r#"{"useGpu": true}"#).unwrap();
+        assert_eq!(old.engine_plan(), crate::ocr::paddle::EnginePlan::automatic(gpu, None), "PP-OCRv6: Lookupper's choice");
+        assert_eq!(old.models(OcrEngineKind::Paddle).det, if gpu { Detector::PaddleSmall } else { Detector::PaddleTiny });
+        let indra = old.models(OcrEngineKind::Indra);
+        assert_eq!((indra.det, indra.rec, indra.automatic), (Detector::LineNet, Recognizer::Indra, false), "IndraOCR: its own detector");
+        assert_eq!((indra.det_gpu, indra.rec_gpu), (gpu, gpu));
+        let cpu: Settings = serde_json::from_str(r#"{"useGpu": false}"#).unwrap();
+        assert_eq!(cpu.models(OcrEngineKind::Paddle).det, Detector::PaddleTiny, "on the CPU, the tiny one");
+        assert!(!cpu.models(OcrEngineKind::Indra).det_gpu);
+        let meiki = old.models(OcrEngineKind::Meiki);
+        assert_eq!((meiki.det, meiki.rec), (old.models(OcrEngineKind::Paddle).det, Recognizer::Meiki));
+        assert_eq!(old.recognizer_for(OcrEngineKind::OneOcr), Recognizer::Page);
+    }
+
+    #[test]
+    fn the_manual_mode_s_choices_become_pp_ocrv6_s_own() {
+        let gpu = cfg!(any(windows, target_os = "linux"));
+        let manual = migrate(serde_json::from_str(r#"{"ocrManual": true, "manualDet": "det_tiny", "manualDetGpu": false, "manualRecGpu": true, "useGpu": false,
+            "smallRecognizer": ["pt-BR"], "ocrModels": {"indra": {"det": "paddle:det_small", "detGpu": true, "rec": "indra", "recGpu": false}}}"#).unwrap());
+        assert_eq!(manual.ocr_manual, None);
         let plan = manual.engine_plan();
         assert!(plan.manual);
         assert_eq!(plan.det, "det_tiny");
         assert!(!plan.det_gpu, "the detector on the CPU");
         assert_eq!(plan.rec_gpu, gpu, "the recognizer on the GPU, though useGpu is off");
-        let odd: Settings = serde_json::from_str(r#"{"ocrManual": true, "manualDet": "det_huge"}"#).unwrap();
+        assert_eq!(manual.small_recognizer, ["pt-BR"], "its recognizer switches are kept");
+        let indra = manual.models(OcrEngineKind::Indra);
+        assert_eq!(indra.det, Detector::LineNet, "a PP-OCRv6 detector chosen for IndraOCR reads as its own");
+        assert!(!indra.rec_gpu);
+        let saved = serde_json::to_string(&manual).unwrap();
+        assert!(!saved.contains("ocrManual") && !saved.contains("manualDet"), "{saved}");
+        let odd = migrate(serde_json::from_str(r#"{"ocrManual": true, "manualDet": "det_huge"}"#).unwrap());
         assert_eq!(odd.engine_plan().det, "det_small", "an unknown detector is the small one");
+        // Out of the manual mode, nothing chosen was read.
+        let auto = migrate(serde_json::from_str(r#"{"ocrManual": false, "smallRecognizer": ["pt-BR"], "ocrLanguage": "pt-BR",
+            "ocrModels": {"indra": {"det": "indra:linenet", "detGpu": false}, "custom": {"det": "paddle:det_tiny"}}}"#).unwrap());
+        assert_eq!(auto.rec_model(), "rec_tiny");
+        assert_eq!(auto.ocr_models.keys().collect::<Vec<_>>(), ["custom"], "the custom engine's were always read");
+        assert_eq!(auto.engine_plan(), crate::ocr::paddle::EnginePlan::automatic(gpu, None));
     }
 
     #[test]
-    fn each_local_engine_has_its_own_models_and_the_custom_one_mixes_them() {
+    fn each_engine_has_its_own_models_and_the_custom_one_mixes_them() {
+        use crate::ocr::paddle::PaddleUse;
         let gpu = cfg!(any(windows, target_os = "linux"));
-        // Settings from before: MeikiOCR starts from PP-OCRv6's manual choices, with its own recognizer.
-        let old: Settings = serde_json::from_str(r#"{"ocrManual": true, "manualDet": "det_tiny", "manualDetGpu": false, "ocrEngine": "meiki", "ocrLanguage": "ja-JP"}"#).unwrap();
-        assert_eq!(old.model_choice(OcrEngineKind::Meiki), ModelChoice { det: "paddle:det_tiny".into(), det_gpu: false, rec: "meiki".into(), rec_gpu: true });
-        assert_eq!(old.plan_for(OcrEngineKind::Meiki), old.engine_plan());
-        assert!(old.wants_meiki());
-        // Its own choice, apart from PP-OCRv6's.
-        let mut s = old.clone();
+        let mut s: Settings = serde_json::from_str(r#"{"ocrEngine": "meiki", "ocrLanguage": "ja-JP"}"#).unwrap();
+        assert!(s.wants_meiki());
         s.ocr_models.insert("meiki".into(), ModelChoice { det: "paddle:det_small".into(), det_gpu: true, rec: "meiki".into(), rec_gpu: false });
+        s.ocr_models.insert("paddle".into(), ModelChoice { det: "paddle:det_tiny".into(), det_gpu: true, rec: "paddle".into(), rec_gpu: true });
         assert_eq!((s.plan_for(OcrEngineKind::Meiki).det, s.engine_plan().det), ("det_small", "det_tiny"));
         assert!(!s.rec_gpu_for(OcrEngineKind::Meiki), "MeikiOCR's recognizer on the CPU");
-        // Off the manual mode, every engine's choice is the automatic one, but the custom engine's.
-        s.ocr_manual = false;
-        assert_eq!(s.plan_for(OcrEngineKind::Meiki), crate::ocr::paddle::EnginePlan::automatic(gpu, None));
+        s.ocr_models.get_mut("meiki").unwrap().det = "indra:linenet".into();
+        assert_eq!(s.models(OcrEngineKind::Meiki).det, Detector::PaddleSmall, "MeikiOCR offers PP-OCRv6's detectors only; its own is Lookupper's");
+        // The custom engine: any detector with any recognizer.
         s.ocr_engine = OcrEngineKind::Custom;
         assert_eq!(s.recognizer_for(OcrEngineKind::Custom), Recognizer::Paddle, "never set up: PP-OCR's recognizer");
         s.ocr_models.insert("custom".into(), ModelChoice { det: "paddle:det_tiny".into(), det_gpu: false, rec: "indra".into(), rec_gpu: true });
@@ -939,25 +1080,30 @@ mod tests {
         assert!(plan.manual && plan.det == "det_tiny" && !plan.det_gpu && plan.rec_gpu == gpu);
         assert_eq!(s.recognizer_for(OcrEngineKind::Custom), Recognizer::Indra);
         assert!(!s.wants_meiki());
+        assert_eq!(s.paddle_configs(), vec![PaddleUse { det: true, rec: None, plan: crate::ocr::paddle::EnginePlan { rec_gpu: false, ..plan } }],
+            "PP-OCR's detector alone: IndraOCR reads");
+        s.ocr_models.get_mut("custom").unwrap().det = "indra:linenet".into();
+        assert!(s.paddle_configs().is_empty(), "no PP-OCR at all");
+        assert!(s.detects_with(Detector::LineNet) && s.reads_with(Recognizer::Indra));
+        s.ocr_models.get_mut("custom").unwrap().rec = "paddle".into();
+        assert_eq!(s.paddle_configs().iter().map(|u| (u.det, u.rec)).collect::<Vec<_>>(), [(false, Some("rec_small"))], "its recognizer alone");
         s.ocr_models.get_mut("custom").unwrap().rec = "meiki".into();
         assert!(s.wants_meiki(), "the custom engine reads with MeikiOCR");
-        // A page engine's fallback reads with PP-OCRv6's plan; the custom engine survives a save.
-        assert_eq!(s.plan_for(OcrEngineKind::OneOcr), s.engine_plan());
-        assert_eq!(s.recognizer_for(OcrEngineKind::OneOcr), Recognizer::Paddle);
         let again: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!((again.ocr_engine, again.ocr_models.clone()), (OcrEngineKind::Custom, s.ocr_models.clone()));
-        // What stays loaded: the custom engine's plan alone, though PP-OCRv6's differs.
-        assert_ne!(s.plan_for(OcrEngineKind::Custom), s.engine_plan());
-        assert_eq!(s.paddle_configs(), vec![(s.rec_model_for(OcrEngineKind::Custom), s.plan_for(OcrEngineKind::Custom))]);
-        // With a page engine, PP-OCRv6's too: its fallback and block finder.
-        s.screen_ocr_engine = Some(OcrEngineKind::OneOcr);
-        assert_eq!(s.paddle_configs(), vec![(s.rec_model_for(OcrEngineKind::Custom), s.plan_for(OcrEngineKind::Custom)), (s.rec_model(), s.engine_plan())]);
-        s.screen_ocr_engine = None;
+        // A page engine loads PP-OCR's detector only to find the pointer's block in the automatic
+        // capture, never to read in its place.
+        s.ocr_engine = OcrEngineKind::OneOcr;
+        s.screen_ocr_engine = Some(OcrEngineKind::ScreenAi);
+        assert_eq!(s.paddle_configs().iter().map(|u| (u.det, u.rec)).collect::<Vec<_>>(), [(true, None)]);
+        s.capture_auto = false;
+        assert!(s.paddle_configs().is_empty(), "a fixed region needs no detector");
         s.ocr_engine = OcrEngineKind::Paddle;
-        assert_eq!(s.paddle_configs(), vec![(s.rec_model(), s.engine_plan())], "one, when both selectors read as PP-OCRv6");
-        assert!(!s.reads_with(Recognizer::Meiki) && !s.reads_with(Recognizer::Indra));
+        s.screen_ocr_engine = None;
+        assert_eq!(s.paddle_configs().len(), 1, "one, when both selectors read as PP-OCRv6");
+        assert!(!s.reads_with(Recognizer::Meiki) && !s.reads_with(Recognizer::Indra) && !s.detects_with(Detector::LineNet));
         s.screen_ocr_engine = Some(OcrEngineKind::Indra);
-        assert!(s.reads_with(Recognizer::Indra));
+        assert!(s.reads_with(Recognizer::Indra) && s.detects_with(Detector::LineNet));
         assert_eq!(serde_json::from_str::<OcrEngineKind>(r#""custom""#).unwrap(), OcrEngineKind::Custom);
     }
 
@@ -974,8 +1120,6 @@ mod tests {
         let old: Settings = serde_json::from_str(r#"{"ocrLanguage": "pt-BR"}"#).unwrap();
         assert_eq!(old.rec_model(), "rec_tiny", "settings saved before the option keep tiny");
         let mut s: Settings = serde_json::from_str(r#"{"ocrLanguage": "pt-BR", "smallRecognizer": ["pt-br"]}"#).unwrap();
-        assert_eq!(s.rec_model(), "rec_tiny", "off the manual mode, the language's own model");
-        s.ocr_manual = true;
         assert_eq!(s.rec_model(), "rec_small");
         s.ocr_language = "de-DE".into();
         assert_eq!(s.rec_model(), "rec_tiny", "the choice is per language");
@@ -987,16 +1131,13 @@ mod tests {
     }
 
     #[test]
-    fn russian_reads_with_cyrillic_unless_tiny_ru_is_chosen_in_the_manual_mode() {
-        let old: Settings = serde_json::from_str(r#"{"ocrLanguage": "ru-RU", "ocrManual": true}"#).unwrap();
+    fn russian_reads_with_cyrillic_unless_tiny_ru_is_chosen() {
+        let old: Settings = serde_json::from_str(r#"{"ocrLanguage": "ru-RU"}"#).unwrap();
         assert_eq!(old.rec_model(), "rec_cyrillic", "settings saved before the option keep PP-OCRv5 Cyrillic");
-        let mut s: Settings = serde_json::from_str(r#"{"ocrLanguage": "ru-RU", "ocrManual": true, "experimentalRecognizer": ["ru-RU"]}"#).unwrap();
+        let mut s: Settings = serde_json::from_str(r#"{"ocrLanguage": "ru-RU", "experimentalRecognizer": ["ru-RU"]}"#).unwrap();
         assert_eq!(s.rec_model(), "rec_ru_tiny");
         let again: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(again.rec_model(), "rec_ru_tiny", "the choice survives a save");
-        s.ocr_manual = false;
-        assert_eq!(s.rec_model(), "rec_cyrillic", "off the manual mode, Russian's own model");
-        s.ocr_manual = true;
         for tag in ["uk-UA", "bg-BG", "sr-Cyrl-RS"] {
             s.ocr_language = tag.into();
             s.experimental_recognizer = vec![tag.into()];

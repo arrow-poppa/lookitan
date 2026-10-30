@@ -269,13 +269,14 @@ function gamepadSection() {
     return [head, ...body];
 }
 
+/** "Estado do motor": what each selector reads with, one line each (`engines_status` in lib.rs). */
 function engineStatusText() {
     if (!status) { return 'Carregando…'; }
     if (status.runtimeError) { return `ONNX Runtime: ${status.runtimeError}`; }
-    if (status.error) { return status.error; }
-    if (!status.detModel) { return 'Carregando o motor…'; }
-    const engine = `Detecção ${status.detModel} na ${status.detOnGpu ? (status.session === 'windows' ? 'GPU (DirectML)' : 'GPU (WebGPU)') : 'CPU'} · reconhecimento ${status.recModel} na ${status.recOnGpu ? 'GPU' : 'CPU'}`;
-    return status.segmenter ? `${engine} · ${status.segmenter}` : engine;
+    const lines = (status.engines || []).map(([selector, models]) => `${selector}: ${models}`);
+    if (status.error) { lines.push(`O PP-OCRv6 não carregou: ${status.error}`); }
+    if (status.segmenter) { lines.push(status.segmenter); }
+    return lines.join('\n') || 'Carregando o motor…';
 }
 
 /**
@@ -292,19 +293,19 @@ function segmenterRow() {
 const DOWNLOADED_ENGINES = {
     meiki: {title: 'Modelos do MeikiOCR (31 MB)',
         desc: 'De rtr46/meikiocr no Hugging Face, licença LGPL-3.0; baixados uma vez e conferidos.',
-        removeAsk: 'Apagar os modelos do MeikiOCR? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
+        removeAsk: 'Apagar os modelos do MeikiOCR? Enquanto não forem baixados de novo, ele não lê.',
         removeTitle: 'Apagar o MeikiOCR'},
     screenai: {title: 'Arquivos do Chrome ScreenAI (cerca de 76 MB)',
         desc: 'A biblioteca de OCR do Chrome, do Google, baixada do repositório de pacotes do Chromium (CIPD), como o owocr faz: a versão mais recente quando você baixa, conferida pelo SHA-256 que o CIPD dá. Para atualizar, apague e baixe de novo. Não é software livre e não tem licença própria. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
-        removeAsk: 'Apagar os arquivos do Chrome ScreenAI? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
+        removeAsk: 'Apagar os arquivos do Chrome ScreenAI? Enquanto não forem baixados de novo, ele não lê.',
         removeTitle: 'Apagar o Chrome ScreenAI'},
     oneocr: {title: 'Arquivos do OneOCR (do Recorte do Windows)',
         desc: 'O OCR do Recorte do Windows 11, da Microsoft: copiados do Recorte instalado neste computador, como o owocr faz. Sem ele (no Windows 10, por exemplo), cerca de 80 MB são baixados do pacote do Recorte no servidor da Microsoft, com o link dado pelo site store.rg-adguard.net (de terceiros), como o LunaTranslator faz, e conferidos pela assinatura da Microsoft. Não é software livre. Roda na CPU, num processo à parte que fecha depois de 5 minutos sem uso.',
-        removeAsk: 'Apagar os arquivos do OneOCR? Enquanto não forem instalados de novo, o PP-OCRv6 lê no lugar dele.',
+        removeAsk: 'Apagar os arquivos do OneOCR? Enquanto não forem instalados de novo, ele não lê.',
         removeTitle: 'Apagar o OneOCR', action: 'Instalar', done: 'instalados'},
-    indra: {title: 'Modelos do IndraOCR (20 MB)',
-        desc: 'Os reconhecedores do IndraOCR, da Datalab, no Hugging Face: uma versão fixa, conferida. Os pesos têm a licença AI Pubs Open RAIL-M modificada, que você aceita antes de baixar.',
-        removeAsk: 'Apagar os modelos do IndraOCR? Enquanto não forem baixados de novo, o PP-OCRv6 lê no lugar dele.',
+    indra: {title: 'Modelos do IndraOCR (21 MB)',
+        desc: 'A detecção (LineNet) e os reconhecedores do IndraOCR, da Datalab, no Hugging Face: uma versão fixa, conferida. Os pesos têm a licença AI Pubs Open RAIL-M modificada, que você aceita antes de baixar.',
+        removeAsk: 'Apagar os modelos do IndraOCR? Enquanto não forem baixados de novo, nem ele nem a detecção LineNet leem.',
         removeTitle: 'Apagar o IndraOCR',
         license: 'Os pesos do IndraOCR (Datalab) usam a licença AI Pubs Open RAIL-M modificada (huggingface.co/datalab-to/indra-ocr, arquivo LICENSE, que vem junto com os modelos). Ela permite uso pessoal, em pesquisa e em empresas com menos de US$ 20 milhões de receita ou de investimento; proíbe o uso por quem oferece um produto que concorra com os da Datalab e usos ilegais; e diz que os resultados do modelo também ficam sob ela. Ao baixar, você aceita esses termos. Baixar?'},
 };
@@ -320,8 +321,17 @@ function modelsRows() {
 function fillModelsRows(rows) {
     rows.replaceChildren();
     const s = store.settings;
-    // The custom engine's recognizer needs its models too.
-    const chosen = new Set([s.ocrEngine, s.screenOcrEngine ?? s.ocrEngine].flatMap((e) => (e === 'custom' ? [e, currentChoice('custom').rec] : [e])));
+    // Each selector's engine, and the models it reads with: LineNet is IndraOCR's, and the custom
+    // engine's recognizer may be another engine's.
+    const chosen = new Set();
+    for (const pointer of [true, false]) {
+        const engine = selectorEngine(pointer);
+        chosen.add(engine);
+        if (modelRows(engine, pointer).length === 0) { continue; }
+        const c = currentChoice(engine);
+        if (c.det === 'indra:linenet') { chosen.add('indra'); }
+        if (engine === 'custom') { chosen.add(c.rec); }
+    }
     for (const engine of Object.keys(DOWNLOADED_ENGINES)) {
         if (chosen.has(engine)) { rows.append(modelsRow(engine)); }
     }
@@ -366,72 +376,17 @@ function modelsRow(engine) {
 const OWN_MODELS = {rec_arabic: 'Árabe', rec_cyrillic: 'Cirílico', rec_el: 'Grego', rec_korean: 'Coreano'};
 const EXPERIMENTAL_MODELS = {rec_ru_tiny: 'Tiny RU (experimental)'};
 
-/** The manual mode's `CPU | GPU` switch for one model, saved in `key` (manualDetGpu, manualRecGpu). */
-function deviceSwitch(key) {
-    const s = store.settings;
-    return segmented([{value: 'cpu', label: 'CPU'}, {value: 'gpu', label: 'GPU'}], s[key] === false ? 'cpu' : 'gpu', (v) => {
-        s[key] = v === 'gpu';
-        save();
-    });
-}
-
-/** In the manual mode, a model's select with its `CPU | GPU` switch beside it. */
-function withDevice(control, key) {
-    return el('div', {class: 'model-controls'}, control, deviceSwitch(key));
-}
-
 /**
- * "Escolher modelos manualmente": off, the OCR picks as Lookupper does (the small detector on the
- * GPU, the tiny one on the CPU, the language's own recognizer where the detector is); on, the
- * models and where each runs are the user's (Settings `ocrManual`, `manualDet`, `manualDetGpu`,
- * `smallRecognizer`, `manualRecGpu`).
+ * PP-OCRv6's recognizer for the OCR language: one that reads with rec_tiny can switch to rec_small,
+ * on its own; Russian can switch to its experimental model; one on rec_small or on a model of its
+ * own shows only that model (rec_tiny and rec_small have no Cyrillic, Arabic or Hangul). Null until
+ * the languages are known.
  */
-function manualModelRows() {
-    const s = store.settings;
-    const mode = cardRow({icon: 'settings', title: 'Escolher modelos manualmente',
-        desc: 'Desligado, o Lookitan escolhe: detecção small na placa de vídeo (tiny na CPU sem ela) e o reconhecimento padrão do idioma onde a detecção estiver. Ligado, você escolhe os modelos de detecção e de reconhecimento e se cada um roda na CPU ou na GPU.',
-        control: toggle(!!s.ocrManual, (v) => {
-            if (v && s.manualDet === undefined) {
-                // The first time, from the automatic choice.
-                s.manualDet = 'det_small';
-                s.manualDetGpu = s.useGpu !== false;
-                s.manualRecGpu = s.useGpu !== false;
-            }
-            s.ocrManual = v;
-            save();
-            rerender();
-        })});
-    if (!s.ocrManual) { return [mode]; }
-    const detector = select([
-        {value: 'det_tiny', label: 'Tiny'},
-        {value: 'det_small', label: 'Small'},
-    ], s.manualDet === 'det_tiny' ? 'det_tiny' : 'det_small', (v) => { s.manualDet = v; save(); });
-    return [mode, cardRow({icon: 'scan', title: 'Modelo de detecção',
-        desc: 'Acha onde há texto na tela. O small acha mais, mas na CPU é bem mais lento; o tiny ganha pouco na GPU. Se a GPU falhar, o mesmo modelo segue na CPU.',
-        wide: true, control: withDevice(detector, 'manualDetGpu')})];
-}
-
-/**
- * The recognition model of the OCR language, in the manual mode only: one that reads with rec_tiny
- * can switch to rec_small, on its own; Russian can switch to its experimental model; one on
- * rec_small or on a model of its own shows only that model. The row stays (empty) so a change of
- * language can refill it.
- */
-function recognizerRow() {
-    const row = el('div', {id: 'recognizer-row'});
-    fillRecognizerRow(row);
-    return row;
-}
-
-/** Engines that find and read the text themselves. */
-const PAGE_ENGINES = {oneocr: 'OneOCR', screenai: 'Chrome ScreenAI', lens: 'Google Lens', bing: 'Bing'};
-
-function fillRecognizerRow(row) {
-    row.replaceChildren();
+function paddleRecognizer() {
     const s = store.settings;
     const tag = String(s.ocrLanguage || '').toLowerCase();
     const language = languages.find((l) => l.tag.toLowerCase() === tag);
-    if (!s.ocrManual || !language?.rec) { return; }
+    if (!language?.rec) { return null; }
     const small = () => (Array.isArray(s.smallRecognizer) ? s.smallRecognizer : []);
     const others = () => small().filter((t) => String(t).toLowerCase() !== tag);
     // PP-OCR's models for the language: what is offered, which is chosen and how a choice is kept.
@@ -461,29 +416,40 @@ function fillRecognizerRow(row) {
     }
     const control = select(options, value, (v) => { choose(v); save(); });
     control.disabled = options.length < 2;
-    const pointer = s.ocrEngine || 'paddle';
-    if (PAGE_ENGINES[pointer]) {
-        desc += ` O ${PAGE_ENGINES[pointer]}, escolhido para o OCR em volta do cursor, acha e lê o texto sozinho: estes modelos valem quando o PP-OCRv6 lê no lugar dele e, na captura automática, para achar o bloco de texto sob o cursor.`;
-    }
-    // The manual mode adds where it runs; the models offered stay those that read the language's
-    // script (rec_tiny and rec_small have no Cyrillic, Arabic or Hangul).
-    row.append(cardRow({icon: 'scan', title: 'Modelo de reconhecimento', desc, wide: true, control: withDevice(control, 'manualRecGpu')}));
+    return {control, desc, choices: options.length};
 }
 
-/** The detectors a local engine can read with (`Settings::model_choice`); each engine's own come
- * with its models. */
-const DETECTORS = [{value: 'paddle:det_tiny', label: 'PP-OCRv6 Tiny'}, {value: 'paddle:det_small', label: 'PP-OCRv6 Small'}];
-const LOCAL_NAMES = {meiki: 'MeikiOCR', indra: 'IndraOCR', custom: 'Personalizado'};
+/** The detectors (`Detector::id` in settings.rs), by name. */
+const DETECTORS = {'paddle:det_tiny': 'PP-OCRv6 Tiny', 'paddle:det_small': 'PP-OCRv6 Small', 'indra:linenet': 'IndraOCR LineNet'};
+/** Engines that find and read the text themselves. */
+const PAGE_ENGINES = {oneocr: 'OneOCR', screenai: 'Chrome ScreenAI', lens: 'Google Lens', bing: 'Bing'};
+const LOCAL_NAMES = {paddle: 'PP-OCRv6', meiki: 'MeikiOCR', indra: 'IndraOCR', custom: 'Personalizado'};
 
-/** A local engine's models (Settings `ocrModels`) or, never chosen, PP-OCRv6's manual ones with its
- * own recognizer, as `Settings::model_choice` reads them. */
+/** The detectors an engine can be set to (`OcrEngineKind::offers`): each engine its own (PP-OCRv6's
+ * for MeikiOCR until its own comes), the custom engine and a page engine's block any. */
+function offeredDetectors(engine) {
+    const all = Object.keys(DETECTORS);
+    if (engine === 'indra') { return ['indra:linenet']; }
+    if (engine === 'paddle' || engine === 'meiki') { return all.filter((d) => d !== 'indra:linenet'); }
+    return all;
+}
+
+/** An engine's models as `Settings::models` reads them: those chosen for it (Settings
+ * `ocrModels`), or its own, where "Usar a placa de vídeo" (`useGpu`) said. */
 function currentChoice(engine) {
     const s = store.settings;
-    return s.ocrModels?.[engine] || {
-        det: `paddle:${s.manualDet === 'det_tiny' ? 'det_tiny' : 'det_small'}`,
-        detGpu: s.manualDetGpu !== false,
-        rec: engine === 'meiki' || engine === 'indra' ? engine : 'paddle',
-        recGpu: s.manualRecGpu !== false,
+    const gpu = s.useGpu !== false;
+    const own = engine === 'custom'
+        ? {det: 'paddle:det_small', detGpu: true, rec: 'paddle', recGpu: true}
+        : {det: engine === 'indra' ? 'indra:linenet' : `paddle:${gpu ? 'det_small' : 'det_tiny'}`, detGpu: gpu,
+            rec: engine === 'meiki' || engine === 'indra' ? engine : 'paddle', recGpu: gpu};
+    const saved = s.ocrModels?.[engine];
+    if (!saved) { return own; }
+    return {
+        det: offeredDetectors(engine).includes(saved.det) ? saved.det : own.det,
+        detGpu: saved.detGpu !== false,
+        rec: engine === 'custom' ? (saved.rec || own.rec) : own.rec,
+        recGpu: saved.recGpu !== false,
     };
 }
 
@@ -493,73 +459,140 @@ function setChoice(engine, field, value) {
     save();
 }
 
-/** A local engine's `CPU | GPU` switch for its detector (`detGpu`) or recognizer (`recGpu`). */
-function choiceDevice(engine, field) {
-    return segmented([{value: 'cpu', label: 'CPU'}, {value: 'gpu', label: 'GPU'}], currentChoice(engine)[field] === false ? 'cpu' : 'gpu',
-        (v) => setChoice(engine, field, v === 'gpu'));
-}
-
 /**
- * The models of the engines chosen in the two OCR selectors: MeikiOCR's and IndraOCR's in the
- * manual mode (PP-OCRv6's are the rows above), the custom engine's always, since choosing them is
- * what it is for. The rows stay in one box so a change of language can refill them.
+ * The rows under a selector: its engine's detector and recognizer (Settings `ocrModels`), each
+ * with where it runs. A page engine reads by itself: under the pointer's selector, in the automatic
+ * capture, it has only the detector that finds the block under the pointer, and nothing elsewhere.
+ * A row's `data-sub` names its engine.
  */
-function engineModelsRows() {
-    const box = el('div', {id: 'engine-models'});
-    fillEngineModels(box);
-    return box;
+function modelRows(engine, pointer) {
+    const s = store.settings;
+    const c = currentChoice(engine);
+    const name = LOCAL_NAMES[engine] || PAGE_ENGINES[engine] || engine;
+    const device = (field) => segmented([{value: 'cpu', label: 'CPU'}, {value: 'gpu', label: 'GPU'}], c[field] ? 'gpu' : 'cpu',
+        (v) => setChoice(engine, field, v === 'gpu'));
+    const controls = (control, field) => el('div', {class: 'model-controls'}, control, device(field));
+    const row = (title, desc, control) => {
+        const r = cardRow({icon: 'scan', title, desc, wide: true, control});
+        r.setAttribute('data-sub', engine);
+        return r;
+    };
+    const offered = offeredDetectors(engine);
+    const det = select(offered.map((d) => ({value: d, label: DETECTORS[d]})), c.det, (v) => { setChoice(engine, 'det', v); refreshOcrRows(); });
+    det.disabled = offered.length < 2;
+    if (PAGE_ENGINES[engine]) {
+        if (!pointer || s.captureAuto !== true) { return []; }
+        return [row('Achar o bloco sob o cursor', `Na captura automática, a detecção acha o bloco de texto sob o cursor e o ${name} lê só esse bloco. A LineNet precisa dos modelos do IndraOCR.`,
+            controls(det, 'detGpu'))];
+    }
+    const detDesc = {
+        paddle: 'O small acha mais, mas na CPU é bem mais lento; o tiny ganha pouco na GPU.',
+        meiki: 'Por enquanto, a do PP-OCRv6; a do próprio MeikiOCR vem numa próxima versão.',
+        indra: 'A do próprio IndraOCR (LineNet), leve. Acha linhas na horizontal.',
+        custom: 'Qualquer uma das detecções locais. A LineNet precisa dos modelos do IndraOCR.',
+    }[engine];
+    const rows = [row('Detecção', `Acha as linhas de texto. ${detDesc} Se a GPU falhar, segue na CPU.`, controls(det, 'detGpu'))];
+    const paddle = paddleRecognizer();
+    if (engine === 'custom') {
+        const japanese = String(s.ocrLanguage || '').toLowerCase() === 'ja-jp';
+        const rec = select([
+            {value: 'paddle', label: 'PP-OCRv6 (o modelo do idioma)'},
+            ...(japanese || c.rec === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (japonês)'}] : []),
+            {value: 'indra', label: 'IndraOCR (experimental)'},
+        ], c.rec, (v) => { setChoice('custom', 'rec', v); refreshOcrRows(); });
+        const recDesc = c.rec === 'meiki' && !japanese
+            ? 'O MeikiOCR lê só japonês: neste idioma, ele não lê.'
+            : 'Lê as linhas que a detecção acha. Sem os modelos dele, não lê.';
+        rows.push(row('Reconhecimento', recDesc, controls(rec, 'recGpu')));
+        if (c.rec === 'paddle' && paddle && paddle.choices > 1) {
+            rows.push(row('Modelo do PP-OCRv6', paddle.desc, paddle.control));
+        }
+    } else if (engine === 'paddle') {
+        // Shown once the languages are known.
+        if (paddle) { rows.push(row('Reconhecimento', paddle.desc, controls(paddle.control, 'recGpu'))); }
+    } else {
+        const rec = select([{value: engine, label: name}], engine, () => {});
+        rec.disabled = true;
+        rows.push(row('Reconhecimento', `O do ${name}. Se a GPU falhar, segue na CPU.`, controls(rec, 'recGpu')));
+    }
+    return rows;
 }
 
-function fillEngineModels(box) {
-    box.replaceChildren();
+/** The engine a selector reads with. */
+function selectorEngine(pointer) {
     const s = store.settings;
-    const pointer = s.ocrEngine || 'paddle';
-    for (const engine of new Set([pointer, s.screenOcrEngine ?? pointer])) {
-        if (engine === 'custom') {
-            box.append(...customRows());
-        } else if (s.ocrManual && (engine === 'meiki' || engine === 'indra')) {
-            box.append(...readerRows(engine));
-        }
+    const engine = s.ocrEngine || 'paddle';
+    return pointer ? engine : (s.screenOcrEngine ?? engine);
+}
+
+function engineDesc(engine) {
+    const japanese = store.settings.ocrLanguage === 'ja-JP';
+    switch (engine) {
+    case 'lens': return 'Envia a captura ao Google (API não oficial). Se falhar, a consulta mostra o erro.';
+    case 'bing': return 'Envia a captura à Microsoft, pelo site do Bing (não é uma API oficial e pode mudar sem aviso), como o owocr faz. Se falhar, a consulta mostra o erro.';
+    case 'meiki': return `A detecção do PP-OCRv6 acha as linhas e o MeikiOCR, treinado em texto de jogos japoneses, as lê. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, ele não lê.' : 'Ele lê só japonês: neste idioma, não lê.'}`;
+    case 'indra': return 'A detecção e o reconhecimento do próprio IndraOCR, leves e feitos para a CPU (experimental). Roda no seu computador. Sem os modelos baixados, ele não lê.';
+    case 'oneocr': return 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador ou baixados do servidor da Microsoft. Roda no seu computador, nada sai dele; sem os arquivos, ele não lê.';
+    case 'custom': return 'A detecção e o reconhecimento que você escolher abaixo, de qualquer motor local, para testar combinações. Roda no seu computador.';
+    case 'screenai': return 'A biblioteca de OCR do Chrome, que reconhece qualquer idioma e acha o de cada linha sozinha. Roda no seu computador, nada sai dele; sem os arquivos baixados, ele não lê.';
+    default: return 'Roda no seu computador; nada sai dele.';
     }
 }
 
-function readerRows(engine) {
-    const name = LOCAL_NAMES[engine];
-    const det = select(DETECTORS, currentChoice(engine).det, (v) => setChoice(engine, 'det', v));
-    const rec = select([{value: engine, label: name}], engine, () => {});
-    rec.disabled = true;
-    return [
-        cardRow({icon: 'scan', title: `${name}: detecção`, desc: `Acha as linhas que o ${name} lê. Por enquanto é a do PP-OCRv6; a do próprio ${name} vem numa próxima versão.`,
-            wide: true, control: el('div', {class: 'model-controls'}, det, choiceDevice(engine, 'detGpu'))}),
-        cardRow({icon: 'scan', title: `${name}: reconhecimento`, desc: 'O reconhecimento dele, na CPU ou na GPU. Se a GPU falhar, ele segue na CPU.',
-            wide: true, control: el('div', {class: 'model-controls'}, rec, choiceDevice(engine, 'recGpu'))}),
-    ];
-}
-
-/** The custom engine: any detector with any recognizer; MeikiOCR's only for Japanese. */
-function customRows() {
+/** A selector's row, its engine's models under it (folded with the chevron), as `modelRows`. The
+ * whole screen's shows none when it reads with the pointer's engine: the same models. */
+function engineRows(pointer) {
     const s = store.settings;
-    const c = currentChoice('custom');
-    const japanese = String(s.ocrLanguage || '').toLowerCase() === 'ja-jp';
-    const det = select(DETECTORS, c.det, (v) => setChoice('custom', 'det', v));
-    const rec = select([
-        {value: 'paddle', label: 'PP-OCRv6 (o modelo do idioma)'},
-        ...(japanese || c.rec === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (japonês)'}] : []),
-        {value: 'indra', label: 'IndraOCR (experimental)'},
-    ], c.rec, (v) => {
-        setChoice('custom', 'rec', v);
-        // Its models' row follows the recognizer.
+    const engine = selectorEngine(pointer);
+    const shared = !pointer && engine === selectorEngine(true);
+    const models = shared ? [] : modelRows(engine, pointer);
+    const japanese = s.ocrLanguage === 'ja-JP';
+    const windows = (status?.session || 'windows') === 'windows';
+    // MeikiOCR reads Japanese only: it is offered with Japanese, and kept in the list while chosen.
+    const choose = select([
+        {value: 'paddle', label: 'PP-OCRv6 (local)'},
+        ...(japanese || engine === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (local, japonês)'}] : []),
+        {value: 'screenai', label: 'Chrome ScreenAI (local, qualquer idioma)'},
+        {value: 'indra', label: 'IndraOCR (local, experimental)'},
+        {value: 'custom', label: 'Personalizado (DET + REC)'},
+        // OneOCR is the Windows Snipping Tool's.
+        ...(windows || engine === 'oneocr' ? [{value: 'oneocr', label: 'OneOCR (local, do Windows)'}] : []),
+        {value: 'lens', label: 'Google Lens (nuvem)'},
+        {value: 'bing', label: 'Bing (nuvem)'},
+    ], engine, (v) => {
+        if (pointer) { s.ocrEngine = v; } else { s.screenOcrEngine = v; }
+        save();
         rerender();
     });
-    const recDesc = c.rec === 'meiki' && !japanese
-        ? 'O MeikiOCR lê só japonês: neste idioma, o PP-OCRv6 lê no lugar dele.'
-        : 'Lê as linhas que a detecção acha. Se ele falhar ou faltarem os modelos, o PP-OCRv6 lê no lugar.';
-    return [
-        cardRow({icon: 'scan', title: 'Personalizado: detecção', desc: 'Por enquanto, as do PP-OCRv6; as do MeikiOCR, do IndraOCR e do Manga entram nas próximas versões.',
-            wide: true, control: el('div', {class: 'model-controls'}, det, choiceDevice('custom', 'detGpu'))}),
-        cardRow({icon: 'scan', title: 'Personalizado: reconhecimento', desc: recDesc,
-            wide: true, control: el('div', {class: 'model-controls'}, rec, choiceDevice('custom', 'recGpu'))}),
-    ];
+    let control = choose;
+    if (models.length) {
+        const collapse = collapser(`ocrModels.${pointer ? 'pointer' : 'screen'}`, () => models);
+        control = el('div', {class: 'model-controls'}, choose, collapse.button);
+        collapse.apply();
+    }
+    const title = pointer ? 'OCR em volta do cursor' : 'OCR da tela inteira';
+    const lead = pointer ? 'Lê a palavra sob o cursor.' : 'Usado quando o atalho é apertado fora de uma palavra; depois é só clicar na palavra.';
+    const note = shared && LOCAL_NAMES[engine] ? ' Com os mesmos modelos do OCR em volta do cursor.' : '';
+    return [cardRow({icon: 'scan', title, desc: `${lead} ${engineDesc(engine)}${note}`, wide: true, control}), ...models];
+}
+
+/** Both selectors with their engines' models, in one box a change of language or capture refills. */
+function ocrEnginesBox() {
+    const box = el('div', {id: 'ocr-engines', class: 'group'});
+    fillOcrEngines(box);
+    return box;
+}
+
+function fillOcrEngines(box) {
+    box.replaceChildren(...engineRows(true), ...engineRows(false));
+}
+
+/** Draws the selectors' models and the downloads they need again. */
+function refreshOcrRows() {
+    const box = document.getElementById('ocr-engines');
+    if (box) { fillOcrEngines(box); }
+    const models = document.getElementById('models-rows');
+    if (models) { fillModelsRows(models); }
 }
 
 function fillSegmenterRow(row) {
@@ -630,7 +663,7 @@ function captureRegionRows() {
         const auto = value === 'auto';
         const modeChanged = (s.captureAuto === true) !== auto;
         s.captureAuto = auto;
-        if (modeChanged) { save(); }
+        if (modeChanged) { save(); refreshOcrRows(); }
     });
     presets.id = 'capture-preset';
     presets.setAttribute('aria-label', 'Região de captura do OCR');
@@ -706,10 +739,7 @@ export async function initSettingsTab(root) {
                 control.replaceChildren(...languages.map((l) => el('option', {value: l.tag}, l.name)));
                 control.value = store.settings.ocrLanguage;
             }
-            const row = document.getElementById('recognizer-row');
-            if (row) { fillRecognizerRow(row); }
-            const models = document.getElementById('engine-models');
-            if (models) { fillEngineModels(models); }
+            refreshOcrRows();
         }),
         refreshStatus(),
     ]);
@@ -830,10 +860,7 @@ function render(root) {
         [{value: s.ocrLanguage, label: s.ocrLanguage}], s.ocrLanguage, (v) => {
         s.ocrLanguage = v;
         save();
-        const row = document.getElementById('recognizer-row');
-        if (row) { fillRecognizerRow(row); }
-        const models = document.getElementById('engine-models');
-        if (models) { fillEngineModels(models); }
+        refreshOcrRows();
     });
     languageSelect.id = 'ocr-language';
     root.append(heading('Essenciais'), el('div', {class: 'group'},
@@ -860,47 +887,12 @@ function render(root) {
     ));
 
     const lensKey = textInput(s.lensApiKey, (v) => { s.lensApiKey = v.trim(); save(); }, {type: 'password', placeholder: 'Opcional'});
-    const screenEngine = s.screenOcrEngine ?? s.ocrEngine;
-    const usesLens = screenEngine === 'lens' || s.ocrEngine === 'lens';
-    const japanese = s.ocrLanguage === 'ja-JP';
-    const windows = (status?.session || 'windows') === 'windows';
-    const engineDesc = (engine) => engine === 'lens'
-        ? 'Envia a captura ao Google (API não oficial). Se falhar, o PP-OCRv6 assume.'
-        : engine === 'bing'
-        ? 'Envia a captura à Microsoft, pelo site do Bing (não é uma API oficial e pode mudar sem aviso), como o owocr faz. Se falhar, o PP-OCRv6 assume.'
-        : engine === 'meiki'
-            ? `A detecção do PP-OCRv6 acha as linhas e o MeikiOCR, treinado em texto de jogos japoneses, as lê. Roda no seu computador. ${japanese ? 'Sem os modelos baixados, o PP-OCRv6 lê.' : 'Ele lê só japonês: neste idioma, o PP-OCRv6 lê no lugar.'}`
-            : engine === 'indra'
-                ? 'A detecção do PP-OCRv6 acha as linhas e o IndraOCR, leve e feito para a CPU, as lê (experimental). Roda no seu computador. Sem os modelos baixados, o PP-OCRv6 lê.'
-            : engine === 'oneocr'
-                ? 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador ou baixados do servidor da Microsoft. Roda no seu computador, nada sai dele; sem os arquivos, o PP-OCRv6 lê.'
-            : engine === 'custom'
-                ? 'A detecção e o reconhecimento que você escolher abaixo, de qualquer motor local, para testar combinações. Roda no seu computador.'
-            : engine === 'screenai'
-                ? 'A biblioteca de OCR do Chrome, que reconhece qualquer idioma e acha o de cada linha sozinha. Roda no seu computador, nada sai dele; sem os arquivos baixados, o PP-OCRv6 lê.'
-                : 'Roda no seu computador; nada sai dele.';
-    // MeikiOCR reads Japanese only: it is offered with Japanese, and kept in the list while chosen.
-    const engineSelect = (value, set) => select([
-        {value: 'paddle', label: 'PP-OCRv6 (local)'},
-        ...(japanese || value === 'meiki' ? [{value: 'meiki', label: 'MeikiOCR (local, japonês)'}] : []),
-        {value: 'screenai', label: 'Chrome ScreenAI (local, qualquer idioma)'},
-        {value: 'indra', label: 'IndraOCR (local, experimental)'},
-        {value: 'custom', label: 'Personalizado (DET + REC)'},
-        // OneOCR is the Windows Snipping Tool's.
-        ...(windows || value === 'oneocr' ? [{value: 'oneocr', label: 'OneOCR (local, do Windows)'}] : []),
-        {value: 'lens', label: 'Google Lens (nuvem)'},
-        {value: 'bing', label: 'Bing (nuvem)'},
-    ], value, (v) => { set(v); save(); rerender(); });
+    const usesLens = selectorEngine(true) === 'lens' || selectorEngine(false) === 'lens';
     root.append(heading('OCR'), el('div', {class: 'group'},
-        cardRow({icon: 'scan', title: 'OCR em volta do cursor', desc: `Lê a palavra sob o cursor. ${engineDesc(s.ocrEngine)}`, wide: true,
-            control: engineSelect(s.ocrEngine, (v) => { s.ocrEngine = v; })}),
-        cardRow({icon: 'scan', title: 'OCR da tela inteira', desc: `Usado quando o atalho é apertado fora de uma palavra; depois é só clicar na palavra. ${engineDesc(screenEngine)}`, wide: true,
-            control: engineSelect(screenEngine, (v) => { s.screenOcrEngine = v; })}),
+        ocrEnginesBox(),
         modelsRows(),
         usesLens ? cardRow({icon: 'cloud', title: 'Chave da API do Google Lens', desc: 'Opcional nos instaladores do GitHub, que já vêm com uma chave. Cole a sua se ela parar de funcionar.', wide: true, control: lensKey}) : null,
         captureRegionRows(),
-        // In the manual mode each model has its own CPU | GPU switch instead.
-        s.ocrManual ? null : cardRow({icon: 'settings', title: 'Usar a placa de vídeo', desc: isWindows ? 'DirectML, com volta automática para a CPU.' : 'WebGPU via Vulkan (experimental), com volta automática para a CPU.', control: toggle(s.useGpu, (v) => { s.useGpu = v; save(); })}),
         cardRow({icon: 'settings', title: 'Escolher a placa de vídeo', desc: 'Para computadores com duas placas, como Intel junto com NVIDIA. Desligado, o sistema escolhe.',
             control: toggle(!!s.chooseGpu, (v) => { s.chooseGpu = v; save(); rerender(); })}),
         s.chooseGpu ? cardRow({icon: 'settings', title: 'Placa usada no OCR', desc: 'Vale a partir da próxima leitura.', wide: true,
@@ -908,11 +900,8 @@ function render(root) {
                 {value: 'highPerformance', label: 'Dedicada (mais rápida)'},
                 {value: 'lowPower', label: 'Integrada (gasta menos energia)'},
             ], s.gpuPreference || 'highPerformance', (v) => { s.gpuPreference = v; save(); })}) : null,
-        ...manualModelRows(),
-        recognizerRow(),
-        engineModelsRows(),
         el('div', {class: 'card-row'}, el('span', {class: 'ico', html: icon('alert')}),
-            el('div', {class: 'txt'}, el('div', {class: 't'}, 'Estado do motor'), el('div', {class: 'd', id: 'engine-status'}, engineStatusText()))),
+            el('div', {class: 'txt'}, el('div', {class: 't'}, 'Estado do motor'), el('div', {class: 'd', id: 'engine-status', style: 'white-space: pre-line'}, engineStatusText()))),
     ));
 
     root.append(heading('Jogos e programas'), profilesCard());

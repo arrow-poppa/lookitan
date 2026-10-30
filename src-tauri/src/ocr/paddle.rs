@@ -774,6 +774,15 @@ pub struct EnginePlan {
     pub gpu_choice: Option<GpuPreference>,
 }
 
+/// What a pass loads of PP-OCR (`Settings::paddle_use`): its detector, its recognizer `rec` (the
+/// model's name), or both, on a plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaddleUse {
+    pub det: bool,
+    pub rec: Option<&'static str>,
+    pub plan: EnginePlan,
+}
+
 impl EnginePlan {
     pub fn automatic(gpu: bool, gpu_choice: Option<GpuPreference>) -> Self {
         Self { manual: false, det: "det_small", det_gpu: gpu, rec_gpu: gpu, gpu_choice }
@@ -805,6 +814,9 @@ pub struct PaddleOcr {
     det_models: (&'static str, &'static str),
     pub rec_model: String,
     rec_on_gpu: Arc<AtomicBool>,
+    /// Which models were loaded (`load`): a pass may need only one.
+    has_det: bool,
+    has_rec: bool,
 }
 
 /// A successful GPU session load does not guarantee that a later, larger input will fit.
@@ -921,61 +933,75 @@ fn gpu_builder(_choice: Option<GpuPreference>) -> Result<SessionBuilder> {
 }
 
 impl PaddleOcr {
-    pub fn new(models_dir: &Path, rec_stem: &str, plan: EnginePlan) -> Result<Self> {
+    pub fn new(models_dir: &Path, rec_stem: &'static str, plan: EnginePlan) -> Result<Self> {
+        Self::load(models_dir, PaddleUse { det: true, rec: Some(rec_stem), plan })
+    }
+
+    /// PP-OCR with the models a pass uses (`PaddleUse`): one not loaded takes no memory, and would
+    /// load on the CPU if asked for.
+    pub fn load(models_dir: &Path, parts: PaddleUse) -> Result<Self> {
+        let PaddleUse { det: has_det, rec, plan } = parts;
         let gpu_choice = plan.gpu_choice;
         let (det_gpu_model, det_cpu_model) = plan.det_models();
         let det_gpu_path = models_dir.join(format!("{det_gpu_model}.onnx"));
         let det_cpu_path = models_dir.join(format!("{det_cpu_model}.onnx"));
+        let rec_stem = rec.unwrap_or_default();
         let rec_path = models_dir.join(format!("{rec_stem}.onnx"));
         let dict_path = models_dir.join(format!("{rec_stem}.dict.json"));
-        if !rec_path.exists() {
+        if rec.is_some() && !rec_path.exists() {
             bail!("recognition model not found: {}", rec_path.display());
         }
 
-        let (det, det_model, det_on_gpu) = if plan.det_gpu {
+        let (det, det_model, det_on_gpu) = if !has_det {
+            (None, det_cpu_model, false)
+        } else if plan.det_gpu {
             match gpu_session(&det_gpu_path, gpu_choice) {
-                Ok(s) => (s, det_gpu_model, true),
+                Ok(s) => (Some(s), det_gpu_model, true),
                 Err(e) => {
                     log::warn!("Ocr.GpuFallback.Detection: {e:#}");
-                    (cpu_session(&det_cpu_path)?, det_cpu_model, false)
+                    (Some(cpu_session(&det_cpu_path)?), det_cpu_model, false)
                 }
             }
         } else {
-            (cpu_session(&det_cpu_path)?, det_cpu_model, false)
+            (Some(cpu_session(&det_cpu_path)?), det_cpu_model, false)
         };
         // Automatic: the recognizer goes where the detector went; manual: where the user put it.
         let rec_wants_gpu = if plan.manual { plan.rec_gpu } else { det_on_gpu };
-        let (rec, rec_on_gpu) = if rec_wants_gpu {
+        let (rec_session, rec_on_gpu) = if rec.is_none() {
+            (None, false)
+        } else if rec_wants_gpu {
             match gpu_session(&rec_path, gpu_choice) {
-                Ok(s) => (s, true),
+                Ok(s) => (Some(s), true),
                 Err(e) => {
                     log::warn!("Ocr.GpuFallback.Recognition: {e:#}");
-                    (cpu_session(&rec_path)?, false)
+                    (Some(cpu_session(&rec_path)?), false)
                 }
             }
         } else {
-            (cpu_session(&rec_path)?, false)
+            (Some(cpu_session(&rec_path)?), false)
         };
-        let dict: Vec<String> = serde_json::from_slice(
-            &std::fs::read(&dict_path).with_context(|| format!("read {}", dict_path.display()))?,
-        )?;
+        let dict: Vec<String> = if rec.is_some() {
+            serde_json::from_slice(&std::fs::read(&dict_path).with_context(|| format!("read {}", dict_path.display()))?)?
+        } else {
+            Vec::new()
+        };
+        let device = |gpu: bool| if gpu { "GPU" } else { "CPU" };
         log::info!(
-            "OCR engine ready: {det_model} on {}, {rec_stem} on {}, {} characters",
-            if det_on_gpu { "GPU" } else { "CPU" },
-            if rec_on_gpu { "GPU" } else { "CPU" },
-            dict.len()
+            "OCR engine ready: {}, {}",
+            if has_det { format!("{det_model} on {}", device(det_on_gpu)) } else { "no detector".into() },
+            if rec.is_some() { format!("{rec_stem} on {}, {} characters", device(rec_on_gpu), dict.len()) } else { "no recognizer".into() },
         );
         let det_on_gpu = Arc::new(AtomicBool::new(det_on_gpu));
         let rec_on_gpu = Arc::new(AtomicBool::new(rec_on_gpu));
         Ok(Self {
             det: Mutex::new(InferenceSession {
-                session: Some(det),
+                session: det,
                 on_gpu: det_on_gpu.clone(),
                 cpu_path: det_cpu_path,
                 stage: "Detection",
             }),
             rec: Mutex::new(InferenceSession {
-                session: Some(rec),
+                session: rec_session,
                 on_gpu: rec_on_gpu.clone(),
                 cpu_path: rec_path,
                 stage: "Recognition",
@@ -985,7 +1011,18 @@ impl PaddleOcr {
             det_models: (det_gpu_model, det_cpu_model),
             rec_model: rec_stem.to_string(),
             rec_on_gpu,
+            has_det,
+            has_rec: rec.is_some(),
         })
+    }
+
+    /// Whether its detector, and its recognizer, were loaded (`load`).
+    pub fn has_det(&self) -> bool {
+        self.has_det
+    }
+
+    pub fn has_rec(&self) -> bool {
+        self.has_rec
     }
 
     pub fn det_on_gpu(&self) -> bool {
@@ -1010,11 +1047,13 @@ impl PaddleOcr {
         if self.det_on_gpu() { self.det_models.0 } else { self.det_models.1 }
     }
 
-    /// Runs both models once so the first real lookup does not pay for graph setup.
+    /// Runs the loaded models once so the first real lookup does not pay for graph setup.
     pub fn warm_up(&self) {
         let blank = RgbaImage::from_pixel(96, 64, Rgba([255, 255, 255, 255]));
-        if let Err(e) = self.detect(&blank) {
-            log::warn!("detector warm-up failed: {e:#}");
+        if self.has_det {
+            if let Err(e) = self.detect(&blank) {
+                log::warn!("detector warm-up failed: {e:#}");
+            }
         }
         let b = TextBox {
             x0: 0.0,
@@ -1023,8 +1062,10 @@ impl PaddleOcr {
             y1: 32.0,
             quad: None,
         };
-        if let Err(e) = self.recognize_box(&blank, b) {
-            log::warn!("recognizer warm-up failed: {e:#}");
+        if self.has_rec {
+            if let Err(e) = self.recognize_box(&blank, b) {
+                log::warn!("recognizer warm-up failed: {e:#}");
+            }
         }
     }
 

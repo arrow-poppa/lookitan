@@ -352,17 +352,15 @@ test('the pop-up order is changed by dragging a row or with Alt+arrows, without 
     assert.deepEqual(order.map((d) => d.id), ['local', 'ai-context', 'ai-word']);
 });
 
-test('settings render and GPU toggle work while OCR status is pending', async () => {
+test('settings render and a model\'s GPU switch work while OCR status is pending', async () => {
     const fixture = await settingsFixture();
     const {view, root, settings, languages, status, initialization} = fixture;
     assert(root.children.length > 0, 'settings must render before any backend response');
     const languageControl = view.document.getElementById('ocr-language');
     assert(languageControl, 'recognition language control is already mounted');
-    const gpuRow = descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes('Usar a placa de vídeo'));
-    const gpu = descendants(gpuRow).find((node) => node.tagName === 'input');
-    gpu.checked = false;
-    gpu.dispatch('change');
-    assert.equal(settings.useGpu, false);
+    const detection = descendants(root).find((node) => node.className === 'card-row' && node.attributes['data-sub'] === 'paddle' && node.textContent.startsWith('Detecção'));
+    descendants(detection).find((node) => node.className === 'segmented').children[0].dispatch('click');
+    assert.equal(settings.ocrModels.paddle.detGpu, false, 'PP-OCRv6\'s detector on the CPU');
     assert.equal(fixture.saves(), 1);
     languages.resolve([{tag: 'en-US', name: 'English'}, {tag: 'pt-BR', name: 'Português'}]);
     await flush();
@@ -371,9 +369,9 @@ test('settings render and GPU toggle work while OCR status is pending', async ()
     languageControl.value = 'pt-BR';
     languageControl.dispatch('change');
     assert.equal(settings.ocrLanguage, 'pt-BR');
-    status.resolve({session: 'windows', detModel: 'test-det', recModel: 'test-rec', detOnGpu: false, recOnGpu: false});
+    status.resolve({session: 'windows', engines: [['Cursor e tela inteira', 'PP-OCRv6: detecção test-det na CPU · reconhecimento test-rec na CPU']]});
     await initialization;
-    assert(view.document.getElementById('engine-status').textContent.includes('test-det'));
+    assert.equal(view.document.getElementById('engine-status').textContent, 'Cursor e tela inteira: PP-OCRv6: detecção test-det na CPU · reconhecimento test-rec na CPU');
     assert.equal(view.document.getElementById('ocr-language'), languageControl, 'status must not replace the edited controls');
 });
 
@@ -461,11 +459,19 @@ test('the video card choice stays hidden until its toggle is on', async () => {
     await fixture.finish();
 });
 
-test('in the manual mode a tiny language chooses tiny or small for itself, and the others show their only PP-OCR model', async () => {
-    const fixture = await settingsFixture({ocrLanguage: 'pt-BR', smallRecognizer: ['de-DE'], ocrManual: true});
-    const {view, settings} = fixture;
-    const recognizer = () => descendants(view.document.getElementById('recognizer-row')).find((node) => node.tagName === 'select');
-    assert.equal(recognizer(), undefined, 'shown once the languages are known');
+/** An engine's model row (`data-sub`) by its title, and its select and CPU | GPU switches. */
+function modelRow(root, engine, title) {
+    return descendants(root).find((node) => node.className === 'card-row' && node.attributes['data-sub'] === engine && node.textContent.startsWith(title));
+}
+const selectIn = (row) => descendants(row).find((node) => node.tagName === 'select');
+const switchesIn = (row) => descendants(row).filter((node) => node.className === 'segmented');
+
+test('PP-OCRv6\'s models sit under its selector: a tiny language chooses tiny or small for itself, the others show their only model', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'pt-BR', smallRecognizer: ['de-DE']});
+    const {view, root, settings} = fixture;
+    const recognizer = () => selectIn(modelRow(root, 'paddle', 'Reconhecimento'));
+    assert.equal(modelRow(root, 'paddle', 'Reconhecimento'), undefined, 'shown once the languages are known');
+    assert(modelRow(root, 'paddle', 'Detecção'), 'the detector is shown at once');
     fixture.languages.resolve([{tag: 'ja-JP', name: 'Japanese', rec: 'rec_small'}, {tag: 'pt-BR', name: 'Portuguese (Brazil)', rec: 'rec_tiny'},
         {tag: 'ar-SA', name: 'Arabic', rec: 'rec_arabic'}]);
     fixture.status.resolve({session: 'windows'});
@@ -485,70 +491,138 @@ test('in the manual mode a tiny language chooses tiny or small for itself, and t
         assert.deepEqual(recognizer().children.map((o) => o.textContent), [only]);
         assert.equal(recognizer().disabled, true);
     }
+    assert.equal(view.document.getElementById('ocr-language'), language, 'a change of language redraws only the engines');
 });
 
-test('the custom engine mixes any detector with any recognizer, each on the CPU or the GPU, without the manual mode', async () => {
-    const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'custom', screenOcrEngine: 'paddle', manualDet: 'det_small'});
+test('PP-OCRv6\'s detector and each model\'s device are chosen under it, from Lookupper\'s choice; the old switches are gone', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ru-RU', useGpu: true});
+    const {root, settings} = fixture;
+    fixture.languages.resolve([{tag: 'ru-RU', name: 'Russian', rec: 'rec_cyrillic'}]);
+    fixture.status.resolve({session: 'windows'});
+    await fixture.initialization;
+    const row = (title) => descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
+    for (const gone of ['Escolher modelos manualmente', 'Usar a placa de vídeo', 'MeikiOCR: detecção']) { assert.equal(row(gone), undefined, gone); }
+    const detector = modelRow(root, 'paddle', 'Detecção');
+    assert.deepEqual(selectIn(detector).children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small']);
+    assert.equal(selectIn(detector).value, 'paddle:det_small', 'on the GPU, the small one');
+    assert.equal(settings.ocrModels, undefined, 'nothing is saved before a choice');
+    selectIn(detector).value = 'paddle:det_tiny';
+    selectIn(detector).dispatch('change');
+    assert.equal(JSON.stringify(settings.ocrModels.paddle), JSON.stringify({det: 'paddle:det_tiny', detGpu: true, rec: 'paddle', recGpu: true}));
+    const recognizer = modelRow(root, 'paddle', 'Reconhecimento');
+    assert.deepEqual(selectIn(recognizer).children.map((o) => o.textContent), ['Cirílico (padrão)'], 'Cyrillic offers only its own model');
+    switchesIn(recognizer)[0].children[0].dispatch('click');
+    assert.equal(settings.ocrModels.paddle.recGpu, false, 'the recognizer on the CPU');
+    switchesIn(recognizer)[0].children[1].dispatch('click');
+    assert.equal(settings.ocrModels.paddle.recGpu, true, 'back on the GPU');
+    const cpu = await settingsFixture({useGpu: false});
+    await cpu.finish();
+    const cpuDetector = modelRow(cpu.root, 'paddle', 'Detecção');
+    assert.equal(selectIn(cpuDetector).value, 'paddle:det_tiny', 'without the GPU, the tiny one');
+    assert.deepEqual(switchesIn(cpuDetector)[0].children.map((b) => b.className), ['on', ''], 'and on the CPU');
+});
+
+test('IndraOCR reads with its own LineNet, MeikiOCR with PP-OCRv6\'s detectors, each with its own devices', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'meiki', screenOcrEngine: 'indra',
+        ocrModels: {indra: {det: 'paddle:det_small', detGpu: true, rec: 'indra', recGpu: false}}});
+    const {root, settings} = fixture;
+    fixture.languages.resolve([{tag: 'ja-JP', name: 'Japanese', rec: 'rec_small'}]);
+    fixture.status.resolve({session: 'windows', models: {indra: {installed: false}}});
+    await fixture.initialization;
+    const indra = selectIn(modelRow(root, 'indra', 'Detecção'));
+    assert.deepEqual(indra.children.map((o) => o.value), ['indra:linenet'], 'its own only');
+    assert.equal(indra.value, 'indra:linenet', 'a PP-OCRv6 detector saved for it reads as its own');
+    assert.equal(indra.disabled, true);
+    assert.equal(selectIn(modelRow(root, 'indra', 'Reconhecimento')).value, 'indra');
+    const meiki = modelRow(root, 'meiki', 'Detecção');
+    assert.deepEqual(selectIn(meiki).children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small']);
+    selectIn(meiki).value = 'paddle:det_tiny';
+    selectIn(meiki).dispatch('change');
+    switchesIn(modelRow(root, 'meiki', 'Detecção'))[0].children[0].dispatch('click');
+    assert.equal(JSON.stringify(settings.ocrModels.meiki), JSON.stringify({det: 'paddle:det_tiny', detGpu: false, rec: 'meiki', recGpu: true}));
+    assert.equal(modelRow(root, 'paddle', 'Detecção'), undefined, 'PP-OCRv6 is in no selector: none of its rows');
+    assert(descendants(root).some((node) => node.textContent === 'Modelos do IndraOCR (21 MB)'), 'its models row shows');
+    await fixture.finish();
+});
+
+test('the custom engine mixes any detector with any recognizer, each on the CPU or the GPU', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrEngine: 'custom', screenOcrEngine: 'paddle'});
     const {view, root, settings} = fixture;
     fixture.languages.resolve([{tag: 'ja-JP', name: 'Japanese', rec: 'rec_small'}, {tag: 'pt-BR', name: 'Portuguese (Brazil)', rec: 'rec_tiny'}]);
     fixture.status.resolve({session: 'windows'});
     await fixture.initialization;
-    const row = (title) => descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
-    const selectIn = (r) => descendants(r).find((node) => node.tagName === 'select');
-    const switches = (r) => descendants(r).filter((node) => node.className === 'segmented');
-    assert.equal(row('Modelo de detecção'), undefined, 'the manual mode is off');
-    const det = selectIn(row('Personalizado: detecção'));
-    assert.deepEqual(det.children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small']);
-    assert.equal(det.value, 'paddle:det_small', 'from PP-OCRv6\'s manual choice');
-    det.value = 'paddle:det_tiny';
-    det.dispatch('change');
+    const det = () => selectIn(modelRow(root, 'custom', 'Detecção'));
+    const rec = () => selectIn(modelRow(root, 'custom', 'Reconhecimento'));
+    assert(modelRow(root, 'paddle', 'Detecção'), 'the whole screen\'s PP-OCRv6 has its own rows');
+    assert.deepEqual(det().children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small', 'indra:linenet']);
+    assert.equal(det().value, 'paddle:det_small');
+    det().value = 'paddle:det_tiny';
+    det().dispatch('change');
     assert.equal(JSON.stringify(settings.ocrModels.custom), JSON.stringify({det: 'paddle:det_tiny', detGpu: true, rec: 'paddle', recGpu: true}));
-    assert.equal(settings.manualDet, 'det_small', 'PP-OCRv6\'s own choice is kept');
-    switches(row('Personalizado: reconhecimento'))[0].children[0].dispatch('click');
+    switchesIn(modelRow(root, 'custom', 'Reconhecimento'))[0].children[0].dispatch('click');
     assert.equal(settings.ocrModels.custom.recGpu, false, 'the recognizer on the CPU');
-    const rec = () => selectIn(row('Personalizado: reconhecimento'));
     assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'meiki', 'indra']);
     rec().value = 'meiki';
     rec().dispatch('change');
     assert.equal(settings.ocrModels.custom.rec, 'meiki');
     assert(descendants(root).some((node) => node.textContent === 'Modelos do MeikiOCR (31 MB)'), 'its models row shows');
-    // Away from Japanese MeikiOCR stays listed while chosen, and says the PP-OCRv6 reads instead.
+    // Away from Japanese MeikiOCR stays listed while chosen, and says it does not read.
     const language = view.document.getElementById('ocr-language');
     language.value = 'pt-BR';
     language.dispatch('change');
-    assert(row('Personalizado: reconhecimento').textContent.includes('O MeikiOCR lê só japonês'));
-    rec().value = 'indra';
+    assert(modelRow(root, 'custom', 'Reconhecimento').textContent.includes('O MeikiOCR lê só japonês'));
+    rec().value = 'paddle';
     rec().dispatch('change');
     assert.deepEqual(rec().children.map((o) => o.value), ['paddle', 'indra'], 'MeikiOCR only for Japanese');
+    assert.deepEqual(selectIn(modelRow(root, 'custom', 'Modelo do PP-OCRv6')).children.map((o) => o.textContent), ['Tiny (padrão)', 'Small'],
+        'PP-OCRv6\'s recognizer has its language\'s choice');
+    det().value = 'indra:linenet';
+    det().dispatch('change');
+    assert(descendants(root).some((node) => node.textContent === 'Modelos do IndraOCR (21 MB)'), 'LineNet needs IndraOCR\'s models');
     await fixture.finish();
 });
 
-test('in the manual mode MeikiOCR and IndraOCR have their own detector and devices, apart from PP-OCRv6\'s', async () => {
-    const fixture = await settingsFixture({ocrLanguage: 'ja-JP', ocrManual: true, ocrEngine: 'meiki', screenOcrEngine: 'oneocr', manualDet: 'det_small', manualDetGpu: true});
-    const {root, settings} = fixture;
-    fixture.languages.resolve([{tag: 'ja-JP', name: 'Japanese', rec: 'rec_small'}]);
-    fixture.status.resolve({session: 'windows'});
-    await fixture.initialization;
-    const row = (title) => descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
-    assert(row('Modelo de detecção'), 'PP-OCRv6\'s rows stay');
-    assert.equal(row('IndraOCR: detecção'), undefined, 'only the chosen engines');
-    const det = descendants(row('MeikiOCR: detecção')).find((node) => node.tagName === 'select');
-    det.value = 'paddle:det_tiny';
-    det.dispatch('change');
-    descendants(row('MeikiOCR: detecção')).filter((node) => node.className === 'segmented')[0].children[0].dispatch('click');
-    assert.equal(JSON.stringify(settings.ocrModels.meiki), JSON.stringify({det: 'paddle:det_tiny', detGpu: false, rec: 'meiki', recGpu: true}));
-    assert.deepEqual([settings.manualDet, settings.manualDetGpu], ['det_small', true], 'PP-OCRv6\'s own are kept');
-    assert(row('O OneOCR, escolhido') === undefined, 'the pointer\'s engine is MeikiOCR');
+test('a page engine has only the detector that finds the pointer\'s block, in the automatic capture; one engine on both selectors shows its models once', async () => {
+    const fixture = await settingsFixture({ocrEngine: 'oneocr', screenOcrEngine: 'screenai', captureAuto: true});
+    const {view, root, settings} = fixture;
     await fixture.finish();
+    const block = modelRow(root, 'oneocr', 'Achar o bloco sob o cursor');
+    assert(block, 'the pointer\'s page engine finds its block');
+    assert.deepEqual(selectIn(block).children.map((o) => o.value), ['paddle:det_tiny', 'paddle:det_small', 'indra:linenet']);
+    assert.equal(modelRow(root, 'oneocr', 'Reconhecimento'), undefined, 'it reads by itself');
+    assert.equal(descendants(root).filter((node) => node.attributes?.['data-sub'] === 'screenai').length, 0, 'the whole screen\'s reads it all');
+    const preset = view.document.getElementById('capture-preset');
+    preset.value = 'custom';
+    preset.dispatch('change');
+    assert.equal(modelRow(root, 'oneocr', 'Achar o bloco sob o cursor'), undefined, 'a fixed region needs no detector');
+    assert.equal(settings.captureAuto, false);
+    const both = await settingsFixture({ocrEngine: 'indra', screenOcrEngine: 'indra'});
+    await both.finish();
+    assert.equal(descendants(both.root).filter((node) => node.attributes?.['data-sub'] === 'indra' && node.textContent.startsWith('Detecção')).length, 1);
+    const screenRow = descendants(both.root).find((node) => node.className === 'card-row' && node.textContent.startsWith('OCR da tela inteira'));
+    assert(screenRow.textContent.includes('Com os mesmos modelos do OCR em volta do cursor'));
 });
-test('in the manual mode Russian keeps PP-OCRv5 Cyrillic by default and can try Tiny RU; the other Cyrillic languages cannot', async () => {
-    const fixture = await settingsFixture({ocrLanguage: 'ru-RU', ocrManual: true, experimentalRecognizer: ['xx-XX']});
-    const {view, settings} = fixture;
+
+test('the chevron folds an engine\'s models under its selector', async () => {
+    const fixture = await settingsFixture({ocrEngine: 'paddle'});
+    await fixture.finish();
+    const head = descendants(fixture.root).find((node) => node.className === 'card-row' && node.textContent.startsWith('OCR em volta do cursor'));
+    const chevron = descendants(head).find((node) => node.className === 'ghost icon collapse');
+    assert(chevron, 'the selector has a chevron');
+    chevron.dispatch('click');
+    assert.equal(modelRow(fixture.root, 'paddle', 'Detecção').hidden, true);
+    chevron.dispatch('click');
+    assert.equal(modelRow(fixture.root, 'paddle', 'Detecção').hidden, false);
+});
+
+test('Russian keeps PP-OCRv5 Cyrillic by default and can try Tiny RU; the other Cyrillic languages cannot', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ru-RU', experimentalRecognizer: ['xx-XX']});
+    const {view, root, settings} = fixture;
     fixture.languages.resolve([{tag: 'ru-RU', name: 'Russian', rec: 'rec_cyrillic', experimental: 'rec_ru_tiny'},
         {tag: 'uk-UA', name: 'Ukrainian', rec: 'rec_cyrillic'}, {tag: 'bg-BG', name: 'Bulgarian', rec: 'rec_cyrillic'}]);
     fixture.status.resolve({session: 'windows'});
     await fixture.initialization;
-    const recognizer = () => descendants(view.document.getElementById('recognizer-row')).find((node) => node.tagName === 'select');
+    const recognizer = () => selectIn(modelRow(root, 'paddle', 'Reconhecimento'));
     assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Cirílico (padrão)', 'Tiny RU (experimental)']);
     assert.equal(recognizer().value, 'rec_cyrillic', 'PP-OCRv5 Cyrillic is the default');
     assert.notEqual(recognizer().disabled, true);
@@ -570,49 +644,6 @@ test('in the manual mode Russian keeps PP-OCRv5 Cyrillic by default and can try 
     language.value = 'ru-RU';
     language.dispatch('change');
     assert.equal(recognizer().value, 'rec_ru_tiny', 'the choice is restored');
-});
-
-test('the manual OCR mode picks the detector and puts each model on the CPU or the GPU; off, nothing new shows', async () => {
-    const fixture = await settingsFixture({ocrLanguage: 'ru-RU', useGpu: true});
-    const {root, settings} = fixture;
-    fixture.languages.resolve([{tag: 'ru-RU', name: 'Russian', rec: 'rec_cyrillic'}, {tag: 'pt-BR', name: 'Portuguese (Brazil)', rec: 'rec_tiny'}]);
-    fixture.status.resolve({session: 'windows'});
-    await fixture.initialization;
-    const row = (title) => descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
-    const switches = (r) => descendants(r).filter((node) => node.className === 'segmented');
-    assert.equal(row('Modelo de detecção'), undefined, 'off by default: the automatic choice');
-    assert(row('Usar a placa de vídeo'), 'off: the one GPU switch');
-    const recognizerRow = () => fixture.view.document.getElementById('recognizer-row');
-    assert.equal(recognizerRow().children.length, 0, 'off: no recognizer choice either');
-    const at = (title) => descendants(root).filter((node) => node.className === 'card-row').findIndex((node) => node.textContent.includes(title));
-    assert.equal(at('Escolher modelos manualmente') + 1, at('Estado do motor'), 'right above the engine state');
-    const manual = descendants(row('Escolher modelos manualmente')).find((node) => node.tagName === 'input');
-    manual.checked = true;
-    manual.dispatch('change');
-    assert.deepEqual([settings.ocrManual, settings.manualDet, settings.manualDetGpu, settings.manualRecGpu], [true, 'det_small', true, true],
-        'the first time, from the automatic choice');
-    assert.equal(row('Usar a placa de vídeo'), undefined, 'each model has its own switch instead');
-    const detector = row('Modelo de detecção');
-    const detSelect = descendants(detector).find((node) => node.tagName === 'select');
-    assert.deepEqual(detSelect.children.map((o) => o.textContent), ['Tiny', 'Small']);
-    assert.equal(detSelect.value, 'det_small');
-    detSelect.value = 'det_tiny';
-    detSelect.dispatch('change');
-    assert.equal(settings.manualDet, 'det_tiny');
-    const [detDevice] = switches(detector);
-    detDevice.children[0].dispatch('click');
-    assert.equal(settings.manualDetGpu, false, 'the detector on the CPU');
-    assert(at('Modelo de detecção') < at('Estado do motor'));
-    assert(at('Modelo de reconhecimento') < at('Estado do motor'));
-    const recognizer = recognizerRow();
-    assert.deepEqual(descendants(recognizer).find((node) => node.tagName === 'select').children.map((o) => o.textContent), ['Cirílico (padrão)'],
-        'Cyrillic offers only its own model');
-    const [recDevice] = switches(recognizer);
-    assert(recDevice, 'with a CPU | GPU switch');
-    recDevice.children[0].dispatch('click');
-    assert.equal(settings.manualRecGpu, false);
-    recDevice.children[1].dispatch('click');
-    assert.equal(settings.manualRecGpu, true, 'the recognizer back on the GPU');
 });
 
 test('the capture region offers only Automático and Personalizada, and custom dimensions save on change while OCR is pending', async () => {
