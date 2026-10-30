@@ -1673,11 +1673,27 @@ fn open_settings_window(app: &AppHandle) {
     }
 }
 
+/// Drops the models the settings no longer read with (a PP-OCR plan or recognizer that changed,
+/// MeikiOCR or IndraOCR no longer chosen), so they do not hold memory until something replaces
+/// them. A pass still using one keeps it until it ends.
+fn free_unused_engines(state: &AppState, settings: &Settings) {
+    let wanted = settings.paddle_configs();
+    state.paddle.lock().retain(|(rec, plan, _)| wanted.iter().any(|(r, p)| *r == rec.as_str() && p == plan));
+    let japanese = ocr::language(&settings.ocr_language).tag == "ja-JP";
+    if !(settings.reads_with(Recognizer::Meiki) && japanese) {
+        *state.meiki.lock() = None;
+    }
+    if !settings.reads_with(Recognizer::Indra) {
+        *state.indra.lock() = None;
+    }
+}
+
 fn warm_engine_in_background(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
         let settings = state.settings.read().clone();
+        free_unused_engines(&state, &settings);
         // PP-OCRv6 is loaded even when Google Lens is selected: it is the fallback. The pointer's
         // engine last, so it is the one kept first.
         for kind in [OcrEngineKind::Paddle, settings.engine_for(false)] {
