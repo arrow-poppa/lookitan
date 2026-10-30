@@ -41,8 +41,9 @@ pub static MEIKI: ModelSet = ModelSet {
     ],
 };
 
-/// IndraOCR's recognizers for the groups Lookitan's languages read with (datalab-to, tag v1.1.0 as
-/// indra-ocr 1.1.2 pins it; weights under the modified AI Pubs Open RAIL-M licence, shipped with
+/// IndraOCR's recognizers for the groups Lookitan's languages read with (datalab-to, commit
+/// bd02167f, `main` on 2026-10-28; its files are byte for byte those of tag v1.1.0, a1283c4b, which
+/// indra-ocr 1.1.2 pins, checked on 2026-10-29; the folder keeps its v1.1.0 name; weights under the modified AI Pubs Open RAIL-M licence, shipped with
 /// them as its §4 asks), and their vocabularies. Downloaded only after the user accepts it.
 pub static INDRA: ModelSet = ModelSet {
     id: "indra-ocr-v1.1.0",

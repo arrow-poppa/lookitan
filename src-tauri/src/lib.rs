@@ -53,7 +53,7 @@ use crate::ocr::paddle::{recognize_boxes_with, BoxReader, split_focus, EnginePla
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
 use crate::platform::geometry::DisplayGeometry;
-use crate::settings::{AppProfile, DictionaryConfig, DictionaryKind, FreezeMode, OcrEngineKind, OcrScope, Settings};
+use crate::settings::{AppProfile, DictionaryConfig, DictionaryKind, FreezeMode, OcrEngineKind, OcrScope, Recognizer, Settings};
 
 /// The last OCR pass: what the overlay shows and what clicks on it look up.
 struct Recognition {
@@ -96,7 +96,8 @@ pub struct AppState {
     pub dicts: RwLock<DictList>,
     dict_errors: RwLock<HashMap<String, String>>,
     dictionary_gate: Mutex<()>,
-    paddle: Mutex<Option<(String, EnginePlan, Arc<PaddleOcr>)>>,
+    /// PP-OCR by recognizer and plan, the last used first (`ensure_paddle`).
+    paddle: Mutex<Vec<(String, EnginePlan, Arc<PaddleOcr>)>>,
     engine_error: RwLock<Option<String>>,
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
     lens: Mutex<Option<Arc<LensOcr>>>,
@@ -292,26 +293,31 @@ fn ensure_ort(state: &AppState) -> Result<()> {
     result
 }
 
-fn ensure_paddle(state: &AppState) -> Result<Arc<PaddleOcr>> {
+/// PP-OCR with the detector, devices and recognizer `kind` reads with (`Settings::plan_for`; a
+/// page engine's are PP-OCRv6's own). Two are kept, so the pointer's engine and the whole screen's
+/// can differ without one reloading the other's.
+fn ensure_paddle(state: &AppState, kind: OcrEngineKind) -> Result<Arc<PaddleOcr>> {
+    const KEPT: usize = 2;
     ensure_ort(state)?;
     let (rec, plan) = {
         let s = state.settings.read();
-        (s.rec_model().to_string(), s.engine_plan())
+        (s.rec_model_for(kind).to_string(), s.plan_for(kind))
     };
-    let mut slot = state.paddle.lock();
-    if let Some((r, p, engine)) = slot.as_ref() {
-        if *r == rec && *p == plan {
-            return Ok(engine.clone());
-        }
+    let mut cache = state.paddle.lock();
+    if let Some(i) = cache.iter().position(|(r, p, _)| *r == rec && *p == plan) {
+        let entry = cache.remove(i);
+        let engine = entry.2.clone();
+        cache.insert(0, entry);
+        return Ok(engine);
     }
     let models = state.resource_dir.join("models");
-    // Drop the previous cached models before allocating their replacements.
-    *slot = None;
+    // Drop the oldest cached models before allocating new ones.
+    cache.truncate(KEPT - 1);
     match PaddleOcr::new(&models, &rec, plan) {
         Ok(engine) => {
             let engine = Arc::new(engine);
             engine.warm_up();
-            *slot = Some((rec, plan, engine.clone()));
+            cache.insert(0, (rec, plan, engine.clone()));
             *state.engine_error.write() = None;
             Ok(engine)
         }
@@ -759,8 +765,8 @@ enum Reading {
 /// returned in `rest` so the overlay can fill in while the user reads.
 fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, reading: Reading) -> Result<OcrPass> {
     // Each engine's results have their own key, so a fallback's lines never pass for Lens's.
-    let context = |kind: OcrEngineKind| format!("{:?}|{}|{}|{:?}|{}", kind, settings.ocr_language, settings.rec_model(), settings.engine_plan(),
-        if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" });
+    let context = |kind: OcrEngineKind| format!("{:?}|{}|{}|{:?}|{:?}|{}", kind, settings.ocr_language, settings.rec_model_for(kind), settings.plan_for(kind),
+        settings.recognizer_for(kind), if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" });
     let key_of = |kind: OcrEngineKind| frame_key(image, &context(kind));
     let mut key = key_of(kind);
     let mut notice = None;
@@ -770,7 +776,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         OcrEngineKind::ScreenAi => Some("Chrome ScreenAI"),
         OcrEngineKind::OneOcr => Some("OneOCR"),
         OcrEngineKind::Bing => Some("Bing"),
-        OcrEngineKind::Paddle | OcrEngineKind::Meiki | OcrEngineKind::Indra => None,
+        OcrEngineKind::Paddle | OcrEngineKind::Meiki | OcrEngineKind::Indra | OcrEngineKind::Custom => None,
     };
     if let Some(name) = page {
         let read_page = |img: &image::RgbaImage| -> Result<Vec<OcrLine>> {
@@ -818,21 +824,23 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         }
     }
     // Recognizers other than PP-OCR's, on its detector's boxes.
-    let wanted = match kind {
-        OcrEngineKind::Meiki => Some(("MeikiOCR", meiki_engine(state, settings).map(Reader::Meiki))),
-        OcrEngineKind::Indra => Some(("IndraOCR", indra_engine(state, settings).map(Reader::Indra))),
-        _ => None,
+    let rec_gpu = settings.rec_gpu_for(kind);
+    let wanted = match settings.recognizer_for(kind) {
+        Recognizer::Meiki => Some(("MeikiOCR", meiki_engine(state, settings, rec_gpu).map(Reader::Meiki))),
+        Recognizer::Indra => Some(("IndraOCR", indra_engine(state, settings, rec_gpu).map(Reader::Indra))),
+        Recognizer::Paddle => None,
     };
     let reader = match wanted {
         Some((_, Ok(reader))) => Some(reader),
         Some((name, Err(e))) => {
             notice = Some(format!("O {name} não leu e o PP-OCRv6 leu no lugar: {e:#}"));
-            key = key_of(OcrEngineKind::Paddle);
+            // PP-OCR's recognizer on this engine's detector: lines of their own.
+            key = frame_key(image, &format!("{}|PP-OCR in its place", context(kind)));
             None
         }
         None => None,
     };
-    let p = BoxEngine { paddle: ensure_paddle(state)?, reader };
+    let p = BoxEngine { paddle: ensure_paddle(state, kind)?, reader };
     let cached_boxes = state.ocr_cache.lock().boxes(key);
     let boxes = match cached_boxes {
         Some(boxes) => boxes,
@@ -870,7 +878,7 @@ fn pointer_block(state: &AppState, image: &image::RgbaImage, key: FrameKey, px: 
     let boxes = match cached {
         Some(boxes) => boxes,
         None => {
-            let boxes = ensure_paddle(state)?.detect_boxes(image)?;
+            let boxes = ensure_paddle(state, OcrEngineKind::Paddle)?.detect_boxes(image)?;
             state.ocr_cache.lock().save_boxes(key, &boxes);
             boxes
         }
@@ -956,8 +964,8 @@ impl BoxEngine {
 }
 
 /// IndraOCR's recognizer for the OCR language's group, loaded once its models are downloaded (after
-/// the user accepted their licence), where the recognizer would run (`EnginePlan`).
-fn indra_engine(state: &AppState, settings: &Settings) -> Result<Arc<IndraRec>> {
+/// the user accepted their licence), on the GPU when `gpu` (`Settings::rec_gpu_for`).
+fn indra_engine(state: &AppState, settings: &Settings, gpu: bool) -> Result<Arc<IndraRec>> {
     if !Downloaded::Indra.installed() {
         match state.downloads.lock().get(Downloaded::Indra.id()).cloned() {
             Some(state) => bail!("os modelos dele {state}"),
@@ -965,8 +973,6 @@ fn indra_engine(state: &AppState, settings: &Settings) -> Result<Arc<IndraRec>> 
         }
     }
     let group = IndraGroup::of(&settings.ocr_language);
-    let plan = settings.engine_plan();
-    let gpu = if plan.manual { plan.rec_gpu } else { plan.det_gpu };
     let mut slot = state.indra.lock();
     if let Some((g, on, r)) = slot.as_ref() {
         if *g == group && *on == gpu {
@@ -975,15 +981,15 @@ fn indra_engine(state: &AppState, settings: &Settings) -> Result<Arc<IndraRec>> 
     }
     // One group at a time: drop the previous sessions before loading their replacements.
     *slot = None;
-    let r = Arc::new(IndraRec::new(&models::INDRA.dir()?, group, gpu, plan.gpu_choice)?);
+    let r = Arc::new(IndraRec::new(&models::INDRA.dir()?, group, gpu, settings.gpu_choice())?);
     *slot = Some((group, gpu, r.clone()));
     Ok(r)
 }
 
-/// MeikiOCR's recognizer, loaded once its models are downloaded, on the GPU when the recognizer
-/// would be (`EnginePlan`). An error (not Japanese, models missing or downloading) makes the pass
+/// MeikiOCR's recognizer, loaded once its models are downloaded, on the GPU when `gpu`
+/// (`Settings::rec_gpu_for`). An error (not Japanese, models missing or downloading) makes the pass
 /// read with PP-OCR's own recognizer.
-fn meiki_engine(state: &AppState, settings: &Settings) -> Result<Arc<MeikiRec>> {
+fn meiki_engine(state: &AppState, settings: &Settings, gpu: bool) -> Result<Arc<MeikiRec>> {
     if ocr::language(&settings.ocr_language).tag != "ja-JP" {
         bail!("ele lê só japonês");
     }
@@ -993,8 +999,6 @@ fn meiki_engine(state: &AppState, settings: &Settings) -> Result<Arc<MeikiRec>> 
             None => bail!("os modelos dele não estão baixados (Configurações › OCR)"),
         }
     }
-    let plan = settings.engine_plan();
-    let gpu = if plan.manual { plan.rec_gpu } else { plan.det_gpu };
     let mut slot = state.meiki.lock();
     if let Some((on, m)) = slot.as_ref() {
         if *on == gpu {
@@ -1003,7 +1007,7 @@ fn meiki_engine(state: &AppState, settings: &Settings) -> Result<Arc<MeikiRec>> 
     }
     // Drop the previous sessions before loading their replacements.
     *slot = None;
-    let m = Arc::new(MeikiRec::new(&models::MEIKI.dir()?, gpu, plan.gpu_choice)?);
+    let m = Arc::new(MeikiRec::new(&models::MEIKI.dir()?, gpu, settings.gpu_choice())?);
     *slot = Some((gpu, m.clone()));
     Ok(m)
 }
@@ -1673,14 +1677,19 @@ fn warm_engine_in_background(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
-        // PP-OCRv6 is loaded even when Google Lens is selected: it is the fallback.
-        if let Err(e) = ensure_paddle(&state) {
-            log::warn!("OCR engine unavailable: {e:#}");
-        }
         let settings = state.settings.read().clone();
+        // PP-OCRv6 is loaded even when Google Lens is selected: it is the fallback. The pointer's
+        // engine last, so it is the one kept first.
+        for kind in [OcrEngineKind::Paddle, settings.engine_for(false)] {
+            if let Err(e) = ensure_paddle(&state, kind) {
+                log::warn!("OCR engine unavailable: {e:#}");
+            }
+        }
         if settings.wants_meiki() && ocr::language(&settings.ocr_language).tag == "ja-JP" {
             if Downloaded::Meiki.installed() {
-                if let Err(e) = meiki_engine(&state, &settings) {
+                let reader = [settings.engine_for(false), settings.engine_for(true)].into_iter().find(|&k| settings.recognizer_for(k) == Recognizer::Meiki);
+                let gpu = reader.is_some_and(|k| settings.rec_gpu_for(k));
+                if let Err(e) = meiki_engine(&state, &settings, gpu) {
                     log::warn!("MeikiOCR unavailable: {e:#}");
                 }
             } else {
@@ -1792,7 +1801,8 @@ fn import_settings(app: AppHandle, state: tauri::State<'_, AppState>, settings: 
 fn apply_settings(app: &AppHandle, state: &AppState, previous: Settings, next: Settings) -> std::result::Result<(), String> {
     settings::save(&state.config_dir, &next).map_err(|e| format!("{e:#}"))?;
     let engine_changed = previous.ocr_language != next.ocr_language || previous.rec_model() != next.rec_model()
-        || previous.engine_plan() != next.engine_plan();
+        || previous.engine_plan() != next.engine_plan() || previous.ocr_models != next.ocr_models
+        || previous.ocr_engine != next.ocr_engine || previous.screen_ocr_engine != next.screen_ocr_engine;
     *state.settings.write() = next.clone();
     if engine_changed {
         warm_engine_in_background(app);
@@ -1885,7 +1895,7 @@ fn engine_status(state: tauri::State<'_, AppState>) -> EngineStatus {
     // This synchronous command runs on the UI thread. Model initialization holds these
     // locks for seconds; report a loading snapshot instead of waiting and freezing the WebView.
     let ort = state.ort_ready.try_lock().and_then(|ready| ready.clone());
-    let paddle = state.paddle.try_lock().and_then(|slot| slot.as_ref().map(|(_, _, e)| e.clone()));
+    let paddle = state.paddle.try_lock().and_then(|cache| cache.first().map(|(_, _, e)| e.clone()));
     EngineStatus {
         session: platform::session_kind(),
         runtime_loaded: matches!(ort, Some(Ok(()))),
@@ -2331,7 +2341,7 @@ pub fn run() {
                 dicts: RwLock::new(Vec::new()),
                 dict_errors: RwLock::new(HashMap::new()),
                 dictionary_gate: Mutex::new(()),
-                paddle: Mutex::new(None),
+                paddle: Mutex::new(Vec::new()),
                 engine_error: RwLock::new(None),
                 ort_ready: Mutex::new(None),
                 lens: Mutex::new(None),
