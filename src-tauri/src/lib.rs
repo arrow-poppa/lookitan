@@ -797,7 +797,8 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
         // the engine gets that part of the monitor (not
         // all of it, which OneOCR would also shrink to 1152×768). Off any block, nothing is read
         // and the lookup goes on to the whole screen, as with PP-OCR.
-        // Or its own: the whole capture is read, and the block under the pointer kept (below).
+        // Or its own: the whole capture is read, and every line of it kept (below), so the
+        // overlay has the whole screen's words; the block under the pointer is only outlined.
         let own = settings.models(kind).det == Detector::Page;
         let region = if reading == Reading::Block && !own {
             pointer_block(state, settings, kind, image, frame_key(image, &format!("block|{context}")), px, py)?
@@ -823,17 +824,17 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
             None => cached_page(state, key, || read_page(image)),
         };
         let mut lines = read.with_context(|| format!("O {name} não leu"))?;
+        // The lines the block is judged by: the part read, or those under the pointer.
+        let mut in_block: Vec<usize> = (0..lines.len()).collect();
         let mut region = region;
         if reading == Reading::Block && own {
             let boxes: Vec<TextBox> = lines.iter().map(|l| TextBox { x0: l.x0, y0: l.y0, x1: l.x1, y1: l.y1, quad: None }).collect();
-            let under = block::under(&boxes, px, py);
-            region = block::bounds(&under.iter().map(|&i| boxes[i]).collect::<Vec<_>>());
-            let kept: Vec<OcrLine> = under.into_iter().map(|i| lines[i].clone()).collect();
-            lines = kept;
+            in_block = block::under(&boxes, px, py);
+            region = block::bounds(&in_block.iter().map(|&i| boxes[i]).collect::<Vec<_>>());
         }
         layout::look(image, &mut lines);
         // As PP-OCR's block: one read as at most one letter or digit is not trusted.
-        let block = region.filter(|_| block::reads_as_text(lines.iter().map(|l| l.text.as_str())));
+        let block = region.filter(|_| block::reads_as_text(in_block.iter().map(|&i| lines[i].text.as_str())));
         return Ok(OcrPass { lines, engine: name.into(), kind, rest: Vec::new(), paddle: None, notice: None, key, block });
     }
     let p = box_engine(state, settings, kind)?;
@@ -2162,7 +2163,7 @@ fn engines_status(state: &AppState, settings: &Settings) -> Vec<[String; 2]> {
         if kind.is_local() {
             format!("{name}: detecção {} · reconhecimento {}", det(kind), rec(kind))
         } else if !whole_screen && settings.capture_auto && settings.models(kind).det == Detector::Page {
-            format!("{name}, que lê a tela inteira e fica com o bloco sob o cursor")
+            format!("{name}, que lê a tela inteira e deixa todas as palavras dela clicáveis")
         } else if !whole_screen && settings.capture_auto {
             format!("{name}; o bloco sob o cursor é achado pela detecção {}", det(kind))
         } else {

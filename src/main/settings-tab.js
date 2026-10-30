@@ -500,14 +500,14 @@ function modelRows(engine, pointer) {
         return r;
     };
     const offered = offeredDetectors(engine, c.det);
-    const det = select(offered.map((d) => ({value: d, label: d === 'page:own' ? `A do próprio ${name} (lê a tela inteira)` : DETECTORS[d]})), c.det,
+    const det = select(offered.map((d) => ({value: d, label: d === 'page:own' ? `A do próprio ${name} (lê a tela inteira, toda clicável)` : DETECTORS[d]})), c.det,
         (v) => { setChoice(engine, 'det', v); refreshOcrRows(); });
     det.disabled = offered.length < 2;
     if (PAGE_ENGINES[engine]) {
         if (!pointer || s.captureAuto !== true) { return []; }
         const own = c.det === 'page:own';
         const blockDesc = own
-            ? `O ${name} lê a tela inteira e fica com o bloco sob o cursor: mais lento, e a tela vai reduzida como na leitura da tela inteira.`
+            ? `O ${name} lê a tela inteira: o pop-up abre na palavra sob o cursor e as outras palavras da tela ficam clicáveis. Mais lento, e a tela vai reduzida como na leitura da tela inteira.`
             : `Na captura automática, a detecção acha o bloco de texto sob o cursor e o ${name} lê só esse bloco, sem reduzir. A LineNet precisa dos modelos do IndraOCR; a do PP-OCRv6 Manga e o comic-text-detector são baixados quando escolhidos.`;
         // Its own reading runs where the engine runs: no device to choose.
         return [row('Achar o bloco sob o cursor', blockDesc, own ? det : controls(det, 'detGpu'))];

@@ -596,13 +596,13 @@ test('a page engine has only the detector that finds the pointer\'s block, in th
     const block = modelRow(root, 'oneocr', 'Achar o bloco sob o cursor');
     assert(block, 'the pointer\'s page engine finds its block');
     assert.deepEqual(selectIn(block).children.map((o) => o.value), ['page:own', 'paddle:det_tiny', 'paddle:det_small', 'indra:linenet', 'manga:det', 'ctd:comic']);
-    assert.equal(selectIn(block).children[0].textContent, 'A do próprio OneOCR (lê a tela inteira)');
+    assert.equal(selectIn(block).children[0].textContent, 'A do próprio OneOCR (lê a tela inteira, toda clicável)');
     selectIn(block).value = 'page:own';
     selectIn(block).dispatch('change');
     assert.equal(settings.ocrModels.oneocr.det, 'page:own');
     const own = modelRow(root, 'oneocr', 'Achar o bloco sob o cursor');
     assert.equal(switchesIn(own).length, 0, 'its own reading has no device to choose');
-    assert(own.textContent.includes('lê a tela inteira e fica com o bloco'));
+    assert(own.textContent.includes('as outras palavras da tela ficam clicáveis'));
     selectIn(own).value = 'ctd:comic';
     selectIn(own).dispatch('change');
     assert(descendants(root).some((node) => node.textContent === 'comic-text-detector (95 MB)'), 'its model row shows');
