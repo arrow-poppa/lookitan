@@ -40,47 +40,6 @@ pub struct ModelSet {
     pub files: &'static [ModelFile],
 }
 
-/// MeikiOCR's recognizers (rtr46, weights LGPL-3.0): one for lines, one for columns.
-pub static MEIKI: ModelSet = ModelSet {
-    id: "meiki-rec-v0",
-    repo: "rtr46/meiki.txt.recognition.v0",
-    revision: "a28cf5874dc2438ebb1c86336be26bcec51e3375",
-    source: Source::HuggingFace,
-    files: &[
-        ModelFile {
-            name: "meiki.text.rec.v0.960x32.onnx",
-            bytes: 18_593_254,
-            sha256: "3e96bc772fbee9717e536a6353032bb944c3382dd2f6960ef4890decda43b000",
-        },
-        ModelFile {
-            name: "meiki.text.rec.v0.vertical.32x480.onnx",
-            bytes: 12_872_961,
-            sha256: "2c2a83a23bc3b7e6c63962175f507ecc6c5e85cc174f17bdec37d9bbd0bf895a",
-        },
-    ],
-};
-
-/// MeikiOCR's line detectors v0.1 (rtr46, weights LGPL-3.0; `main` on 2026-10-30, the commit
-/// marupop pins): 960×544 and 320×192, both downloaded when either is chosen (`ocr::meiki_det`).
-pub static MEIKI_DET: ModelSet = ModelSet {
-    id: "meiki-det-v0.1",
-    repo: "rtr46/meiki.text.detect.v0",
-    revision: "a9cffa4f60cbf72ddb87edf19c6f98a01cd042e6",
-    source: Source::HuggingFace,
-    files: &[
-        ModelFile {
-            name: "meiki.text.detect.v0.1.960x544.onnx",
-            bytes: 14_503_825,
-            sha256: "40b6a016667745cae7d3055929ae3b8b1e7716aac795f5904cd3c2c7c3b8404b",
-        },
-        ModelFile {
-            name: "meiki.text.detect.v0.1.320x192.onnx",
-            bytes: 14_084_361,
-            sha256: "8cdc5daa5c13a5f93adb40ee2e53ad1a3d2f7e372584c5c665b038adeb74ae6d",
-        },
-    ],
-};
-
 /// IndraOCR's line detector (LineNet, since 2026-10-29) and its recognizers for the groups
 /// Lookitan's languages read with (datalab-to, commit
 /// bd02167f, `main` on 2026-10-28; its files are byte for byte those of tag v1.1.0, a1283c4b, which
@@ -101,18 +60,17 @@ pub static INDRA: ModelSet = ModelSet {
     ],
 };
 
-/// PP-OCRv6 Manga v0.2 (Kellenok/PP-OCRv6_manga, Apache-2.0; `main` on 2026-10-30, whose v0.2
-/// files are those of its 2026-09-28 commit): PP-OCRv6's tiny detector and small recognizer
-/// fine-tuned on manga, webtoons and illustrations, Japanese and Chinese. The recognizer reads with
-/// rec_small's character list (its ppocrv6_dict.txt is the same file), so the list is not
-/// downloaded.
+/// PP-OCRv6 Manga v0.2's recognizer (Kellenok/PP-OCRv6_manga, Apache-2.0; `main` on 2026-10-30,
+/// whose v0.2 files are those of its 2026-09-28 commit): PP-OCRv6's small recognizer fine-tuned on
+/// manga, webtoons and illustrations, Japanese and Chinese. It reads with rec_small's character
+/// list (its ppocrv6_dict.txt is the same file), so the list is not downloaded. Its detector was
+/// removed on 2026-10-30 at the user's request (`remove_retired` deletes a downloaded one).
 pub static MANGA: ModelSet = ModelSet {
     id: "ppocrv6-manga-v0.2",
     repo: "Kellenok/PP-OCRv6_manga",
     revision: "62375557b5b0a4b2bc8e05484a97c7ea1df7229e",
     source: Source::HuggingFace,
     files: &[
-        ModelFile { name: "det/manga_det_v0.2.onnx", bytes: 1_816_954, sha256: "d132078c46e292b226fb5a2ca52a7612ad319262dfdf493e7d8e3be435295978" },
         ModelFile { name: "rec/manga_rec_v0.2.onnx", bytes: 21_167_540, sha256: "de12c84c63e62c80339e882e675983d886670dcb6f0147e1ed041afd6fa81888" },
     ],
 };
@@ -128,6 +86,11 @@ pub static CTD: ModelSet = ModelSet {
     files: &[ModelFile { name: "comictextdetector.pt.onnx", bytes: 94_669_756, sha256: "1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f" }],
 };
 
+/// Files of models no longer offered, deleted from the models folder (`remove_retired`): MeikiOCR's
+/// recognizers and detectors and PP-OCRv6 Manga's detector, removed on 2026-10-30 at the user's
+/// request.
+const RETIRED: [&str; 3] = ["meiki-rec-v0-a28cf587", "meiki-det-v0.1-a9cffa4f", "ppocrv6-manga-v0.2-62375557/manga_det_v0.2.onnx"];
+
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_root(dir: PathBuf) {
@@ -137,6 +100,19 @@ pub fn set_root(dir: PathBuf) {
 /// The folder every optional model set lives in.
 pub fn root() -> Result<PathBuf> {
     ROOT.get().cloned().context("the OCR models folder is not set")
+}
+
+/// Deletes the downloaded files of models no longer offered (`RETIRED`).
+pub fn remove_retired() {
+    let Ok(root) = root() else { return };
+    for name in RETIRED {
+        let path = root.join(name);
+        let removed = if path.is_dir() { std::fs::remove_dir_all(&path) } else if path.is_file() { std::fs::remove_file(&path) } else { continue };
+        match removed {
+            Ok(()) => log::info!("removed retired OCR models {}", path.display()),
+            Err(e) => log::warn!("could not remove retired OCR models {}: {e}", path.display()),
+        }
+    }
 }
 
 impl ModelSet {
@@ -209,7 +185,7 @@ mod tests {
 
     #[test]
     fn model_sets_are_pinned() {
-        for set in [&MEIKI, &MEIKI_DET, &INDRA, &MANGA, &CTD] {
+        for set in [&INDRA, &MANGA, &CTD] {
             if matches!(set.source, Source::HuggingFace) {
                 assert_eq!(set.revision.len(), 40);
             }
@@ -219,11 +195,9 @@ mod tests {
                 assert!(f.bytes > 0);
             }
         }
-        assert_eq!(MEIKI.bytes(), 31_466_215);
-        assert_eq!(MEIKI_DET.bytes(), 28_588_186);
         assert_eq!(INDRA.bytes(), 20_647_456);
-        assert_eq!(MANGA.bytes(), 22_984_494);
-        assert_eq!(MANGA.files[1].file(), "manga_rec_v0.2.onnx", "saved without its folder");
+        assert_eq!(MANGA.bytes(), 21_167_540);
+        assert_eq!(MANGA.files[0].file(), "manga_rec_v0.2.onnx", "saved without its folder");
         assert_eq!(CTD.url(&CTD.files[0]), "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.2.1/comictextdetector.pt.onnx");
     }
 }

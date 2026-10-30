@@ -84,28 +84,6 @@ jobs:
       - name: Test the Russian recognizers with the real models
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::paddle::tests::real_russian_recognizers -- --ignored --nocapture
 
-      # MeikiOCR's recognizers and detectors are not in the installers (the app downloads them when
-      # the user picks them): fetched here as the app does, pinned in ocr/models.rs, for their real
-      # tests.
-      - name: Cache MeikiOCR models
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ runner.temp }}/meiki
-            ${{ runner.temp }}/meiki-det
-          key: meiki-${{ hashFiles('src-tauri/src/ocr/models.rs') }}
-
-      - name: Test MeikiOCR with the real models
-        shell: bash
-        env:
-          LOOKITAN_MEIKI: ${{ runner.temp }}/meiki
-          LOOKITAN_MEIKI_DET: ${{ runner.temp }}/meiki-det
-        run: |
-          python scripts/fetch-ocr-models.py MEIKI "$LOOKITAN_MEIKI"
-          python scripts/fetch-ocr-models.py MEIKI_DET "$LOOKITAN_MEIKI_DET"
-          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::meiki::tests::real_meiki -- --ignored --nocapture
-          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::meiki_det::tests::real_meiki_det -- --ignored --nocapture
-
       # IndraOCR's detector and recognizers are downloaded by the app only after the user accepts
       # their licence: fetched here, pinned in ocr/models.rs, for their real tests.
       - name: Cache IndraOCR models
@@ -122,7 +100,7 @@ jobs:
           python scripts/fetch-ocr-models.py INDRA "$LOOKITAN_INDRA"
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::indra::tests::real_indra -- --ignored --nocapture
 
-      # PP-OCRv6 Manga's models and comic-text-detector's are downloaded by the app when chosen:
+      # PP-OCRv6 Manga's recognizer and comic-text-detector are downloaded by the app when chosen:
       # fetched here, pinned in ocr/models.rs, for their real tests.
       - name: Cache PP-OCRv6 Manga and comic-text-detector models
         uses: actions/cache@v4

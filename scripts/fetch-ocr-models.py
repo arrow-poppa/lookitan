@@ -2,7 +2,7 @@
 when the user picks its engine: from the pinned Hugging Face revision, each file checked against its
 SHA-256. For CI's real-model tests; the installers do not carry these models.
 
-Usage: python scripts/fetch-ocr-models.py <MODEL SET STATIC, e.g. MEIKI> <folder>
+Usage: python scripts/fetch-ocr-models.py <MODEL SET STATIC, e.g. INDRA> <folder>
        python scripts/fetch-ocr-models.py SCREENAI:<windows|linux> <folder>
        python scripts/fetch-ocr-models.py SCREENAI-DIGEST:<windows|linux> -
 Chrome ScreenAI's package comes from Chromium's CIPD instead: the instance its `latest` ref points to,

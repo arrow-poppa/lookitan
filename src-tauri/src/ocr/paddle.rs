@@ -105,8 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn pp_ocrv6_manga_reads_with_its_model_card_s_values_from_its_own_folder() {
-        assert_eq!(db_params(MANGA_DET), (0.15, 0.25, 1.4));
+    fn pp_ocrv6_manga_s_recognizer_reads_with_its_width_rule_from_its_own_folder() {
         assert_eq!(db_params("det_small"), (DET_THRESH, 0.45, UNCLIP_RATIO));
         // Its wide-line rule: at most 640, or 2400 past 2000.
         assert_eq!(manga_rec_width(480, 48), 480);
@@ -119,8 +118,9 @@ mod tests {
         assert_eq!(model_path(models, Some(manga), "det_tiny"), models.join("det_tiny.onnx"));
     }
 
-    /// PP-OCRv6 Manga's detector and recognizer on the Japanese fixture (dark on white and light on
-    /// dark blue; game text, not its manga), on the CPU, and on Windows also asked for the GPU.
+    /// PP-OCRv6 Manga's recognizer on det_small's boxes of the Japanese fixture (dark on white and
+    /// light on dark blue; game text, not its manga), on the CPU, and on Windows also asked for the
+    /// GPU (its detector was removed on 2026-10-30; comic-text-detector finds its lines in the app).
     /// Needs the fetched ONNX Runtime and models, and PP-OCRv6 Manga's in `LOOKITAN_MANGA` (CI
     /// downloads them; the test is skipped without them).
     #[test]
@@ -138,7 +138,7 @@ mod tests {
         let img = image::load_from_memory(include_bytes!("fixtures/ja_lines.png")).unwrap().to_rgba8();
         let devices: &[bool] = if cfg!(windows) { &[false, true] } else { &[false] };
         for &gpu in devices {
-            let plan = EnginePlan { manual: true, det: MANGA_DET, det_gpu: gpu, rec_gpu: gpu, gpu_choice: None };
+            let plan = EnginePlan { manual: true, det: "det_small", det_gpu: gpu, rec_gpu: gpu, gpu_choice: None };
             let ocr = PaddleOcr::load(&resources.join("models"), Some(&dir), PaddleUse { det: true, rec: Some(MANGA_REC), plan }).unwrap();
             let boxes = ocr.detect_boxes(&img).unwrap();
             let lines = ocr.recognize_boxes(&img, &boxes);
@@ -152,7 +152,7 @@ mod tests {
             assert!(cer <= 0.10, "CER {cer}");
         }
         // A detector-only load of the same detector shares the full one's session.
-        let plan = EnginePlan { manual: true, det: MANGA_DET, det_gpu: false, rec_gpu: false, gpu_choice: None };
+        let plan = EnginePlan { manual: true, det: "det_small", det_gpu: false, rec_gpu: false, gpu_choice: None };
         let full = Arc::new(PaddleOcr::load(&resources.join("models"), Some(&dir), PaddleUse { det: true, rec: Some(MANGA_REC), plan }).unwrap());
         let det_only = PaddleOcr::load_sharing(&resources.join("models"), Some(&dir), PaddleUse { det: true, rec: None, plan }, &[full.clone()]).unwrap();
         assert!(Arc::ptr_eq(&full.det, &det_only.det), "one detector session");
@@ -452,12 +452,9 @@ mod tests {
 /// Binarization of the probability map, as Lookupper (76 / 255) and PaddleOCR's default.
 const DET_THRESH: f32 = 0.3;
 const UNCLIP_RATIO: f32 = 1.35;
-/// PP-OCRv6 Manga's detector and recognizer (`models::MANGA`, downloaded): read from their own
-/// folder, the recognizer with rec_small's character list (the same file).
-pub const MANGA_DET: &str = "manga_det_v0.2";
+/// PP-OCRv6 Manga's recognizer (`models::MANGA`, downloaded): read from its own folder, with
+/// rec_small's character list (the same file).
 pub const MANGA_REC: &str = "manga_rec_v0.2";
-/// PP-OCRv6 Manga's recommended input: the long side at 960 on either device (its model card).
-const MANGA_DET_SIDE: f32 = 960.0;
 /// White border around the detector's image, in detector pixels, as Lookupper's WhitePadding:
 /// text touching the edge of a capture is still found whole.
 const DET_PADDING: u32 = 20;
@@ -866,22 +863,18 @@ impl EnginePlan {
 }
 
 /// The detector's box score threshold: the small model's maps are sharper (Lookupper's values,
-/// which it pairs with the GPU and the CPU); PP-OCRv6 Manga's is its model card's.
+/// which it pairs with the GPU and the CPU).
 fn box_thresh(det_model: &str) -> f32 {
     match det_model {
         "det_small" => 0.45,
-        MANGA_DET => 0.25,
         _ => 0.4,
     }
 }
 
 /// The DB post-processing of a detector: binarization threshold, box score threshold, unclip
-/// ratio. PP-OCRv6 Manga's are its model card's (0.15, 0.25, 1.4).
+/// ratio.
 fn db_params(det_model: &str) -> (f32, f32, f32) {
-    match det_model {
-        MANGA_DET => (0.15, box_thresh(det_model), 1.4),
-        _ => (DET_THRESH, box_thresh(det_model), UNCLIP_RATIO),
-    }
+    (DET_THRESH, box_thresh(det_model), UNCLIP_RATIO)
 }
 
 /// Where a model's file is: PP-OCRv6 Manga's in its downloaded folder, the others in the app's.
@@ -980,12 +973,6 @@ pub(crate) fn cpu_session(path: &Path) -> Result<Session> {
 pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<Session> {
     let mut b = gpu_builder(choice)?;
     Ok(ortx!(b.commit_from_file(path)))
-}
-
-/// A GPU session for a model already read (one changed for the GPU, as meiki.rs's).
-pub(crate) fn gpu_session_from_memory(model: &[u8], choice: Option<GpuPreference>) -> Result<Session> {
-    let mut b = gpu_builder(choice)?;
-    Ok(ortx!(b.commit_from_memory(model)))
 }
 
 #[cfg(windows)]
@@ -1159,7 +1146,7 @@ impl PaddleOcr {
     }
 
     fn det_max_side(&self) -> f32 {
-        if self.det_models.0 == MANGA_DET { MANGA_DET_SIDE } else { det_max_side(self.det_on_gpu()) }
+        det_max_side(self.det_on_gpu())
     }
 
     pub fn rec_on_gpu(&self) -> bool {
@@ -1571,7 +1558,7 @@ pub struct Glyph {
     pub score: f32,
 }
 
-/// A recognizer reading the detector's boxes instead of PP-OCR's (ocr/meiki.rs). It gets each box's
+/// A recognizer reading the detector's boxes instead of PP-OCR's (ocr/indra.rs). It gets each box's
 /// crop at capture resolution, a line upright or (`true`) a column standing, and gives each crop's
 /// characters in reading order.
 pub trait BoxReader: Send + Sync {

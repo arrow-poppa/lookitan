@@ -17,8 +17,6 @@ pub mod helper;
 pub mod indra;
 pub mod ink;
 mod lens_proto;
-pub mod meiki;
-pub mod meiki_det;
 pub mod models;
 pub mod oneocr;
 pub mod paddle;
