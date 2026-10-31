@@ -175,7 +175,8 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .oneocr-model
-          key: oneocr-model-${{ hashFiles('src-tauri/src/ocr/store.rs') }}
+          # A fixed key: a file's hash differs between Windows (CRLF) and Linux checkouts.
+          key: oneocr-model-1
           enableCrossOsArchive: true
 
       - name: Restore OneOCR's model file
@@ -183,7 +184,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .oneocr-model
-          key: oneocr-model-${{ hashFiles('src-tauri/src/ocr/store.rs') }}
+          key: oneocr-model-1
           enableCrossOsArchive: true
 
       # OneOCR on Linux: its imported model file on Lookitan's ONNX Runtime. Skipped until a Windows
