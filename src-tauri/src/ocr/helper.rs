@@ -29,7 +29,7 @@ pub const ARG: &str = "--ocr-helper";
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// Loading a library and its models takes about a second.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
-const IDLE: Duration = Duration::from_secs(5 * 60);
+pub const IDLE: Duration = Duration::from_secs(5 * 60);
 
 /// The helper process's whole life: `args` are what follows `ARG` (the engine, its folder).
 pub fn main(args: &[OsString]) -> i32 {

@@ -14,6 +14,8 @@ export const api = {
     removeSegmenter: () => invoke('remove_segmenter'),
     installOcrModels: (engine, acceptLicense = false) => invoke('install_ocr_models', {engine, acceptLicense}),
     removeOcrModels: (engine) => invoke('remove_ocr_models', {engine}),
+    /** Outside Windows: the user's own oneocr.onemodel for OneOCR without oneocr.dll. */
+    importOneocr: (path) => invoke('import_oneocr', {path}),
     ocrLanguages: () => invoke('ocr_languages'),
     listDictionaries: () => invoke('list_dictionaries'),
     addDictionary: (path) => invoke('add_dictionary', {path}),

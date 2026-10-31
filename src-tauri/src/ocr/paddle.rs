@@ -999,6 +999,21 @@ pub(crate) fn gpu_session(path: &Path, choice: Option<GpuPreference>) -> Result<
     Ok(ortx!(b.commit_from_file(path)))
 }
 
+/// A CPU session for a model already read (OneOCR's, decrypted from its file: ocr/oneocr_onnx.rs).
+pub(crate) fn cpu_session_from_memory(model: &[u8]) -> Result<Session> {
+    crate::platform::priority::raise_this_thread();
+    let b = ortx!(Session::builder());
+    let b = ortx!(b.with_optimization_level(GraphOptimizationLevel::Level3));
+    let mut b = ortx!(b.with_intra_threads(threads()));
+    Ok(ortx!(b.commit_from_memory(model)))
+}
+
+/// A GPU session for a model already read.
+pub(crate) fn gpu_session_from_memory(model: &[u8], choice: Option<GpuPreference>) -> Result<Session> {
+    let mut b = gpu_builder(choice)?;
+    Ok(ortx!(b.commit_from_memory(model)))
+}
+
 #[cfg(windows)]
 fn gpu_builder(choice: Option<GpuPreference>) -> Result<SessionBuilder> {
     use ort::ep::directml::PerformancePreference;

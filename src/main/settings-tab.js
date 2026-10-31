@@ -1,7 +1,7 @@
 // Settings tab: essentials, shortcuts, OCR, per-app profiles, word audio, Anki and application options.
 
 import {getVersion} from '@tauri-apps/api/app';
-import {ask} from '@tauri-apps/plugin-dialog';
+import {ask, open} from '@tauri-apps/plugin-dialog';
 import {api, escapeHtml} from '../lib/api.js';
 import {buttonName, detectLayout} from '../lib/gamepad-buttons.js';
 import {icon} from '../lib/icons.js';
@@ -314,6 +314,18 @@ const DOWNLOADED_ENGINES = {
         license: 'Os pesos do IndraOCR (Datalab) usam a licença AI Pubs Open RAIL-M modificada (huggingface.co/datalab-to/indra-ocr, arquivo LICENSE, que vem junto com os modelos). Ela permite uso pessoal, em pesquisa e em empresas com menos de US$ 20 milhões de receita ou de investimento; proíbe o uso por quem oferece um produto que concorra com os da Datalab e usos ilegais; e diz que os resultados do modelo também ficam sob ela. Ao baixar, você aceita esses termos. Baixar?'},
 };
 
+/** OneOCR outside Windows: the user's own oneocr.onemodel, imported (never downloaded), read without
+ * oneocr.dll on Lookitan's ONNX Runtime (ocr/oneocr_onnx.rs). */
+const ONEOCR_IMPORTED = {title: 'Runtime do OneOCR (importado de um Windows seu, cerca de 58 MB)',
+    desc: 'O OCR do Recorte do Windows 11, da Microsoft, sem o oneocr.dll: o arquivo oneocr.onemodel que você importa roda no ONNX Runtime do Lookitan. Num Windows, ele está na pasta SnippingTool do Recorte, ou em %LOCALAPPDATA%\\io.github.arrowpoppa.lookitan\\ocr-models\\oneocr se o Lookitan instalou o OneOCR lá. Nada é baixado nem distribuído; não é software livre. Lê as 9 escritas do OneOCR (latina, cirílica, grega, árabe, hebraica, devanágari, tailandesa, tâmil e CJK). Os modelos saem da memória depois de 5 minutos sem uso.',
+    removeAsk: 'Apagar o arquivo importado do OneOCR? Enquanto não for importado de novo, ele não lê.',
+    removeTitle: 'Apagar o OneOCR', action: 'Importar runtime do OneOCR', done: 'importado', importer: true};
+
+/** Whether this is a Windows session (OneOCR reads with oneocr.dll there). */
+function windowsSession() {
+    return (status?.session || 'windows') === 'windows';
+}
+
 /** The files of the chosen engines that are downloaded: their state, with a button to download or
  * delete them. */
 function modelsRows() {
@@ -344,7 +356,7 @@ function fillModelsRows(rows) {
 
 function modelsRow(engine) {
     const row = el('div');
-    const info = DOWNLOADED_ENGINES[engine];
+    const info = engine === 'oneocr' && !windowsSession() ? ONEOCR_IMPORTED : DOWNLOADED_ENGINES[engine];
     const model = status?.models?.[engine];
     const downloading = /^estão sendo baixados/.test(model?.download || '');
     const state = model?.installed ? (info.done || 'baixados') : (model?.download || `não ${info.done || 'baixados'}`);
@@ -367,6 +379,12 @@ function modelsRow(engine) {
     } else {
         button = el('button', {html: `${icon('download', 'sm')}${info.action || 'Baixar'}`, disabled: downloading});
         button.addEventListener('click', () => void run(button, async () => {
+            if (info.importer) {
+                const path = await open({multiple: false, directory: false, title: info.action,
+                    filters: [{name: 'oneocr.onemodel', extensions: ['onemodel']}]});
+                if (path) { await api.importOneocr(String(path)); }
+                return;
+            }
             if (info.license && !await ask(info.license, {title: 'Licença do IndraOCR', kind: 'warning', okLabel: 'Aceitar e baixar', cancelLabel: 'Cancelar'})) { return; }
             await api.installOcrModels(engine, !!info.license);
         }));
@@ -449,6 +467,18 @@ function offeredDetectors(engine, chosen) {
 /** Whether the OCR language is one PP-OCRv6 Manga was trained on. */
 function mangaLanguage() {
     return /^(ja|zh)\b/i.test(String(store.settings.ocrLanguage || ''));
+}
+
+/** Whether PP-OCR reads the OCR language (`ocr::reads_with_ppocr`): not Hebrew, Hindi, Tamil nor
+ * Thai, which only OneOCR, Chrome ScreenAI, Google Lens and Bing read. */
+function ppocrLanguage() {
+    const tag = String(store.settings.ocrLanguage || '').toLowerCase();
+    const language = languages.find((l) => l.tag.toLowerCase() === tag);
+    return !(language && language.rec === '');
+}
+
+function hebrew() {
+    return /^he\b/i.test(String(store.settings.ocrLanguage || ''));
 }
 
 /** Where a selector's choice for `engine` is kept in Settings `ocrModels`: the custom engine has
@@ -562,7 +592,9 @@ function engineDesc(engine) {
     case 'bing': return 'Envia a captura à Microsoft, pelo site do Bing (não é uma API oficial e pode mudar sem aviso), como o owocr faz. Se falhar, a consulta mostra o erro.';
     case 'indra': return 'A detecção e o reconhecimento do próprio IndraOCR, leves e feitos para a CPU (experimental). Roda no seu computador. Sem os modelos baixados, ele não lê.';
     case 'manga': return 'O comic-text-detector acha as linhas e o reconhecimento do PP-OCRv6 treinado em mangá, webtoons e ilustrações, em japonês e chinês, as lê: balões, texto vertical e kanji raros. Roda no seu computador. Sem os modelos baixados, ele não lê.';
-    case 'oneocr': return 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador ou baixados do servidor da Microsoft. Roda no seu computador, nada sai dele; sem os arquivos, ele não lê.';
+    case 'oneocr': return windowsSession()
+        ? 'O OCR do Recorte do Windows 11, da Microsoft, com os arquivos copiados do Recorte deste computador ou baixados do servidor da Microsoft. Roda no seu computador, nada sai dele; sem os arquivos, ele não lê.'
+        : 'O OCR do Recorte do Windows 11, da Microsoft, sem o oneocr.dll: o oneocr.onemodel que você importa de um Windows seu roda no ONNX Runtime do Lookitan, lendo as 9 escritas do OneOCR. Roda no seu computador, nada sai dele; sem o arquivo importado, ele não lê.';
     case 'custom': return 'A detecção e o reconhecimento que você escolher abaixo, de qualquer motor local, para testar combinações. Roda no seu computador.';
     case 'screenai': return 'A biblioteca de OCR do Chrome, que reconhece qualquer idioma e acha o de cada linha sozinha. Roda no seu computador, nada sai dele; sem os arquivos baixados, ele não lê.';
     default: return 'Roda no seu computador; nada sai dele.';
@@ -577,16 +609,19 @@ function engineRows(pointer) {
     const engine = selectorEngine(pointer);
     const shared = !pointer && engine === selectorEngine(true) && engine !== 'custom';
     const models = shared ? [] : modelRows(engine, pointer);
-    const windows = (status?.session || 'windows') === 'windows';
+    const windows = windowsSession();
+    // Hebrew, Hindi, Tamil and Thai PP-OCR has no model for: its engines are offered for the other
+    // languages, and kept while chosen; IndraOCR reads Hebrew.
+    const ppocr = ppocrLanguage();
     const choose = select([
-        {value: 'paddle', label: 'PP-OCRv6 (local)'},
+        ...(ppocr || engine === 'paddle' ? [{value: 'paddle', label: 'PP-OCRv6 (local)'}] : []),
         // PP-OCRv6 Manga reads Japanese and Chinese: offered with them, and kept while chosen.
         ...(mangaLanguage() || engine === 'manga' ? [{value: 'manga', label: 'PP-OCRv6 Manga (local, mangá em japonês e chinês)'}] : []),
         {value: 'screenai', label: 'Chrome ScreenAI (local, qualquer idioma)'},
-        {value: 'indra', label: 'IndraOCR (local, experimental)'},
-        {value: 'custom', label: 'Personalizado (DET + REC)'},
-        // OneOCR is the Windows Snipping Tool's.
-        ...(windows || engine === 'oneocr' ? [{value: 'oneocr', label: 'OneOCR (local, do Windows)'}] : []),
+        ...(ppocr || hebrew() || engine === 'indra' ? [{value: 'indra', label: 'IndraOCR (local, experimental)'}] : []),
+        ...(ppocr || engine === 'custom' ? [{value: 'custom', label: 'Personalizado (DET + REC)'}] : []),
+        // OneOCR is the Windows Snipping Tool's: its files there, its imported model file elsewhere.
+        {value: 'oneocr', label: windows ? 'OneOCR (local, do Windows)' : 'OneOCR (local, importado)'},
         {value: 'lens', label: 'Google Lens (nuvem)'},
         {value: 'bing', label: 'Bing (nuvem)'},
     ], engine, (v) => {

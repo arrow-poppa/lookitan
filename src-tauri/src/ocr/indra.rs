@@ -72,6 +72,8 @@ impl Group {
     pub fn of(tag: &str) -> Self {
         match super::language(tag).rec {
             "rec_arabic" => Group::Rtl,
+            // Hebrew, which PP-OCR does not read, Indra's right-to-left model does.
+            super::NO_PPOCR if tag.to_ascii_lowercase().starts_with("he") => Group::Rtl,
             "rec_korean" => Group::Cjk,
             "rec_small" if !tag.starts_with("ro") => Group::Cjk,
             _ => Group::Base,
@@ -461,6 +463,7 @@ mod tests {
         assert_eq!(Group::of("zh-TW"), Group::Cjk);
         assert_eq!(Group::of("ko-KR"), Group::Cjk);
         assert_eq!(Group::of("ar-SA"), Group::Rtl);
+        assert_eq!(Group::of("he-IL"), Group::Rtl);
         assert_eq!(Group::of("ru-RU"), Group::Base);
         assert_eq!(Group::of("el-GR"), Group::Base);
         assert_eq!(Group::of("ro-RO"), Group::Base, "Romanian reads with rec_small but is Latin");

@@ -162,6 +162,39 @@ jobs:
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::store::tests::real_store -- --ignored --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::oneocr::tests::real_oneocr -- --ignored --nocapture
+          # The same model file without oneocr.dll, as OneOCR reads on Linux (ocr/oneocr_onnx.rs).
+          cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::oneocr_onnx::tests::real_oneocr_onnx -- --ignored --nocapture
+          mkdir -p .oneocr-model
+          cp "$LOOKITAN_ONEOCR/oneocr.onemodel" .oneocr-model/
+
+      # The model file for Linux's run of that test, through this repository's own cache (never an
+      # artifact or a release): Microsoft's file is not distributed.
+      - name: Keep OneOCR's model file for Linux
+        if: matrix.platform == 'windows' && hashFiles('.oneocr-model/oneocr.onemodel') != ''
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .oneocr-model
+          key: oneocr-model-${{ hashFiles('src-tauri/src/ocr/store.rs') }}
+          enableCrossOsArchive: true
+
+      - name: Restore OneOCR's model file
+        if: matrix.platform == 'linux'
+        uses: actions/cache/restore@v4
+        with:
+          path: .oneocr-model
+          key: oneocr-model-${{ hashFiles('src-tauri/src/ocr/store.rs') }}
+          enableCrossOsArchive: true
+
+      # OneOCR on Linux: its imported model file on Lookitan's ONNX Runtime. Skipped until a Windows
+      # run has kept the file.
+      - name: Test OneOCR without oneocr.dll
+        if: matrix.platform == 'linux'
+        continue-on-error: true
+        shell: bash
+        env:
+          LOOKITAN_ONEOCR: ${{ github.workspace }}/.oneocr-model
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib ocr::oneocr_onnx::tests::real_oneocr_onnx -- --ignored --nocapture
 
       # The word analyzers' dictionaries (segment/mod.rs PACKS), as the app downloads them.
       - name: Cache word analyzer dictionaries

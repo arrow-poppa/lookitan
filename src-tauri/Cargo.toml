@@ -67,6 +67,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # cannot set, and the Sec-MS-GEC hash. rustls here uses reqwest's ring provider.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 sha2 = "0.10"
+# OneOCR's model file (ocr/onemodel.rs) is AES-256-CBC: RustCrypto's, as sha2 is.
+aes = "0.8"
+cbc = "0.1"
 # Korean words where Kiwi has no build (segment/): lindera (MIT) reads the prebuilt ko-dic of its
 # GitHub release, downloaded on first use and memory-mapped.
 lindera = "=6.2.0"

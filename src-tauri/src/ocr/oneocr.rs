@@ -10,14 +10,24 @@
 // cannot share a process with Lookitan's (the loader would hand it the one already loaded). The
 // helper loads oneocr.dll with its folder searched first, so Microsoft's copy is the one it gets.
 // Its answers are JSON: each line's text and corners, and each word's with its confidence.
+//
+// On Linux (at the user's request on 2026-10-30), only oneocr.onemodel, which the user imports from
+// a Windows of theirs ("Importar runtime do OneOCR"; never downloaded), is read without oneocr.dll:
+// its models run on Lookitan's ONNX Runtime (ocr/oneocr_onnx.rs), freed after `helper::IDLE` unused
+// as the helper is.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use image::RgbaImage;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use super::helper::Helper;
+use super::oneocr_onnx::OneOcrOnnx;
+use crate::settings::Settings;
 use super::{align, is_rtl_text, Flow, OcrLine, Tilt};
 
 pub const FILES: [&str; 3] = ["oneocr.dll", "oneocr.onemodel", "onnxruntime.dll"];
@@ -28,15 +38,17 @@ const MAX_SIDE: u32 = 10_000;
 const LEVEL: f32 = 2.0 * std::f32::consts::PI / 180.0;
 
 pub fn supported() -> bool {
-    cfg!(windows)
+    cfg!(windows) || cfg!(target_os = "linux")
 }
 
 fn dir() -> Result<PathBuf> {
     Ok(super::models::root()?.join("oneocr"))
 }
 
+/// Its files are here: the three on Windows, the imported model file elsewhere.
 pub fn installed() -> bool {
-    dir().is_ok_and(|d| FILES.iter().all(|f| d.join(f).is_file()))
+    let needed: &[&str] = if cfg!(windows) { &FILES } else { &FILES[1..2] };
+    dir().is_ok_and(|d| needed.iter().all(|f| d.join(f).is_file()))
 }
 
 /// The Snipping Tool version the files were copied from.
@@ -47,8 +59,8 @@ pub fn version() -> Option<String> {
 /// Copies the files from the Snipping Tool installed here or, without one that has them, reads
 /// them out of its package on Microsoft's servers, reporting the bytes written.
 pub fn install(progress: &dyn Fn(u64)) -> Result<()> {
-    if !supported() {
-        bail!("o OneOCR existe só no Windows");
+    if !cfg!(windows) {
+        bail!("aqui o OneOCR não é baixado: importe o oneocr.onemodel de um Windows seu (Configurações › OCR › Importar runtime do OneOCR)");
     }
     let root = super::models::root()?;
     std::fs::create_dir_all(&root)?;
@@ -135,6 +147,36 @@ fn snipping_tool() -> Result<PathBuf> {
 #[cfg(not(windows))]
 fn snipping_tool() -> Result<PathBuf> {
     bail!("o Recorte (Snipping Tool) existe só no Windows")
+}
+
+/// Takes the user's own oneocr.onemodel (from a Windows of theirs) for OneOCR without oneocr.dll,
+/// once it opens with OneOCR's key and has every model it needs; the copy replaces any before it.
+pub fn import(from: &Path) -> Result<()> {
+    let model = super::onemodel::OneModel::open(from)?;
+    model.check()?;
+    let root = super::models::root()?;
+    std::fs::create_dir_all(&root)?;
+    let copying = root.join(format!(".importing-oneocr-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&copying);
+    std::fs::create_dir_all(&copying)?;
+    let copied = (|| -> Result<()> {
+        let to = copying.join(FILES[1]);
+        std::fs::copy(from, &to).with_context(|| format!("copy {}", from.display()))?;
+        let mut hash = sha2::Sha256::default();
+        std::io::copy(&mut std::fs::File::open(&to)?, &mut hash)?;
+        let digest = sha2::Digest::finalize(hash);
+        let short: String = digest[..4].iter().map(|b| format!("{b:02x}")).collect();
+        std::fs::write(copying.join("version.txt"), format!("importado ({short})"))?;
+        let home = dir()?;
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::rename(&copying, &home).context("move OneOCR into place")
+    })();
+    if copied.is_err() {
+        let _ = std::fs::remove_dir_all(&copying);
+    }
+    copied?;
+    log::info!("OneOCR's model file imported from {}", from.display());
+    Ok(())
 }
 
 pub fn remove() -> Result<()> {
@@ -301,22 +343,34 @@ pub fn serve(_dir: &Path) -> Result<()> {
 
 pub struct OneOcr {
     helper: Helper,
+    /// Its models without oneocr.dll (not on Windows), once loaded, and when they last read.
+    onnx: Mutex<Option<Arc<OneOcrOnnx>>>,
+    used: Mutex<Instant>,
 }
 
 impl Default for OneOcr {
     fn default() -> Self {
-        Self { helper: Helper::new("OneOCR", "oneocr") }
+        Self { helper: Helper::new("OneOCR", "oneocr"), onnx: Mutex::new(None), used: Mutex::new(Instant::now()) }
     }
 }
 
 impl OneOcr {
-    /// Reads the whole image: its lines in capture pixels, each word on its own box.
-    pub fn recognize(&self, img: &RgbaImage) -> Result<Vec<OcrLine>> {
+    /// Reads the whole image: its lines in capture pixels, each word on its own box (on Windows), or
+    /// each character on its own (elsewhere, from the imported model file).
+    pub fn recognize(&self, img: &RgbaImage, settings: &Settings) -> Result<Vec<OcrLine>> {
         if !supported() {
-            bail!("ele existe só no Windows");
+            bail!("ele existe só no Windows e no Linux");
         }
         if !installed() {
-            bail!("os arquivos dele não foram instalados (Configurações › OCR)");
+            if cfg!(windows) {
+                bail!("os arquivos dele não foram instalados (Configurações › OCR)");
+            }
+            bail!("o arquivo dele não foi importado (Configurações › OCR › Importar runtime do OneOCR)");
+        }
+        if !cfg!(windows) {
+            let engine = self.onnx(settings)?;
+            let boxes = engine.detect_boxes(img)?;
+            return Ok(super::paddle::recognize_boxes_with(img, &boxes, &engine.reader(&settings.ocr_language)));
         }
         let (answer, k) = self.helper.ask(&dir()?, img)?;
         let Some(bytes) = answer else { bail!("ele não leu esta imagem") };
@@ -326,9 +380,39 @@ impl OneOcr {
         Ok(out)
     }
 
-    /// Ends the helper now (before its files are deleted).
+    /// Its models out of the imported file, loaded for the GPU choice of `settings` (GPU first).
+    fn onnx(&self, settings: &Settings) -> Result<Arc<OneOcrOnnx>> {
+        *self.used.lock() = Instant::now();
+        let (gpu, choice) = (settings.use_gpu, settings.gpu_choice());
+        let mut slot = self.onnx.lock();
+        if let Some(engine) = slot.as_ref().filter(|e| e.matches(gpu, choice)) {
+            return Ok(engine.clone());
+        }
+        // Drop the models it replaces before loading them again.
+        *slot = None;
+        let engine = Arc::new(OneOcrOnnx::new(&dir()?.join(FILES[1]), gpu, choice)?);
+        engine.warm_up();
+        *slot = Some(engine.clone());
+        Ok(engine)
+    }
+
+    /// Whether its models are loaded, and on the GPU (`None`: not loaded).
+    pub fn onnx_on_gpu(&self) -> Option<bool> {
+        self.onnx.try_lock()?.as_ref().map(|e| e.on_gpu())
+    }
+
+    /// Frees its models once unused for `idle`; true when it did.
+    pub fn free_if_idle(&self, idle: Duration) -> bool {
+        if self.used.lock().elapsed() < idle {
+            return false;
+        }
+        self.onnx.lock().take().is_some()
+    }
+
+    /// Ends the helper now and frees its models (before its files are deleted).
     pub fn stop(&self) {
         self.helper.stop();
+        *self.onnx.lock() = None;
     }
 }
 

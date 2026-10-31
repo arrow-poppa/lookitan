@@ -19,7 +19,11 @@ pub mod indra;
 pub mod ink;
 mod lens_proto;
 pub mod models;
+#[cfg_attr(windows, allow(dead_code))]
+pub mod onemodel;
 pub mod oneocr;
+#[cfg_attr(windows, allow(dead_code))]
+pub mod oneocr_onnx;
 pub mod paddle;
 pub mod sessions;
 pub mod quad;
@@ -147,8 +151,19 @@ pub struct LanguageModel {
     pub rec: &'static str,
 }
 
+/// The `rec` of a language PP-OCR has no model for (Hebrew, Hindi, Tamil, Thai, added on
+/// 2026-10-31 at the user's request for OneOCR's scripts): only OneOCR, Chrome ScreenAI, Google
+/// Lens and Bing read it.
+pub const NO_PPOCR: &str = "";
+
+/// Whether PP-OCR has a recognizer for the OCR language `tag`.
+pub fn reads_with_ppocr(tag: &str) -> bool {
+    language(tag).rec != NO_PPOCR
+}
+
 /// Sorted by English name, as the settings list shows them. Every language Lookupper reads, with
-/// the same model; regional variants share it and differ only in the speech voice.
+/// the same model, and the four of OneOCR's scripts it does not (`NO_PPOCR`); regional variants
+/// share it and differ only in the speech voice.
 pub const LANGUAGES: &[LanguageModel] = &[
     LanguageModel { tag: "ar-SA", name: "Arabic", rec: "rec_arabic" },
     LanguageModel { tag: "bs-Latn-BA", name: "Bosnian (Latin)", rec: "rec_tiny" },
@@ -167,6 +182,8 @@ pub const LANGUAGES: &[LanguageModel] = &[
     LanguageModel { tag: "fr-FR", name: "French (France)", rec: "rec_tiny" },
     LanguageModel { tag: "de-DE", name: "German", rec: "rec_tiny" },
     LanguageModel { tag: "el-GR", name: "Greek", rec: "rec_el" },
+    LanguageModel { tag: "he-IL", name: "Hebrew", rec: NO_PPOCR },
+    LanguageModel { tag: "hi-IN", name: "Hindi", rec: NO_PPOCR },
     LanguageModel { tag: "hu-HU", name: "Hungarian", rec: "rec_tiny" },
     LanguageModel { tag: "id-ID", name: "Indonesian", rec: "rec_tiny" },
     LanguageModel { tag: "it-IT", name: "Italian", rec: "rec_tiny" },
@@ -186,6 +203,8 @@ pub const LANGUAGES: &[LanguageModel] = &[
     LanguageModel { tag: "es-MX", name: "Spanish (Mexico)", rec: "rec_tiny" },
     LanguageModel { tag: "es-ES", name: "Spanish (Spain)", rec: "rec_tiny" },
     LanguageModel { tag: "sv-SE", name: "Swedish", rec: "rec_tiny" },
+    LanguageModel { tag: "ta-IN", name: "Tamil", rec: NO_PPOCR },
+    LanguageModel { tag: "th-TH", name: "Thai", rec: NO_PPOCR },
     LanguageModel { tag: "tr-TR", name: "Turkish", rec: "rec_tiny" },
     LanguageModel { tag: "uk-UA", name: "Ukrainian", rec: "rec_cyrillic" },
 ];
@@ -441,6 +460,12 @@ mod tests {
         assert_eq!(language("xx-XX").tag, DEFAULT_LANGUAGE);
         assert_eq!(language("sr-latn-rs").rec, "rec_tiny");
         assert_eq!(language("sr-Cyrl-RS").rec, "rec_cyrillic");
+        // OneOCR's scripts PP-OCR has no model for.
+        for tag in ["he-IL", "hi-IN", "ta-IN", "th-TH"] {
+            assert_eq!(language(tag).tag, tag);
+            assert!(!reads_with_ppocr(tag), "{tag}");
+        }
+        assert!(reads_with_ppocr("ja-JP") && reads_with_ppocr("ar-SA"));
     }
 
     #[test]

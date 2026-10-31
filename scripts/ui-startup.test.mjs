@@ -99,12 +99,14 @@ async function settingsFixture(overrides = {}) {
     const calls = [];
     let later = null;
     const gamepadCapture = {handler: null};
+    const picked = {path: null};
     const settings = {ocrLanguage: 'en-US', appMode: 'popup', profiles: [], mouseHotkey: {button: 'none'}, useGpu: true,
         ocrScope: 'screen', captureWidth: 900, captureHeight: 260, ...overrides};
     const ui = await load('src/main/settings-tab.js', {document: view.document, location: {reload: () => calls.push('reload')}}, {
         '@tauri-apps/api/app': {getVersion: async () => 'test'},
-        '@tauri-apps/plugin-dialog': {ask: async () => true},
+        '@tauri-apps/plugin-dialog': {ask: async () => true, open: async () => picked.path},
         [file('src/lib/api.js')]: {api: {ocrLanguages: () => languages.promise, engineStatus: () => later ?? status.promise,
+            importOneocr: async (path) => { calls.push(`import ${path}`); },
             installSegmenter: async () => { calls.push('install'); }, removeSegmenter: async () => { calls.push('remove'); },
             gamepadStatus: async () => 'Xbox Controller', gamepadCapture: async (on) => { calls.push(`capture ${on}`); },
             onGamepadCapture: async (handler) => { gamepadCapture.handler = handler; },
@@ -117,7 +119,7 @@ async function settingsFixture(overrides = {}) {
         [file('src/main/store.js')]: { saveNow: async () => {},store: {settings, anki: {}}, save: () => { saves += 1; }},
     });
     const initialization = ui.initSettingsTab(root);
-    return {view, root, settings, languages, status, initialization, calls, ui, gamepadCapture,
+    return {view, root, settings, languages, status, initialization, calls, ui, gamepadCapture, picked,
         setStatus: (next) => { later = Promise.resolve(next); }, saves: () => saves, finish: async () => {
         languages.resolve([{tag: 'en-US', name: 'English'}]);
         status.resolve({session: 'windows'});
@@ -844,6 +846,48 @@ test('PP-OCRv6 Manga is offered for Japanese and Chinese, ScreenAI always and On
     assert(modelsRow(), 'PP-OCRv6 Manga still reads around the pointer');
     assert(descendants(root).some((node) => node.className === 'card-row' && node.textContent.includes('Arquivos do Chrome ScreenAI')));
     await fixture.finish();
+});
+
+test('outside Windows OneOCR is offered too, its model file imported, and Hebrew, Hindi, Tamil and Thai offer only the engines that read them', async () => {
+    const offered = (root, title) => {
+        const row = descendants(root).find((node) => node.className === 'card-row' && node.textContent.includes(title));
+        return descendants(row).filter((node) => node.tagName === 'option');
+    };
+    const languages = [{tag: 'en-US', name: 'English', rec: 'rec_tiny'}, {tag: 'he-IL', name: 'Hebrew', rec: ''}, {tag: 'th-TH', name: 'Thai', rec: ''}];
+    const english = await settingsFixture({ocrLanguage: 'en-US', ocrEngine: 'paddle'});
+    english.languages.resolve(languages);
+    english.status.resolve({session: 'wayland'});
+    await english.initialization;
+    const options = offered(english.root, 'OCR em volta do cursor');
+    assert.deepEqual(options.map((o) => o.value), ['paddle', 'screenai', 'indra', 'custom', 'oneocr', 'lens', 'bing']);
+    assert.equal(options.find((o) => o.value === 'oneocr').textContent, 'OneOCR (local, importado)');
+    await english.finish();
+
+    const thai = await settingsFixture({ocrLanguage: 'th-TH', ocrEngine: 'oneocr', screenOcrEngine: 'paddle'});
+    thai.languages.resolve(languages);
+    thai.status.resolve({session: 'wayland', models: {oneocr: {installed: false}}});
+    await thai.initialization;
+    assert.deepEqual(offered(thai.root, 'OCR em volta do cursor').map((o) => o.value), ['screenai', 'oneocr', 'lens', 'bing']);
+    assert.deepEqual(offered(thai.root, 'OCR da tela inteira').map((o) => o.value), ['paddle', 'screenai', 'oneocr', 'lens', 'bing'], 'PP-OCRv6 kept while chosen');
+    const card = descendants(thai.root).find((node) => node.className === 'card-row' && node.textContent.includes('Runtime do OneOCR'));
+    assert(card, 'its model file row shows');
+    assert(card.textContent.includes('não importado'));
+    const importButton = descendants(card).find((node) => node.tagName === 'button');
+    assert(importButton.innerHTML.includes('Importar runtime do OneOCR'));
+    thai.picked.path = '/home/me/oneocr.onemodel';
+    importButton.dispatch('click');
+    for (let i = 0; i < 5; i += 1) { await new Promise((done) => setTimeout(done, 0)); }
+    assert.deepEqual(thai.calls.filter((c) => c.startsWith('import')), ['import /home/me/oneocr.onemodel']);
+    await thai.finish();
+
+    const hebrew = await settingsFixture({ocrLanguage: 'he-IL', ocrEngine: 'lens'});
+    hebrew.languages.resolve(languages);
+    hebrew.status.resolve({session: 'windows'});
+    await hebrew.initialization;
+    const hebrewOptions = offered(hebrew.root, 'OCR em volta do cursor');
+    assert.deepEqual(hebrewOptions.map((o) => o.value), ['screenai', 'indra', 'oneocr', 'lens', 'bing'], "IndraOCR's right-to-left model reads Hebrew");
+    assert.equal(hebrewOptions.find((o) => o.value === 'oneocr').textContent, 'OneOCR (local, do Windows)');
+    await hebrew.finish();
 });
 
 test('the capture region is always editable and there is no scope selector', async () => {

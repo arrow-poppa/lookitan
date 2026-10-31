@@ -20,6 +20,7 @@ const SAMPLES = {
     ko: ['종류이다', '종류'], la: ['amici', 'amicus'], nb: ['husene', 'hus'], pl: ['domach', 'dom'], pt: ['corações', 'coração'],
     ro: ['țării', 'țară'], ru: ['Шелестят', 'шелестеть'], sr: ['кућама', 'кућа'], sk: ['dĺžky', 'dĺžka'], sl: ['šoli', 'šola'],
     es: ['canciones', 'canción'], sv: ['husen', 'hus'], tr: ['ağaçlar', 'ağaç'], uk: ['країни', 'країна'],
+    he: ['הספרים', 'ספר'], hi: ['लड़कों', 'लड़का'], ta: ['வீடுகள்', 'வீடு'], th: ['กิน', 'กิน'],
 };
 const sample = (tag) => (tag === 'sr-Latn-RS' ? ['kućama', 'kuća'] : SAMPLES[tag.split('-')[0]]);
 
@@ -35,8 +36,8 @@ function sources(has, {voice = true} = {}) {
 }
 
 test('every OCR language: the word audio is asked for the form on screen first, its dictionary form after', async () => {
-    assert.equal(OCR_TAGS.length, 38);
-    assert.equal(new Set(OCR_TAGS.map((t) => t.split('-')[0])).size, 31);
+    assert.equal(OCR_TAGS.length, 42);
+    assert.equal(new Set(OCR_TAGS.map((t) => t.split('-')[0])).size, 35);
     for (const tag of OCR_TAGS) {
         const [surface, lemma] = sample(tag);
         assert(surface && lemma, `${tag}: a sample`);

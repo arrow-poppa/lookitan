@@ -8,4 +8,6 @@ src-tauri/resources/models/
 src-tauri/resources/ort/
 src-tauri/resources/hunspell/
 *.log
+# OneOCR's model file, kept by CI for its Linux test only (Microsoft's; never committed).
+.oneocr-model/
 .DS_Store

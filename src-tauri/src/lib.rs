@@ -303,6 +303,9 @@ fn ensure_ort(state: &AppState) -> Result<()> {
 fn ensure_paddle(state: &AppState, settings: &Settings, kind: OcrEngineKind) -> Result<Arc<PaddleOcr>> {
     const KEPT: usize = 2;
     let parts = settings.paddle_use(kind).ok_or_else(|| anyhow!("{kind:?} reads with no PP-OCR model"))?;
+    if parts.rec == Some(ocr::NO_PPOCR) {
+        bail!("o PP-OCRv6 não lê {}; escolha OneOCR, Chrome ScreenAI, Google Lens ou Bing (Configurações › OCR)", ocr::language(&settings.ocr_language).name);
+    }
     if parts.rec == Some(MANGA_REC) {
         require(state, Downloaded::Manga, "do PP-OCRv6 Manga")?;
     }
@@ -795,7 +798,13 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
             match kind {
                 OcrEngineKind::Lens => lens_engine(state)?.recognize(img, &settings.lens_api_key, &settings.ocr_language),
                 OcrEngineKind::ScreenAi => state.screenai.recognize(img),
-                OcrEngineKind::OneOcr => state.oneocr.recognize(img),
+                OcrEngineKind::OneOcr => {
+                    // Without oneocr.dll (not on Windows) its models run on Lookitan's ONNX Runtime.
+                    if !cfg!(windows) {
+                        ensure_ort(state)?;
+                    }
+                    state.oneocr.recognize(img, settings)
+                }
                 _ => bing_engine(state)?.recognize(img),
             }
         };
@@ -1092,6 +1101,9 @@ fn indra_engine(state: &AppState, settings: &Settings, gpu: bool) -> Result<Arc<
             None => bail!("os modelos dele não estão baixados (Configurações › OCR)"),
         }
     }
+    if !ocr::reads_with_ppocr(&settings.ocr_language) && IndraGroup::of(&settings.ocr_language) != IndraGroup::Rtl {
+        bail!("ele não lê {}; escolha OneOCR, Chrome ScreenAI, Google Lens ou Bing (Configurações › OCR)", ocr::language(&settings.ocr_language).name);
+    }
     let group = IndraGroup::of(&settings.ocr_language);
     ensure_ort(state)?;
     let mut slot = state.indra.lock();
@@ -1170,8 +1182,9 @@ impl Downloaded {
     fn bytes(self) -> u64 {
         match self {
             Downloaded::ScreenAi => ocr::screenai::bytes(),
-            // About the Snipping Tool 11.2608's three files, as written.
-            Downloaded::OneOcr => 114_000_000,
+            // About the Snipping Tool 11.2608's three files, as written; elsewhere its model file.
+            Downloaded::OneOcr if cfg!(windows) => 114_000_000,
+            Downloaded::OneOcr => 58_500_000,
             Downloaded::Indra => models::INDRA.bytes(),
             Downloaded::Manga => models::MANGA.bytes(),
             Downloaded::Ctd => models::CTD.bytes(),
@@ -1263,6 +1276,26 @@ fn install_ocr_models(app: AppHandle, engine: String, accept_license: Option<boo
     }
     download_models(&app, which);
     Ok(())
+}
+
+/// Settings › OCR, outside Windows: "Importar runtime do OneOCR" takes the oneocr.onemodel the user
+/// picked (their own, from a Windows of theirs) once it opens and has OneOCR's models.
+#[tauri::command]
+async fn import_oneocr(app: AppHandle, path: String) -> std::result::Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if cfg!(windows) {
+            return Err("No Windows o OneOCR usa os arquivos do Recorte (Instalar).".to_string());
+        }
+        // Its models go before the file under them is replaced.
+        state.oneocr.stop();
+        let imported = ocr::oneocr::import(std::path::Path::new(&path)).map_err(|e| format!("{e:#}"));
+        state.downloads.lock().remove(Downloaded::OneOcr.id());
+        let _ = app.emit("engine-status", ());
+        imported
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Settings › OCR: deletes an engine's files; a pass asked for that engine then fails, saying
@@ -1821,6 +1854,11 @@ fn free_models_when_idle(app: &AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(30));
         let state = app.state::<AppState>();
+        // OneOCR's models without oneocr.dll go after its helper's 5 minutes (`ocr::helper::IDLE`).
+        if state.oneocr.free_if_idle(ocr::helper::IDLE) {
+            log::info!("OneOCR unused for {} minutes; freeing its models", ocr::helper::IDLE.as_secs() / 60);
+            let _ = app.emit("engine-status", ());
+        }
         if state.ocr_used.lock().elapsed() < MODELS_IDLE {
             continue;
         }
@@ -1886,7 +1924,9 @@ fn warm_engine_in_background(app: &AppHandle) {
         // ScreenAI's and OneOCR's helpers start with their first lookup; only their files are
         // fetched (copied, for OneOCR) here.
         for (kind, which) in [(OcrEngineKind::ScreenAi, Downloaded::ScreenAi), (OcrEngineKind::OneOcr, Downloaded::OneOcr)] {
-            if settings.wants(kind) && which.supported() && !which.installed() {
+            // OneOCR's model file is imported by the user outside Windows, never downloaded.
+            let fetched = which != Downloaded::OneOcr || cfg!(windows);
+            if fetched && settings.wants(kind) && which.supported() && !which.installed() {
                 download_models(&app, which);
             }
         }
@@ -2156,7 +2196,12 @@ fn engines_status(state: &AppState, settings: &Settings) -> Vec<[String; 2]> {
         }
     };
     let describe = |kind: OcrEngineKind, whole_screen: bool| {
-        let name = engine_name(kind);
+        // OneOCR without oneocr.dll (outside Windows) runs where its models loaded.
+        let name = match (kind, state.oneocr.onnx_on_gpu()) {
+            (OcrEngineKind::OneOcr, Some(gpu)) if !cfg!(windows) => format!("OneOCR na {}", device(gpu)),
+            (OcrEngineKind::OneOcr, None) if !cfg!(windows) => format!("OneOCR ({waiting})"),
+            _ => engine_name(kind).to_string(),
+        };
         if kind.is_local() {
             format!("{name}: detecção {} · reconhecimento {}", det(kind), rec(kind))
         } else if !whole_screen && settings.capture_auto && settings.models(kind).det == Detector::Page {
@@ -2764,6 +2809,7 @@ pub fn run() {
             remove_segmenter,
             install_ocr_models,
             remove_ocr_models,
+            import_oneocr,
             ocr_languages,
             list_dictionaries,
             add_dictionary,
