@@ -149,11 +149,14 @@ fn snipping_tool() -> Result<PathBuf> {
     bail!("o Recorte (Snipping Tool) existe só no Windows")
 }
 
-/// Takes the user's own oneocr.onemodel (from a Windows of theirs) for OneOCR without oneocr.dll,
-/// once it opens with OneOCR's key and has every model it needs; the copy replaces any before it.
+/// The largest oneocr.onemodel taken (the Snipping Tool 11.2608's is 58 MB).
+const MAX_MODEL_BYTES: u64 = 200 << 20;
+
+/// Takes the user's own oneocr.onemodel (from a Windows of theirs) for OneOCR without oneocr.dll:
+/// the file itself, or a .zip holding it in any folder. Only that file is copied; nothing else of
+/// the zip is read, and no model in it is written out. It must open with OneOCR's key and have every model
+/// OneOCR needs before it replaces the one before it.
 pub fn import(from: &Path) -> Result<()> {
-    let model = super::onemodel::OneModel::open(from)?;
-    model.check()?;
     let root = super::models::root()?;
     std::fs::create_dir_all(&root)?;
     let copying = root.join(format!(".importing-oneocr-{}", std::process::id()));
@@ -161,7 +164,9 @@ pub fn import(from: &Path) -> Result<()> {
     std::fs::create_dir_all(&copying)?;
     let copied = (|| -> Result<()> {
         let to = copying.join(FILES[1]);
-        std::fs::copy(from, &to).with_context(|| format!("copy {}", from.display()))?;
+        take_model(from, &to)?;
+        let model = super::onemodel::OneModel::open(&to)?;
+        model.check()?;
         let mut hash = sha2::Sha256::default();
         std::io::copy(&mut std::fs::File::open(&to)?, &mut hash)?;
         let digest = sha2::Digest::finalize(hash);
@@ -176,6 +181,43 @@ pub fn import(from: &Path) -> Result<()> {
     }
     copied?;
     log::info!("OneOCR's model file imported from {}", from.display());
+    Ok(())
+}
+
+/// Copies the oneocr.onemodel that `from` is, or that the .zip `from` holds, to `to`.
+fn take_model(from: &Path, to: &Path) -> Result<()> {
+    let mut source = std::fs::File::open(from).with_context(|| format!("open {}", from.display()))?;
+    let mut magic = [0u8; 4];
+    let zipped = std::io::Read::read_exact(&mut source, &mut magic).is_ok() && magic == *b"PK\x03\x04";
+    if !zipped {
+        let size = source.metadata()?.len();
+        if size > MAX_MODEL_BYTES {
+            bail!("o arquivo é grande demais para ser o oneocr.onemodel ({} MB)", size >> 20);
+        }
+        std::fs::copy(from, to).with_context(|| format!("copy {}", from.display()))?;
+        return Ok(());
+    }
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(from)?).context("o .zip não abre")?;
+    // The entry named oneocr.onemodel, in whatever folder of the zip; only its bytes are read, and
+    // they go to `to` whatever the entry's path.
+    let index = (0..archive.len())
+        .find(|&i| {
+            archive.name_for_index(i).is_some_and(|name| {
+                let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+                base.eq_ignore_ascii_case(FILES[1])
+            })
+        })
+        .context("o .zip não tem o oneocr.onemodel")?;
+    let mut entry = archive.by_index(index)?;
+    if entry.size() > MAX_MODEL_BYTES {
+        bail!("o oneocr.onemodel do .zip é grande demais ({} MB)", entry.size() >> 20);
+    }
+    let mut out = std::fs::File::create(to).with_context(|| format!("create {}", to.display()))?;
+    // At most the size allowed, whatever the zip says its size is.
+    let written = std::io::copy(&mut std::io::Read::take(&mut entry, MAX_MODEL_BYTES + 1), &mut out)?;
+    if written > MAX_MODEL_BYTES {
+        bail!("o oneocr.onemodel do .zip é grande demais");
+    }
     Ok(())
 }
 
@@ -492,6 +534,35 @@ mod tests {
 
     fn word(text: &str, x0: f32, y0: f32, x1: f32, y1: f32) -> Word {
         Word { text: text.into(), corners: rect(x0, y0, x1, y1), confidence: 0.99 }
+    }
+
+    #[test]
+    fn the_model_file_is_taken_alone_from_a_zip_or_as_it_is() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("lookitan-oneocr-import-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = b"not checked here, only copied".to_vec();
+        let zipped = dir.join("snipping.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&zipped).unwrap());
+        let deflated = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, data) in [("SnippingTool/oneocr.dll", &b"dll"[..]), ("SnippingTool/oneocr.onemodel", &model[..]), ("SnippingTool/onnxruntime.dll", &b"ort"[..])] {
+            zip.start_file(name, deflated).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap();
+        let to = dir.join("taken");
+        take_model(&zipped, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), model, "only the model file, whatever its folder in the zip");
+        let plain = dir.join("oneocr.onemodel");
+        std::fs::write(&plain, &model).unwrap();
+        take_model(&plain, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), model);
+        let empty = dir.join("empty.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&empty).unwrap());
+        zip.start_file("oneocr.dll", deflated).unwrap();
+        zip.finish().unwrap();
+        assert!(take_model(&empty, &to).is_err(), "a zip without it");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

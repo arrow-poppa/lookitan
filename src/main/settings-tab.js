@@ -317,7 +317,7 @@ const DOWNLOADED_ENGINES = {
 /** OneOCR outside Windows: the user's own oneocr.onemodel, imported (never downloaded), read without
  * oneocr.dll on Lookitan's ONNX Runtime (ocr/oneocr_onnx.rs). */
 const ONEOCR_IMPORTED = {title: 'Runtime do OneOCR (importado de um Windows seu, cerca de 58 MB)',
-    desc: 'O OCR do Recorte do Windows 11, da Microsoft, sem o oneocr.dll: o arquivo oneocr.onemodel que você importa roda no ONNX Runtime do Lookitan. Num Windows, ele está na pasta SnippingTool do Recorte, ou em %LOCALAPPDATA%\\io.github.arrowpoppa.lookitan\\ocr-models\\oneocr se o Lookitan instalou o OneOCR lá. Nada é baixado nem distribuído; não é software livre. Lê as 9 escritas do OneOCR (latina, cirílica, grega, árabe, hebraica, devanágari, tailandesa, tâmil e CJK). Os modelos saem da memória depois de 5 minutos sem uso.',
+    desc: 'O OCR do Recorte do Windows 11, da Microsoft, sem o oneocr.dll: o arquivo oneocr.onemodel que você importa (ele mesmo, ou um .zip com ele em qualquer pasta; do zip só ele é copiado) roda no ONNX Runtime do Lookitan. Num Windows, ele está na pasta SnippingTool do Recorte, ou em %LOCALAPPDATA%\\io.github.arrowpoppa.lookitan\\ocr-models\\oneocr se o Lookitan instalou o OneOCR lá. Nada é baixado nem distribuído; não é software livre. Lê as 9 escritas do OneOCR (latina, cirílica, grega, árabe, hebraica, devanágari, tailandesa, tâmil e CJK). Os modelos saem da memória depois de 5 minutos sem uso.',
     removeAsk: 'Apagar o arquivo importado do OneOCR? Enquanto não for importado de novo, ele não lê.',
     removeTitle: 'Apagar o OneOCR', action: 'Importar runtime do OneOCR', done: 'importado', importer: true};
 
@@ -381,7 +381,7 @@ function modelsRow(engine) {
         button.addEventListener('click', () => void run(button, async () => {
             if (info.importer) {
                 const path = await open({multiple: false, directory: false, title: info.action,
-                    filters: [{name: 'oneocr.onemodel', extensions: ['onemodel']}]});
+                    filters: [{name: 'oneocr.onemodel ou .zip com ele', extensions: ['onemodel', 'zip']}]});
                 if (path) { await api.importOneocr(String(path)); }
                 return;
             }
