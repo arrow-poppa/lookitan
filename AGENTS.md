@@ -381,6 +381,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-10-31 (Claude, `tests`): diagnostic logs for the user's "Nenhum texto encontrado" with IndraOCR on Linux (the models read the failing pages in a Python copy of the pipeline, PP-OCRv6 reads them in the app): each local pass logs its boxes, those by the pointer and the lines read (`ocr_pass`), LineNet its capture size and lines, IndraOCR its kept and dropped lines with their scores, and run_scan the no-text case. Read them with `journalctl --user | grep lookitan`.
 - 2026-10-31 (Claude, `tests`): Linux WebGPU on an integrated card releases freed buffers after each run (`storageBufferCacheMode = lazyRelease`, `dedicated_card`); dedicated cards unchanged. OpenVINO and 6 threads measured and rejected (see the WebGPU item).
 - 2026-10-31 (Claude, `tests`): ONNX Runtime's CPU arena shrinks after each run, for every local model on both systems (`paddle::infer`, `run_options`; `InferenceSession::run`'s closure gets `on_cpu`). Tests: paddle's session tests check the device passed; the real-model tests run the option.
 - 2026-10-31 (Claude, `tests`): on Linux, freed memory goes back to the system as on Windows (`platform/memory.rs`: `mallopt` M_MMAP_THRESHOLD 1 MB and M_ARENA_MAX 2 at start, `malloc_trim` after lookups and model freeing). Tests: memory's `glibc_takes_the_settings_and_the_trim`.

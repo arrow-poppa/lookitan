@@ -117,6 +117,8 @@ struct Prepared {
     /// Crop pixels to one of the model's input, and where the box starts in the padded crop.
     to_crop: f32,
     left: f32,
+    /// Read as light text on a dark ground (`is_dark`).
+    dark: bool,
 }
 
 impl IndraRec {
@@ -183,11 +185,12 @@ impl IndraRec {
                 p.0[0] = 255 - p.0[0];
             }
         }
-        Prepared { ink, to_crop: cw as f32 / width as f32, left: -x0 }
+        Prepared { ink, to_crop: cw as f32 / width as f32, left: -x0, dark }
     }
 
-    /// Reads crops already prepared, of similar width, in one run.
-    fn run(&self, prepared: &[&Prepared]) -> Result<Vec<Vec<Glyph>>> {
+    /// Reads crops already prepared, of similar width, in one run: each one's characters, and the
+    /// mean score they were judged by (`decode`).
+    fn run(&self, prepared: &[&Prepared]) -> Result<Vec<(Vec<Glyph>, f32)>> {
         let height = (LINE_HEIGHT * self.group.window()) as usize;
         let widest = prepared.iter().map(|p| p.ink.width() as usize).max().unwrap_or(WIDTH_MULTIPLE);
         let padded = widest.div_ceil(WIDTH_MULTIPLE) * WIDTH_MULTIPLE;
@@ -230,7 +233,9 @@ impl IndraRec {
 
     /// Greedy CTC: repeats collapsed, blanks dropped; each character where its step's centre lies
     /// on the crop. Combining sequences are composed (Hangul jamo into syllables, as indra's NFC).
-    fn decode(&self, steps: impl Iterator<Item = (i64, f32)>, step_px: f32, p: &Prepared) -> Vec<Glyph> {
+    /// Also the mean score of the characters read (0 with none); under `MIN_CONFIDENCE` the line
+    /// is dropped.
+    fn decode(&self, steps: impl Iterator<Item = (i64, f32)>, step_px: f32, p: &Prepared) -> (Vec<Glyph>, f32) {
         let (mut glyphs, mut prev, mut sum, mut read) = (Vec::<Glyph>::new(), 0i64, 0f32, 0usize);
         for (t, (id, c)) in steps.enumerate() {
             if id != 0 && id != prev {
@@ -248,10 +253,11 @@ impl IndraRec {
             }
             prev = id;
         }
-        if glyphs.is_empty() || sum / (read.max(1) as f32) < MIN_CONFIDENCE {
-            return Vec::new();
+        let mean = sum / (read.max(1) as f32);
+        if glyphs.is_empty() || mean < MIN_CONFIDENCE {
+            return (Vec::new(), mean);
         }
-        glyphs
+        (glyphs, mean)
     }
 }
 
@@ -304,6 +310,7 @@ impl IndraDet {
         }
         let page = GrayImage::from_fn(w, h, |x, y| Luma([grey(img.get_pixel(x, y))]));
         let (mut lines, mut scale) = self.detect_at(&page, DET_LONG_SIDE)?;
+        let first = lines.len();
         // Lines too small for the model: once more, larger.
         if lines.len() >= 8 {
             let height = median(lines.iter().map(|l| l[3] - l[1]).collect());
@@ -327,6 +334,7 @@ impl IndraDet {
             .filter(|b| b.x1 - b.x0 >= 1.0 && b.y1 - b.y0 >= 1.0)
             .collect();
         boxes.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));
+        log::info!("IndraOCR's LineNet on {w}×{h}: {first} lines at {DET_LONG_SIDE} px, {} boxes kept (scale {scale:.3})", boxes.len());
         Ok(boxes)
     }
 
@@ -443,12 +451,27 @@ impl BoxReader for IndraRec {
         let mut order: Vec<usize> = (0..prepared.len()).collect();
         order.sort_by_key(|&i| prepared[i].ink.width());
         let mut found: Vec<Vec<Glyph>> = crops.iter().map(|_| Vec::new()).collect();
+        let mut scores = vec![0f32; crops.len()];
         for run in order.chunks(BATCH) {
             let batch: Vec<&Prepared> = run.iter().map(|&i| &prepared[i]).collect();
-            for (&i, glyphs) in run.iter().zip(self.run(&batch)?) {
+            for (&i, (glyphs, score)) in run.iter().zip(self.run(&batch)?) {
                 found[i] = glyphs;
+                scores[i] = score;
             }
         }
+        // What was read and what was dropped, so a lookup that finds no text says why in the log.
+        let dropped: Vec<String> = (0..crops.len())
+            .filter(|&i| found[i].is_empty())
+            .map(|i| format!("{:.2} ({}×{} px{})", scores[i], crops[i].0.width(), crops[i].0.height(), if prepared[i].dark { ", light on dark" } else { "" }))
+            .collect();
+        log::info!(
+            "IndraOCR {:?} read {} lines: {} kept, {} dropped (score under {MIN_CONFIDENCE} or nothing read){}",
+            self.group,
+            crops.len(),
+            crops.len() - dropped.len(),
+            dropped.len(),
+            if dropped.is_empty() { String::new() } else { format!(": {}", dropped.iter().take(12).cloned().collect::<Vec<_>>().join(", ")) },
+        );
         Ok(found)
     }
 }

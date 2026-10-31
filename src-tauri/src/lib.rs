@@ -658,6 +658,7 @@ fn run_scan(app: &AppHandle) -> Result<()> {
     let deferred = pick.is_none() && !rest.is_empty() && paddle_engine.is_some();
     match pick {
         None if lines.is_empty() && rest.is_empty() => {
+            log::info!("no text found on the screen ({engine})");
             if let Some(w) = app.get_webview_window("overlay") { let _ = w.hide(); }
             let payload = LookupPayload {
                 engine,
@@ -766,7 +767,7 @@ struct OcrPass {
 }
 
 /// What an OCR pass recognizes.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reading {
     /// A region capture: the lines around the pointer.
     Region,
@@ -855,6 +856,7 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     }
     let p = box_engine(state, settings, kind)?;
     let cached_boxes = state.ocr_cache.lock().boxes(key);
+    let from_cache = cached_boxes.is_some();
     let boxes = match cached_boxes {
         Some(boxes) => boxes,
         None => {
@@ -887,6 +889,17 @@ fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &
     }
     layout::look(image, &mut lines);
     let engine = p.name();
+    log::info!(
+        "OCR pass {kind:?} {reading:?} on {}×{}: {} boxes ({}), {} by the pointer at ({px:.0}, {py:.0}), {} lines read, {} left for the background, block {}",
+        image.width(),
+        image.height(),
+        boxes.len(),
+        if from_cache { "cached" } else { "detected" },
+        focus.len(),
+        lines.len(),
+        rest.len(),
+        if block.is_some() { "found" } else { "none" },
+    );
     Ok(OcrPass { lines, engine, kind, rest, paddle: Some(p), notice: None, key, block })
 }
 
