@@ -296,7 +296,8 @@ fn ensure_ort(state: &AppState) -> Result<()> {
 
 /// PP-OCR with the models `kind` reads with of it, and where they run (`Settings::paddle_use`):
 /// its detector, its recognizer or both. Two are kept, so the pointer's engine and the whole
-/// screen's can differ without one reloading the other's.
+/// screen's can differ without one reloading the other's; with an integrated card, not the same
+/// model on both devices (2026-10-30, at the user's request, as Lookupper keeps one copy).
 fn ensure_paddle(state: &AppState, settings: &Settings, kind: OcrEngineKind) -> Result<Arc<PaddleOcr>> {
     const KEPT: usize = 2;
     let parts = settings.paddle_use(kind).ok_or_else(|| anyhow!("{kind:?} reads with no PP-OCR model"))?;
@@ -312,6 +313,11 @@ fn ensure_paddle(state: &AppState, settings: &Settings, kind: OcrEngineKind) -> 
         return Ok(engine);
     }
     let models = state.resource_dir.join("models");
+    // With an integrated card, whose memory is the system RAM, a model stays on one device: a
+    // configuration with the same detector or recognizer on the other device goes first.
+    if cache.iter().any(|(p, _)| p.same_model_elsewhere(&parts)) && !dedicated_gpu(state, settings) {
+        cache.retain(|(p, _)| !p.same_model_elsewhere(&parts));
+    }
     // Drop the oldest cached models before allocating new ones.
     cache.truncate(KEPT - 1);
     // A detector or recognizer the kept one has is shared, not loaded again.

@@ -97,6 +97,21 @@ mod tests {
     }
 
     #[test]
+    fn a_model_on_the_other_device_is_the_same_model_elsewhere() {
+        let plan = |det: &'static str, det_gpu: bool, rec_gpu: bool| EnginePlan { manual: true, det, det_gpu, rec_gpu, gpu_choice: None };
+        let manga_cpu = PaddleUse { det: false, rec: Some(MANGA_REC), plan: plan("det_small", false, false) };
+        let manga_gpu = PaddleUse { det: false, rec: Some(MANGA_REC), plan: plan("det_small", false, true) };
+        assert!(manga_gpu.same_model_elsewhere(&manga_cpu) && manga_cpu.same_model_elsewhere(&manga_gpu));
+        assert!(!manga_gpu.same_model_elsewhere(&manga_gpu), "the same device");
+        let small_gpu = PaddleUse { det: true, rec: Some("rec_small"), plan: plan("det_small", true, true) };
+        let small_cpu_det = PaddleUse { det: true, rec: None, plan: plan("det_small", false, false) };
+        let tiny_cpu_det = PaddleUse { det: true, rec: None, plan: plan("det_tiny", false, false) };
+        assert!(small_gpu.same_model_elsewhere(&small_cpu_det), "det_small on both devices");
+        assert!(!small_gpu.same_model_elsewhere(&tiny_cpu_det), "another detector");
+        assert!(!small_gpu.same_model_elsewhere(&manga_cpu), "another recognizer");
+    }
+
+    #[test]
     fn the_box_threshold_follows_the_detector_and_the_image_size_its_device() {
         assert_eq!(box_thresh("det_small"), 0.45);
         assert_eq!(box_thresh("det_tiny"), 0.4);
@@ -849,6 +864,15 @@ pub struct PaddleUse {
     pub det: bool,
     pub rec: Option<&'static str>,
     pub plan: EnginePlan,
+}
+
+impl PaddleUse {
+    /// Whether `other` loads the same detector or recognizer on the other device than this one: with
+    /// an integrated card only one of the two is kept (`ensure_paddle` in lib.rs).
+    pub fn same_model_elsewhere(&self, other: &PaddleUse) -> bool {
+        (self.det && other.det && self.plan.det == other.plan.det && self.plan.det_gpu != other.plan.det_gpu)
+            || (self.rec.is_some() && self.rec == other.rec && self.plan.rec_gpu != other.plan.rec_gpu)
+    }
 }
 
 impl EnginePlan {
