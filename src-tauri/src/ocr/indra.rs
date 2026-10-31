@@ -309,6 +309,14 @@ impl IndraDet {
             return Ok(Vec::new());
         }
         let page = GrayImage::from_fn(w, h, |x, y| Luma([grey(img.get_pixel(x, y))]));
+        // TEMPORARY diagnostic (the user's Linux finds no line): the image as IndraOCR gets it.
+        if w > 64 && h > 64 {
+            let path = std::env::temp_dir().join("lookitan-indra-capture.png");
+            match img.save(&path) {
+                Ok(()) => log::info!("IndraOCR's capture saved to {}", path.display()),
+                Err(e) => log::warn!("saving IndraOCR's capture: {e}"),
+            }
+        }
         let (mut lines, mut scale) = self.detect_at(&page, DET_LONG_SIDE)?;
         let first = lines.len();
         // Lines too small for the model: once more, larger.
@@ -344,6 +352,10 @@ impl IndraDet {
         let scale = long_side as f32 / w.max(h) as f32;
         let (nw, nh) = (((w as f32 * scale).round() as u32).max(1), ((h as f32 * scale).round() as u32).max(1));
         let resized = if (nw, nh) == (w, h) { page.clone() } else { image::imageops::resize(page, nw, nh, FilterType::Triangle) };
+        // TEMPORARY diagnostic: the grey image LineNet is given (before the ink is taken).
+        if w > 64 && h > 64 {
+            let _ = resized.save(std::env::temp_dir().join(format!("lookitan-linenet-input-{long_side}.png")));
+        }
         let (pw, ph) = (nw.div_ceil(DET_MULTIPLE) * DET_MULTIPLE, nh.div_ceil(DET_MULTIPLE) * DET_MULTIPLE);
         // Ink: 0 is paper, as the padding is.
         let mut data = vec![0f32; (pw * ph) as usize];
