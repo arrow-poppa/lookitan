@@ -6,7 +6,7 @@
 //
 // Microsoft serves those links over plain HTTP, so nothing is kept until it matches the package's
 // own signature: AppxSignature.p7x must be a Microsoft Store signature by Microsoft Corporation
-// under the Microsoft Root Certificate Authority 2011 (checked by Windows, through PowerShell), the
+// under the Microsoft Root Certificate Authority 2011 (checked by Windows' CryptoAPI), the
 // AppxBlockMap.xml must have the SHA-256 that signature carries, and every 64 KiB block of each
 // file the SHA-256 the block map gives it.
 
@@ -15,12 +15,13 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
 
 const FINDER: &str = "https://store.rg-adguard.net/api/GetFiles";
-const FAMILY: &str = "Microsoft.ScreenSketch_8wekyb3d8bbwe";
+/// The Snipping Tool's package family (also how ocr/oneocr.rs finds it installed).
+pub(super) const FAMILY: &str = "Microsoft.ScreenSketch_8wekyb3d8bbwe";
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
 /// Microsoft's download servers, the only hosts a link may point to.
 const HOST: &str = "dl.delivery.mp.microsoft.com";
@@ -63,7 +64,7 @@ pub fn fetch(to: &Path, progress: &dyn Fn(u64)) -> Result<String> {
 
     let signature = member(&mut package, "AppxSignature.p7x", 1 << 20)?;
     let map = member(&mut package, "AppxBlockMap.xml", 64 << 20)?;
-    let signed = signed_block_map_hash(&signature, to)?;
+    let signed = signed_block_map_hash(&signature)?;
     ensure!(Sha256::digest(&map).as_slice() == signed.as_slice(), "the Snipping Tool's block map is not the one Microsoft signed");
     let files = block_map(&map)?;
 
@@ -113,54 +114,170 @@ fn member<R: Read + Seek>(archive: &mut zip::ZipArchive<R>, name: &str, max: u64
 }
 
 /// The SHA-256 of AppxBlockMap.xml that the package's signature carries, once Windows has found
-/// the signature Microsoft's.
-fn signed_block_map_hash(signature: &[u8], scratch: &Path) -> Result<Vec<u8>> {
-    // The Store's signing certificates last days, so the chain is checked at a time within the
-    // signer's validity, as the package was signed; its root must be Microsoft's own.
-    const SCRIPT: &str = r#"
-$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
-trap { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
-Add-Type -AssemblyName System.Security
-$b = [IO.File]::ReadAllBytes($env:LOOKITAN_P7X)
-if ($b.Length -lt 8 -or [Text.Encoding]::ASCII.GetString($b, 0, 4) -ne 'PKCX') { throw 'not a package signature' }
-$cms = New-Object System.Security.Cryptography.Pkcs.SignedCms
-$cms.Decode($b[4..($b.Length - 1)])
-$cms.CheckSignature($true)
-if ($cms.ContentInfo.ContentType.Value -ne '1.3.6.1.4.1.311.2.1.4') { throw 'not an Authenticode signature' }
-$cert = $cms.SignerInfos[0].Certificate
-$chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain
-$chain.ChainPolicy.RevocationMode = 'NoCheck'
-$chain.ChainPolicy.ExtraStore.AddRange($cms.Certificates)
-$chain.ChainPolicy.VerificationTime = $cert.NotBefore.AddSeconds(($cert.NotAfter - $cert.NotBefore).TotalSeconds / 2)
-if (-not $chain.Build($cert)) { throw 'the signature does not chain to a trusted root' }
-if ($chain.ChainElements[$chain.ChainElements.Count - 1].Certificate.Thumbprint -ne '8F43288AD272F3103B6FB1428485EA3014C0BCFE') { throw 'not under the Microsoft Root Certificate Authority 2011' }
-if ($cert.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') { throw 'not signed by Microsoft Corporation' }
-$eku = $cert.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.37' }
-if (-not ($eku.EnhancedKeyUsages | Where-Object { $_.Value -eq '1.3.6.1.4.1.311.76.3.1' })) { throw 'not a Microsoft Store signature' }
-[Convert]::ToBase64String($cms.ContentInfo.Content)
-"#;
-    let path = scratch.join("AppxSignature.p7x");
-    std::fs::write(&path, signature)?;
-    let script: Vec<u8> = SCRIPT.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let script = base64::engine::general_purpose::STANDARD.encode(script);
-    let mut command = std::process::Command::new("powershell");
-    command.args(["-NoProfile", "-NonInteractive", "-EncodedCommand", script.as_str()]).env("LOOKITAN_P7X", &path);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let out = command.output().context("ask Windows to check the Snipping Tool's signature");
-    let _ = std::fs::remove_file(&path);
-    let out = out?;
-    if !out.status.success() {
-        bail!("a assinatura do pacote do Recorte não é da Microsoft: {}", String::from_utf8_lossy(&out.stderr).trim());
-    }
-    let content = base64::engine::general_purpose::STANDARD.decode(String::from_utf8_lossy(&out.stdout).trim()).context("read the signed digests")?;
+/// the signature Microsoft's (`signature::signed_content`).
+fn signed_block_map_hash(signature: &[u8]) -> Result<Vec<u8>> {
+    let content = signature::signed_content(signature).map_err(|e| anyhow::anyhow!("a assinatura do pacote do Recorte não é da Microsoft: {e:#}"))?;
     signed_digest(&content, b"AXBM").context("the signature carries no block map hash")
+}
+
+/// The package signature (`PKCX` and a PKCS #7 message), checked by Windows' CryptoAPI as .NET's
+/// `SignedCms` checked it through PowerShell before 2026-10-31 (a hidden PowerShell running an
+/// encoded script is what Windows Defender's heuristics flag): the signature must match its signer,
+/// and the signer chain to the Microsoft Root Certificate Authority 2011 and be Microsoft
+/// Corporation's Microsoft Store certificate. The Store's signing certificates last days, so the
+/// chain is checked at a time within the signer's validity, as the package was signed.
+#[cfg(windows)]
+mod signature {
+    use std::ffi::{c_void, CStr};
+
+    use anyhow::{ensure, Context, Result};
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::Security::Cryptography::*;
+
+    /// Authenticode's content type (SPC_INDIRECT_DATA).
+    const AUTHENTICODE: &str = "1.3.6.1.4.1.311.2.1.4";
+    /// The Microsoft Store's signing usage.
+    const STORE_SIGNING: &str = "1.3.6.1.4.1.311.76.3.1";
+    /// Microsoft Root Certificate Authority 2011's SHA-1 thumbprint.
+    const MICROSOFT_ROOT_2011: &str = "8F43288AD272F3103B6FB1428485EA3014C0BCFE";
+
+    struct Message(*mut c_void);
+    impl Drop for Message {
+        fn drop(&mut self) {
+            let _ = unsafe { CryptMsgClose(Some(self.0 as *const c_void)) };
+        }
+    }
+
+    struct Store(HCERTSTORE);
+    impl Drop for Store {
+        fn drop(&mut self) {
+            let _ = unsafe { CertCloseStore(Some(self.0), 0) };
+        }
+    }
+
+    struct Cert(*const CERT_CONTEXT);
+    impl Drop for Cert {
+        fn drop(&mut self) {
+            let _ = unsafe { CertFreeCertificateContext(Some(self.0)) };
+        }
+    }
+
+    struct Chain(*mut CERT_CHAIN_CONTEXT);
+    impl Drop for Chain {
+        fn drop(&mut self) {
+            unsafe { CertFreeCertificateChain(self.0) };
+        }
+    }
+
+    /// What Windows writes, in a buffer aligned for the structure it may be.
+    struct Buffer {
+        words: Vec<u64>,
+        len: usize,
+    }
+
+    impl Buffer {
+        fn new(len: u32) -> Self {
+            Self { words: vec![0; (len as usize).div_ceil(8)], len: len as usize }
+        }
+
+        fn ptr(&mut self) -> *mut c_void {
+            self.words.as_mut_ptr().cast()
+        }
+
+        fn bytes(&self) -> &[u8] {
+            unsafe { std::slice::from_raw_parts(self.words.as_ptr().cast(), self.len) }
+        }
+    }
+
+    /// The decoded message's parameter `kind`.
+    fn param(message: &Message, kind: u32) -> Result<Buffer> {
+        let mut len = 0u32;
+        unsafe { CryptMsgGetParam(message.0, kind, 0, None, &mut len) }.with_context(|| format!("read the signature's parameter {kind}"))?;
+        let mut buffer = Buffer::new(len);
+        unsafe { CryptMsgGetParam(message.0, kind, 0, Some(buffer.ptr()), &mut len) }.with_context(|| format!("read the signature's parameter {kind}"))?;
+        buffer.len = len as usize;
+        Ok(buffer)
+    }
+
+    /// What `p7x` signed, once the checks above pass.
+    pub fn signed_content(p7x: &[u8]) -> Result<Vec<u8>> {
+        ensure!(p7x.len() >= 8 && &p7x[..4] == b"PKCX", "not a package signature");
+        let encoding = X509_ASN_ENCODING | PKCS_7_ASN_ENCODING;
+        let message = unsafe { CryptMsgOpenToDecode(encoding.0, 0, 0, None, None, None) };
+        ensure!(!message.is_null(), "the signature could not be opened: {}", windows::core::Error::from_thread());
+        let message = Message(message);
+        unsafe { CryptMsgUpdate(message.0, Some(&p7x[4..]), true) }.context("not a PKCS #7 signature")?;
+
+        let kind = param(&message, CMSG_INNER_CONTENT_TYPE_PARAM)?;
+        let kind = CStr::from_bytes_until_nul(kind.bytes()).ok().and_then(|k| k.to_str().ok()).unwrap_or_default();
+        ensure!(kind == AUTHENTICODE, "not an Authenticode signature");
+
+        // The signer's certificate, among the message's own.
+        let store = unsafe { CertOpenStore(CERT_STORE_PROV_MSG, encoding, None, CERT_OPEN_STORE_FLAGS(0), Some(message.0 as *const c_void)) }
+            .context("read the signature's certificates")?;
+        let store = Store(store);
+        let mut info = param(&message, CMSG_SIGNER_CERT_INFO_PARAM)?;
+        let signer = unsafe { CertGetSubjectCertificateFromStore(store.0, encoding, info.ptr() as *const CERT_INFO) };
+        ensure!(!signer.is_null(), "the signature has no signer's certificate");
+        let signer = Cert(signer);
+        let signer_info = unsafe { &*(*signer.0).pCertInfo };
+        unsafe { CryptMsgControl(message.0, 0, CMSG_CTRL_VERIFY_SIGNATURE, Some(signer_info as *const CERT_INFO as *const c_void)) }
+            .context("the signature does not match its signer")?;
+
+        // Its chain, at the middle of the signer's validity, without revocation.
+        let time = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+        let middle = time(signer_info.NotBefore) / 2 + time(signer_info.NotAfter) / 2;
+        let at = FILETIME { dwLowDateTime: middle as u32, dwHighDateTime: (middle >> 32) as u32 };
+        let para = CERT_CHAIN_PARA { cbSize: std::mem::size_of::<CERT_CHAIN_PARA>() as u32, ..Default::default() };
+        let mut chain: *mut CERT_CHAIN_CONTEXT = std::ptr::null_mut();
+        unsafe { CertGetCertificateChain(None, signer.0, Some(&at as *const FILETIME), Some(store.0), &para, 0, None, &mut chain) }.context("build the signature's chain")?;
+        let chain = Chain(chain);
+        let status = unsafe { (*chain.0).TrustStatus.dwErrorStatus };
+        ensure!(status == 0, "the signature does not chain to a trusted root (status {status:#x})");
+        let root = unsafe {
+            let context = &*chain.0;
+            ensure!(context.cChain > 0, "the signature has no chain");
+            let simple = &**context.rgpChain;
+            ensure!(simple.cElement > 0, "the signature's chain is empty");
+            (**simple.rgpElement.add(simple.cElement as usize - 1)).pCertContext
+        };
+        let mut thumbprint = [0u8; 20];
+        let mut len = thumbprint.len() as u32;
+        unsafe { CertGetCertificateContextProperty(root, CERT_SHA1_HASH_PROP_ID, Some(thumbprint.as_mut_ptr().cast()), &mut len) }
+            .context("read the root's thumbprint")?;
+        let thumbprint: String = thumbprint[..len as usize].iter().map(|b| format!("{b:02X}")).collect();
+        ensure!(thumbprint == MICROSOFT_ROOT_2011, "not under the Microsoft Root Certificate Authority 2011");
+
+        let mut name = [0u16; 256];
+        let n = unsafe { CertGetNameStringW(signer.0, CERT_NAME_ATTR_TYPE, 0, Some(szOID_ORGANIZATION_NAME.0 as *const c_void), Some(&mut name[..])) };
+        let organization = String::from_utf16_lossy(&name[..(n as usize).saturating_sub(1)]);
+        ensure!(organization == "Microsoft Corporation", "not signed by Microsoft Corporation");
+        ensure!(usages(signer.0).iter().any(|u| u == STORE_SIGNING), "not a Microsoft Store signature");
+
+        Ok(param(&message, CMSG_CONTENT_PARAM)?.bytes().to_vec())
+    }
+
+    /// The certificate's enhanced key usages, from its extension.
+    fn usages(cert: *const CERT_CONTEXT) -> Vec<String> {
+        let flags = CERT_FIND_EXT_ONLY_ENHKEY_USAGE_FLAG.0;
+        let mut len = 0u32;
+        if unsafe { CertGetEnhancedKeyUsage(cert, flags, None, &mut len) }.is_err() {
+            return Vec::new();
+        }
+        let mut buffer = Buffer::new(len);
+        if unsafe { CertGetEnhancedKeyUsage(cert, flags, Some(buffer.ptr().cast()), &mut len) }.is_err() {
+            return Vec::new();
+        }
+        let usage = unsafe { &*(buffer.ptr() as *const CTL_USAGE) };
+        (0..usage.cUsageIdentifier as usize).filter_map(|i| unsafe { (*usage.rgpszUsageIdentifier.add(i)).to_string() }.ok()).collect()
+    }
+}
+
+#[cfg(not(windows))]
+mod signature {
+    pub fn signed_content(_p7x: &[u8]) -> anyhow::Result<Vec<u8>> {
+        anyhow::bail!("it is checked on Windows only")
+    }
 }
 
 /// One of the digests a package signature's content carries (`AXBM`: the block map's), each a tag
@@ -348,6 +465,15 @@ mod tests {
 
         let other = xml.replace("xmlenc#sha256", "xmldsig#sha1");
         assert!(block_map(other.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn a_signature_that_is_not_a_package_s_is_refused() {
+        assert!(signed_block_map_hash(b"").is_err());
+        assert!(signed_block_map_hash(b"MZ\x90\0not a signature").is_err());
+        // A package signature's magic, then no PKCS #7 message.
+        assert!(signed_block_map_hash(b"PKCX\x30\x03\x02\x01\x00").is_err());
+        assert!(signed_block_map_hash(b"PKCXgarbage, not DER at all").is_err());
     }
 
     #[test]

@@ -1,7 +1,8 @@
 // Microsoft's OneOCR, the OCR of Windows 11's Snipping Tool, as an OCR engine (Windows only), at the
 // user's request on 2026-10-28, as owocr uses it: its three files (oneocr.dll, oneocr.onemodel and
 // Microsoft's own onnxruntime.dll) are copied from the Snipping Tool installed on this computer
-// (`Get-AppxPackage Microsoft.ScreenSketch`) into the app's local data, or, without one, read out
+// (found by its package family, as `Get-AppxPackage Microsoft.ScreenSketch` finds it, but asked of
+// Windows directly: no PowerShell) into the app's local data, or, without one, read out
 // of the Snipping Tool's package on Microsoft's servers (ocr/store.rs, as LunaTranslator does);
 // they are Microsoft's, never in the installers.
 //
@@ -93,22 +94,47 @@ fn copy(to: &Path, progress: &dyn Fn(u64)) -> Result<String> {
     Ok(location.file_name().and_then(|n| n.to_str()).and_then(|n| n.split('_').nth(1)).unwrap_or_default().to_string())
 }
 
-/// The Snipping Tool's install folder, as owocr finds it.
+/// The Snipping Tool's install folder: the current user's package of its family that has OneOCR's
+/// files (or, with none that has them, the first, so `copy` says which is missing).
+#[cfg(windows)]
 fn snipping_tool() -> Result<PathBuf> {
-    let mut command = std::process::Command::new("powershell");
-    command.args(["-NoProfile", "-NonInteractive", "-Command", "(Get-AppxPackage Microsoft.ScreenSketch).InstallLocation"]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::Storage::Packaging::Appx::{GetPackagePathByFullName, GetPackagesByPackageFamily};
+
+    let family: Vec<u16> = super::store::FAMILY.encode_utf16().chain([0]).collect();
+    let (mut count, mut len) = (0u32, 0u32);
+    // The first call gives how many packages and how long their names are.
+    let _ = unsafe { GetPackagesByPackageFamily(PCWSTR(family.as_ptr()), &mut count, None, &mut len, None) };
+    if count == 0 {
+        bail!("o Recorte (Snipping Tool) não está instalado");
     }
-    let out = command.output().context("ask Windows where the Snipping Tool is")?;
-    let location = String::from_utf8_lossy(&out.stdout).lines().map(str::trim).find(|l| !l.is_empty()).map(PathBuf::from);
-    match location {
-        Some(path) if path.is_dir() => Ok(path),
-        _ => bail!("o Recorte (Snipping Tool) não está instalado"),
+    let mut names = vec![PWSTR::null(); count as usize];
+    let mut buffer = vec![0u16; len as usize];
+    let code = unsafe { GetPackagesByPackageFamily(PCWSTR(family.as_ptr()), &mut count, Some(names.as_mut_ptr()), &mut len, Some(PWSTR(buffer.as_mut_ptr()))) };
+    if code != ERROR_SUCCESS {
+        bail!("o Windows não disse onde está o Recorte (erro {})", code.0);
     }
+    let mut found = None;
+    for name in names.iter().take(count as usize) {
+        let mut n = 0u32;
+        let _ = unsafe { GetPackagePathByFullName(PCWSTR(name.0), &mut n, None) };
+        let mut path = vec![0u16; n as usize];
+        if n == 0 || unsafe { GetPackagePathByFullName(PCWSTR(name.0), &mut n, Some(PWSTR(path.as_mut_ptr()))) } != ERROR_SUCCESS {
+            continue;
+        }
+        let path = PathBuf::from(String::from_utf16_lossy(&path[..(n as usize).saturating_sub(1)]));
+        if path.join("SnippingTool").join(FILES[0]).is_file() {
+            return Ok(path);
+        }
+        found.get_or_insert(path);
+    }
+    found.filter(|p| p.is_dir()).context("o Recorte (Snipping Tool) não está instalado")
+}
+
+#[cfg(not(windows))]
+fn snipping_tool() -> Result<PathBuf> {
+    bail!("o Recorte (Snipping Tool) existe só no Windows")
 }
 
 pub fn remove() -> Result<()> {

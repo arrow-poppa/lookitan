@@ -88,8 +88,9 @@ lzma-rust2 = { version = "0.22", default-features = false, features = ["std", "x
 
 [target.'cfg(windows)'.dependencies]
 # Whether the video card is dedicated (ocr/gpu_kind.rs): Direct3D 12 asked whether DirectML's adapter is
-# UMA. The same version Tauri's WebView2 already builds.
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
+# UMA. The same version Tauri's WebView2 already builds. Also where the Snipping Tool is installed
+# (ocr/oneocr.rs) and its package signature checked (ocr/store.rs), by Windows itself, not PowerShell.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Security_Cryptography", "Win32_Storage_Packaging_Appx"] }
 # PlayStation pads' HID reports (gamepad/playstation.rs), which XInput does not see.
 hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
 ort ={ version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24", "directml"] }

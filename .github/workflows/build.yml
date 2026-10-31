@@ -196,6 +196,17 @@ jobs:
         if: matrix.platform == 'linux'
         run: python scripts/check-linux-rpm.py
 
+      # Windows Defender's heuristics flagged an installer while the app ran a hidden PowerShell
+      # with an encoded script (2026-10-31): the app asks Windows directly now, and this keeps it so.
+      # Other mentions of PowerShell (a dependency's) are listed, not failed on.
+      - name: Check the app runs no encoded PowerShell
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          exe=src-tauri/target/release/lookitan.exe
+          if grep -a -c -i "EncodedCommand" "$exe"; then echo "::error::$exe holds EncodedCommand"; exit 1; fi
+          echo "mentions of powershell in $exe: $(grep -a -o -i 'powershell[[:print:]]\{0,40\}' "$exe" | sort | uniq -c | head -20 || true)"
+
       - name: Upload installers
         if: always()
         uses: actions/upload-artifact@v4
