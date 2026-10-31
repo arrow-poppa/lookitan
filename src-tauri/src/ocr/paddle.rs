@@ -1090,7 +1090,29 @@ fn gpu_builder(choice: Option<GpuPreference>) -> Result<SessionBuilder> {
         };
         ep = ep.with_arbitrary_config("ep.webgpuexecutionprovider.powerPreference", value);
     }
+    // On an integrated card the GPU's buffers are the system's RAM: the freed ones go back at the
+    // end of each run, as the CPU's arena does (`run_options`). A dedicated card keeps ONNX Runtime's
+    // buckets, which keep them for reuse in the card's own memory.
+    if !dedicated_card(choice) {
+        ep = ep.with_arbitrary_config("ep.webgpuexecutionprovider.storageBufferCacheMode", "lazyRelease");
+    }
     Ok(ortx!(b.with_execution_providers([ep.build().error_on_failure()])))
+}
+
+/// Whether Dawn's card is dedicated (`gpu_kind`; unknown counts as integrated), asked once per
+/// card choice: it opens a Vulkan instance.
+#[cfg(target_os = "linux")]
+fn dedicated_card(choice: Option<GpuPreference>) -> bool {
+    static KNOWN: Mutex<Option<(Option<GpuPreference>, bool)>> = Mutex::new(None);
+    let mut known = KNOWN.lock();
+    match *known {
+        Some((c, dedicated)) if c == choice => dedicated,
+        _ => {
+            let dedicated = super::gpu_kind::dedicated(choice).unwrap_or(false);
+            *known = Some((choice, dedicated));
+            dedicated
+        }
+    }
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
