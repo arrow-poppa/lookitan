@@ -290,6 +290,9 @@ fn ensure_ort(state: &AppState) -> Result<()> {
         }
         let builder = ort::init_from(&path).map_err(|e| anyhow!("load {}: {e}", path.display()))?;
         builder.with_name("lookitan").commit();
+        // The environment is made now, under the "C" locale, not at the first session under the
+        // desktop's: with pt_BR's IndraOCR's LineNet found no line (platform/locale.rs).
+        platform::locale::in_c(ort::environment::Environment::current).map_err(|e| anyhow!("ONNX Runtime environment: {e}"))?;
         Ok(())
     })();
     *ready = Some(result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}")));

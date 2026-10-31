@@ -6,6 +6,7 @@ pub mod kwin;
 #[cfg(windows)]
 pub mod win;
 pub mod geometry;
+pub mod locale;
 pub mod memory;
 pub mod priority;
 

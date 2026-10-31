@@ -309,14 +309,6 @@ impl IndraDet {
             return Ok(Vec::new());
         }
         let page = GrayImage::from_fn(w, h, |x, y| Luma([grey(img.get_pixel(x, y))]));
-        // TEMPORARY diagnostic (the user's Linux finds no line): the image as IndraOCR gets it.
-        if w > 64 && h > 64 {
-            let path = std::env::temp_dir().join("lookitan-indra-capture.png");
-            match img.save(&path) {
-                Ok(()) => log::info!("IndraOCR's capture saved to {}", path.display()),
-                Err(e) => log::warn!("saving IndraOCR's capture: {e}"),
-            }
-        }
         let (mut lines, mut scale) = self.detect_at(&page, DET_LONG_SIDE)?;
         let first = lines.len();
         // Lines too small for the model: once more, larger.
@@ -352,18 +344,12 @@ impl IndraDet {
         let scale = long_side as f32 / w.max(h) as f32;
         let (nw, nh) = (((w as f32 * scale).round() as u32).max(1), ((h as f32 * scale).round() as u32).max(1));
         let resized = if (nw, nh) == (w, h) { page.clone() } else { image::imageops::resize(page, nw, nh, FilterType::Triangle) };
-        // TEMPORARY diagnostic: the grey image LineNet is given (before the ink is taken).
-        if w > 64 && h > 64 {
-            let _ = resized.save(std::env::temp_dir().join(format!("lookitan-linenet-input-{long_side}.png")));
-        }
         let (pw, ph) = (nw.div_ceil(DET_MULTIPLE) * DET_MULTIPLE, nh.div_ceil(DET_MULTIPLE) * DET_MULTIPLE);
         // Ink: 0 is paper, as the padding is.
         let mut data = vec![0f32; (pw * ph) as usize];
         for (x, y, p) in resized.enumerate_pixels() {
             data[(y * pw + x) as usize] = 1.0 - p.0[0] as f32 / 255.0;
         }
-        // TEMPORARY diagnostic: the exact tensor given to the model.
-        let dump = data.clone();
         let input = ortx!(Tensor::from_array(([1usize, 1, ph as usize, pw as usize], data)));
         let (dims, out) = self.session.lock().run(cpu_session, |s, on_cpu| {
             let outputs = infer(s, ort::inputs![input.view()], on_cpu)?;
@@ -383,33 +369,6 @@ impl IndraDet {
             let top = core.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let positive = core.iter().filter(|&&v| v > 0.0).count();
             log::info!("IndraOCR's LineNet input {nw}×{nh} (padded {pw}×{ph}): mean ink {mean:.3}, {:.1}% over 0.5; output {dims:?}, core logit max {top:.2}, {positive} positive", inked * 100.0);
-            // TEMPORARY diagnostic: the tensors in and out, NaNs, and the same input in a new
-            // session run without run options, to tell a spoiled session from a wrong computation.
-            if w > 64 && h > 64 {
-                let bytes = |v: &[f32]| v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>();
-                let dir = std::env::temp_dir();
-                let _ = std::fs::write(dir.join("lookitan-linenet-x.f32"), bytes(&dump));
-                let _ = std::fs::write(dir.join("lookitan-linenet-out.f32"), bytes(&out));
-                let nans = out.iter().filter(|v| v.is_nan()).count();
-                let infs = out.iter().filter(|v| v.is_infinite()).count();
-                let path = self.session.lock().cpu_path.clone();
-                let fresh = cpu_session(&path).and_then(|mut fresh| {
-                    let x = ortx!(Tensor::from_array(([1usize, 1, ph as usize, pw as usize], dump.clone())));
-                    let outputs = ortx!(fresh.run(ort::inputs![x.view()]));
-                    let (_, o) = ortx!(outputs[0].try_extract_tensor::<f32>());
-                    let c = &o[..plane.min(o.len())];
-                    Ok((c.iter().copied().fold(f32::NEG_INFINITY, f32::max), c.iter().filter(|&&v| v > 0.0).count()))
-                });
-                log::info!(
-                    "IndraOCR's LineNet diagnostic: {nans} NaN and {infs} infinite outputs of {}; tensors in {}; a new session on the same input: {}",
-                    out.len(),
-                    dir.display(),
-                    match fresh {
-                        Ok((m, p)) => format!("core logit max {m:.2}, {p} positive"),
-                        Err(e) => format!("failed: {e:#}"),
-                    }
-                );
-            }
         }
         Ok((decode_lines(&out, dims[2] as usize, dims[3] as usize), scale))
     }
