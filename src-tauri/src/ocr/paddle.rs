@@ -9,13 +9,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{bail, Context, Result};
 use image::imageops::FilterType;
 use image::{Rgba, RgbaImage};
 use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
-use ort::session::Session;
+use ort::session::{RunOptions, Session, SessionInputs, SessionOutputs};
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
@@ -65,7 +65,8 @@ mod tests {
                         released: released.clone(),
                     })
                 },
-                |s| {
+                |s, on_cpu| {
+                    assert_eq!(on_cpu, !s.gpu, "the closure is told the session's device");
                     if s.gpu {
                         bail!("Add.176: 8007000E");
                     }
@@ -77,7 +78,10 @@ mod tests {
         assert!(!session.on_gpu.load(Ordering::Relaxed));
         assert_eq!(
             session
-                .run(|_| panic!("CPU session must be reused"), |_| Ok(7))
+                .run(|_| panic!("CPU session must be reused"), |_, on_cpu| {
+                    assert!(on_cpu);
+                    Ok(7)
+                })
                 .unwrap(),
             7
         );
@@ -179,7 +183,10 @@ mod tests {
     #[test]
     fn successful_gpu_inference_does_not_load_cpu() {
         let mut session = fake_session(true);
-        assert_eq!(session.run(|_| panic!("CPU must not load"), |_| Ok(42)).unwrap(), 42);
+        assert_eq!(session.run(|_| panic!("CPU must not load"), |_, on_cpu| {
+            assert!(!on_cpu);
+            Ok(42)
+        }).unwrap(), 42);
         assert!(session.on_gpu.load(Ordering::Relaxed));
     }
 
@@ -189,7 +196,7 @@ mod tests {
         let error = session
             .run(
                 |_| panic!("CPU must not reload"),
-                |_| -> Result<()> { bail!("CPU error") },
+                |_, _| -> Result<()> { bail!("CPU error") },
             )
             .unwrap_err();
         assert_eq!(error.to_string(), "CPU error");
@@ -199,7 +206,7 @@ mod tests {
     fn failed_cpu_load_can_be_retried_on_the_next_input() {
         let mut session = fake_session(true);
         let error = session
-            .run(|_| bail!("missing CPU model"), |_| -> Result<()> { bail!("GPU error") })
+            .run(|_| bail!("missing CPU model"), |_, _| -> Result<()> { bail!("GPU error") })
             .unwrap_err();
         assert!(format!("{error:#}").contains("missing CPU model"));
         assert!(session.session.is_none());
@@ -212,7 +219,7 @@ mod tests {
                         released: Arc::new(AtomicBool::new(false)),
                     })
                 },
-                |_| Ok(()),
+                |_, _| Ok(()),
             )
             .unwrap();
     }
@@ -951,13 +958,15 @@ impl<S> InferenceSession<S> {
     pub(crate) fn run<T>(
         &mut self,
         create_cpu: impl FnOnce(&Path) -> Result<S>,
-        mut infer: impl FnMut(&mut S) -> Result<T>,
+        mut infer: impl FnMut(&mut S, bool) -> Result<T>,
     ) -> Result<T> {
         let mut create_cpu = Some(create_cpu);
         if self.session.is_none() {
             self.session = Some(create_cpu.take().unwrap()(&self.cpu_path)?);
         }
-        match infer(self.session.as_mut().unwrap()) {
+        // Whether the session is on the CPU, which sets its run options (`run_options`).
+        let on_cpu = !self.on_gpu.load(Ordering::Relaxed);
+        match infer(self.session.as_mut().unwrap(), on_cpu) {
             Ok(output) => Ok(output),
             Err(gpu_error) if self.on_gpu.load(Ordering::Relaxed) => {
                 log::warn!("Ocr.GpuFallback.{} during inference: {gpu_error:#}", self.stage);
@@ -968,7 +977,7 @@ impl<S> InferenceSession<S> {
                     create_cpu.take().unwrap()(&self.cpu_path)
                         .with_context(|| format!("{} CPU recovery after GPU failure ({gpu_error:#})", self.stage))?,
                 );
-                infer(self.session.as_mut().unwrap())
+                infer(self.session.as_mut().unwrap(), true)
                     .with_context(|| format!("{} CPU retry after GPU failure ({gpu_error:#})", self.stage))
             }
             Err(error) => Err(error),
@@ -1012,6 +1021,35 @@ pub(crate) fn cpu_session_from_memory(model: &[u8]) -> Result<Session> {
 pub(crate) fn gpu_session_from_memory(model: &[u8], choice: Option<GpuPreference>) -> Result<Session> {
     let mut b = gpu_builder(choice)?;
     Ok(ortx!(b.commit_from_memory(model)))
+}
+
+/// Runs `session` with the run options for its device (`run_options`).
+pub(crate) fn infer<'s, 'i, 'v: 'i, const N: usize>(
+    session: &'s mut Session,
+    inputs: impl Into<SessionInputs<'i, 'v, N>>,
+    on_cpu: bool,
+) -> Result<SessionOutputs<'s>> {
+    Ok(ortx!(session.run_with_options(inputs, run_options(on_cpu)?)))
+}
+
+/// On the CPU, ONNX Runtime's memory arena gives back what a run took past its first chunk when
+/// the run ends. Otherwise it keeps the largest run's memory for as long as the model is loaded: a
+/// whole-screen pass left det_small holding 273 MB, rec_small 508 MB and IndraOCR's CJK
+/// recognizer 750 MB, against 55, 176 and 62 MB shrunk, for 0–30 ms more on those large runs and
+/// nothing on the lines under the pointer (measured on the user's Fedora, 2026-10-31). The GPU's
+/// memory is the provider's own and is left as it is.
+fn run_options(on_cpu: bool) -> Result<&'static RunOptions> {
+    static PLAIN: OnceLock<RunOptions> = OnceLock::new();
+    static SHRINK: OnceLock<RunOptions> = OnceLock::new();
+    let cell = if on_cpu { &SHRINK } else { &PLAIN };
+    if let Some(options) = cell.get() {
+        return Ok(options);
+    }
+    let mut options = ortx!(RunOptions::new());
+    if on_cpu {
+        ortx!(options.add_config_entry("memory.enable_memory_arena_shrinkage", "cpu:0"));
+    }
+    Ok(cell.get_or_init(|| options))
 }
 
 #[cfg(windows)]
@@ -1311,8 +1349,8 @@ impl PaddleOcr {
 
         let (mh, mw, prob) = {
             let mut det = self.det.lock();
-            det.run(cpu_session, |session| {
-                let outputs = ortx!(session.run(ort::inputs![input.view()]));
+            det.run(cpu_session, |session, on_cpu| {
+                let outputs = infer(session, ort::inputs![input.view()], on_cpu)?;
                 let (shape, prob) = ortx!(outputs[0].try_extract_tensor::<f32>());
                 if shape.len() != 4 {
                     bail!("unexpected detector output shape {:?}", &shape[..]);
@@ -1413,8 +1451,8 @@ impl PaddleOcr {
     fn run_rec(&self, data: Vec<f32>, n: usize, padded_w: usize) -> Result<(usize, usize, Vec<f32>)> {
         let input = ortx!(Tensor::from_array(([n, 3, REC_HEIGHT as usize, padded_w], data)));
         let mut rec = self.rec.lock();
-        rec.run(cpu_session, |session| {
-            let outputs = ortx!(session.run(ort::inputs![input.view()]));
+        rec.run(cpu_session, |session, on_cpu| {
+            let outputs = infer(session, ort::inputs![input.view()], on_cpu)?;
             let (shape, probs) = ortx!(outputs[0].try_extract_tensor::<f32>());
             if shape.len() != 3 || shape[0] as usize != n {
                 bail!("unexpected recognizer output shape {:?}", &shape[..]);

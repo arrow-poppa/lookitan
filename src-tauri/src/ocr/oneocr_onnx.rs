@@ -32,7 +32,7 @@ use ort::value::Tensor;
 use parking_lot::Mutex;
 
 use super::onemodel::OneModel;
-use super::paddle::{cpu_session_from_memory, gpu_session_from_memory, BoxReader, Glyph, InferenceSession, TextBox};
+use super::paddle::{cpu_session_from_memory, gpu_session_from_memory, infer, BoxReader, Glyph, InferenceSession, TextBox};
 use crate::settings::GpuPreference;
 
 /// The detector's levels: stride, and the score a piece of text must pass.
@@ -243,8 +243,8 @@ impl OneOcrOnnx {
         let input = ortx!(Tensor::from_array(([1usize, 3, ph as usize, pw as usize], data)));
         let info = ortx!(Tensor::from_array(([1usize, 3], vec![ph as f32, pw as f32, 1.0])));
         let det_name = self.model.detector().map(str::to_string);
-        let maps = self.det.lock().run(|_| self.cpu_again(det_name.as_deref()), |s| {
-            let outputs = ortx!(s.run(ort::inputs!["data" => input.view(), "im_info" => info.view()]));
+        let maps = self.det.lock().run(|_| self.cpu_again(det_name.as_deref()), |s, on_cpu| {
+            let outputs = infer(s, ort::inputs!["data" => input.view(), "im_info" => info.view()], on_cpu)?;
             let mut maps = std::collections::HashMap::new();
             for way in ["hori", "vert"] {
                 for level in 2..=4 {
@@ -325,8 +325,8 @@ impl OneOcrOnnx {
     fn script_of(&self, line: &[f32], width: usize, prefer: &'static str) -> Result<&'static str> {
         let input = ortx!(Tensor::from_array(([1usize, 3, LINE_HEIGHT as usize, width], line.to_vec())));
         let cls_name = self.model.classifier().map(str::to_string);
-        let scores = self.scripts.lock().run(|_| self.cpu_again(cls_name.as_deref()), |s| {
-            let outputs = ortx!(s.run(ort::inputs!["data" => input.view()]));
+        let scores = self.scripts.lock().run(|_| self.cpu_again(cls_name.as_deref()), |s, on_cpu| {
+            let outputs = infer(s, ort::inputs!["data" => input.view()], on_cpu)?;
             let (_, scores) = ortx!(outputs["script_id_score"].try_extract_tensor::<f32>());
             Ok(scores.to_vec())
         })?;
@@ -341,8 +341,8 @@ impl OneOcrOnnx {
         let lengths = ortx!(Tensor::from_array(([1usize], vec![(width / 4) as i32])));
         let (onnx, _) = self.model.recognizer(group).context("its recognizer")?;
         let onnx = onnx.to_string();
-        let (frames, classes, logp) = rec.session.lock().run(|_| self.cpu_again(Some(&onnx)), |s| {
-            let outputs = ortx!(s.run(ort::inputs!["data" => input.view(), "seq_lengths" => lengths.view()]));
+        let (frames, classes, logp) = rec.session.lock().run(|_| self.cpu_again(Some(&onnx)), |s, on_cpu| {
+            let outputs = infer(s, ort::inputs!["data" => input.view(), "seq_lengths" => lengths.view()], on_cpu)?;
             let (shape, logp) = ortx!(outputs[0].try_extract_tensor::<f32>());
             if shape.len() != 3 {
                 bail!("unexpected OneOCR recognizer output shape {:?}", &shape[..]);

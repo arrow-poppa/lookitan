@@ -18,7 +18,7 @@ use image::RgbaImage;
 use ort::value::Tensor;
 use parking_lot::Mutex;
 
-use super::paddle::{cpu_session, db_boxes, gpu_session, InferenceSession, TextBox};
+use super::paddle::{cpu_session, db_boxes, gpu_session, infer, InferenceSession, TextBox};
 use crate::settings::GpuPreference;
 
 pub const FILE: &str = "comictextdetector.pt.onnx";
@@ -87,8 +87,8 @@ impl CtdDet {
             }
         }
         let input = ortx!(Tensor::from_array(([1usize, 3, INPUT as usize, INPUT as usize], data)));
-        let (dims, map) = self.session.lock().run(cpu_session, |s| {
-            let outputs = ortx!(s.run(ort::inputs![input.view()]));
+        let (dims, map) = self.session.lock().run(cpu_session, |s, on_cpu| {
+            let outputs = infer(s, ort::inputs![input.view()], on_cpu)?;
             let (shape, map) = ortx!(outputs["det"].try_extract_tensor::<f32>());
             Ok((shape[..].to_vec(), map.to_vec()))
         })?;

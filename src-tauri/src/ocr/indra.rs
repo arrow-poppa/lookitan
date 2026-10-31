@@ -31,7 +31,7 @@ use ort::value::Tensor;
 use parking_lot::Mutex;
 use unicode_normalization::char::compose;
 
-use super::paddle::{cpu_session, gpu_session, BoxReader, Glyph, InferenceSession, TextBox};
+use super::paddle::{cpu_session, gpu_session, infer, BoxReader, Glyph, InferenceSession, TextBox};
 use crate::settings::GpuPreference;
 
 const LINE_HEIGHT: u32 = 32;
@@ -202,8 +202,8 @@ impl IndraRec {
         }
         let input = ortx!(Tensor::from_array(([prepared.len(), 1, height, padded], data)));
         let widths = ortx!(Tensor::from_array(([prepared.len()], widths)));
-        let (steps, ids, conf, lengths) = self.session.lock().run(cpu_session, |s| {
-            let outputs = ortx!(s.run(ort::inputs![input.view(), widths.view()]));
+        let (steps, ids, conf, lengths) = self.session.lock().run(cpu_session, |s, on_cpu| {
+            let outputs = infer(s, ort::inputs![input.view(), widths.view()], on_cpu)?;
             let (shape, ids) = ortx!(outputs["ids"].try_extract_tensor::<i64>());
             let (_, conf) = ortx!(outputs["conf"].try_extract_tensor::<f32>());
             let (_, lengths) = ortx!(outputs["lengths"].try_extract_tensor::<i64>());
@@ -343,8 +343,8 @@ impl IndraDet {
             data[(y * pw + x) as usize] = 1.0 - p.0[0] as f32 / 255.0;
         }
         let input = ortx!(Tensor::from_array(([1usize, 1, ph as usize, pw as usize], data)));
-        let (dims, out) = self.session.lock().run(cpu_session, |s| {
-            let outputs = ortx!(s.run(ort::inputs![input.view()]));
+        let (dims, out) = self.session.lock().run(cpu_session, |s, on_cpu| {
+            let outputs = infer(s, ort::inputs![input.view()], on_cpu)?;
             let (shape, out) = ortx!(outputs[0].try_extract_tensor::<f32>());
             Ok((shape[..].to_vec(), out.to_vec()))
         })?;
