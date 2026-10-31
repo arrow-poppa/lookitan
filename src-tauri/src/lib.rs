@@ -108,6 +108,8 @@ pub struct AppState {
     indra: Mutex<DeviceSessions<IndraRec, IndraGroup>>,
     linenet: Mutex<DeviceSessions<IndraDet>>,
     ctd: Mutex<DeviceSessions<CtdDet>>,
+    /// When the last OCR pass started: the local models are freed `MODELS_IDLE` after it.
+    ocr_used: Mutex<Instant>,
     /// Whether the card OCR runs on (for the card choice it was asked for) is dedicated
     /// (`ocr::gpu_kind`), once known.
     gpu_dedicated: Mutex<Option<(Option<GpuPreference>, bool)>>,
@@ -774,6 +776,7 @@ enum Reading {
 /// Recognizes the lines around the pointer first. In a whole-screen pass the other boxes are
 /// returned in `rest` so the overlay can fill in while the user reads.
 fn ocr_pass(state: &AppState, settings: &Settings, kind: OcrEngineKind, image: &image::RgbaImage, px: f32, py: f32, reading: Reading) -> Result<OcrPass> {
+    *state.ocr_used.lock() = Instant::now();
     // Each engine's results, and each choice of its models', have their own key.
     let context = format!("{:?}|{}|{}|{:?}|{:?}|{}", kind, settings.ocr_language, settings.rec_model(), settings.models(kind), settings.plan_for(kind),
         if kind == OcrEngineKind::Lens { settings.lens_api_key.as_str() } else { "" });
@@ -1806,6 +1809,36 @@ fn free_unused_engines(state: &AppState, settings: &Settings) {
     }
 }
 
+/// How long the local models stay loaded without a lookup: Lookupper frees its OCR engine after 15
+/// minutes idle (REA: the `TimeSpan` its OCR service's constructor `0x140151a90` stores; 2026-10-30,
+/// at the user's request). ScreenAI's and OneOCR's helpers keep their own 5 minutes (`ocr::helper`).
+const MODELS_IDLE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Frees every local OCR model (PP-OCR, comic-text-detector, IndraOCR's) once no lookup has run for
+/// `MODELS_IDLE`; the next lookup loads them again. A pass still using one keeps it until it ends.
+fn free_models_when_idle(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        let state = app.state::<AppState>();
+        if state.ocr_used.lock().elapsed() < MODELS_IDLE {
+            continue;
+        }
+        let loaded = !state.paddle.lock().is_empty()
+            || !state.ctd.lock().is_empty()
+            || !state.linenet.lock().is_empty()
+            || !state.indra.lock().is_empty();
+        if loaded {
+            log::info!("no lookup for {} minutes; freeing the OCR models", MODELS_IDLE.as_secs() / 60);
+            state.paddle.lock().clear();
+            state.ctd.lock().clear();
+            state.linenet.lock().clear();
+            state.indra.lock().clear();
+            let _ = app.emit("engine-status", ());
+        }
+    });
+}
+
 fn warm_engine_in_background(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -2594,6 +2627,7 @@ pub fn run() {
                 linenet: Mutex::new(DeviceSessions::default()),
                 ctd: Mutex::new(DeviceSessions::default()),
                 gpu_dedicated: Mutex::new(None),
+                ocr_used: Mutex::new(Instant::now()),
                 screenai: ScreenAi::default(),
                 oneocr: OneOcr::default(),
                 downloads: Mutex::new(HashMap::new()),
@@ -2652,6 +2686,7 @@ pub fn run() {
                 });
             }
             warm_engine_in_background(&handle);
+            free_models_when_idle(&handle);
 
             let settings_item = MenuItem::with_id(app, "settings", "Lookitan", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

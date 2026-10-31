@@ -48,6 +48,10 @@ impl<T, K: Copy + PartialEq> DeviceSessions<T, K> {
         self.kept.clear();
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.kept.is_empty()
+    }
+
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.kept.len()
