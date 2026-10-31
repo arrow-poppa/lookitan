@@ -290,11 +290,15 @@ impl OneOcrOnnx {
         Ok(boxes)
     }
 
-    /// Runs the detector once so the first lookup does not pay for graph setup.
-    pub fn warm_up(&self) {
+    /// Runs the detector once and loads the recognizer of the OCR language `tag`, so the first
+    /// lookup does not pay for either.
+    pub fn warm_up(&self, tag: &str) {
         let blank = RgbaImage::from_pixel(96, 64, image::Rgba([255, 255, 255, 255]));
         if let Err(e) = self.detect_boxes(&blank) {
             log::warn!("OneOCR detector warm-up failed: {e:#}");
+        }
+        if let Err(e) = self.recognizer(group_of(tag)) {
+            log::warn!("OneOCR recognizer warm-up failed: {e:#}");
         }
     }
 
@@ -730,6 +734,7 @@ mod tests {
         let model = OneModel::open(&path).expect("open the model file");
         model.check().expect("every model OneOCR needs");
         let engine = OneOcrOnnx::new(&path, false, None).expect("load OneOCR's detector");
+        engine.warm_up("ja-JP");
         let plain = |s: &str| s.nfkc().filter(|c| !c.is_whitespace()).collect::<Vec<char>>();
         let cer = |got: &str, want: &str| {
             let (a, b) = (plain(got), plain(want));

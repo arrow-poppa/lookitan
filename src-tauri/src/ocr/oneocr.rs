@@ -391,7 +391,7 @@ impl OneOcr {
         // Drop the models it replaces before loading them again.
         *slot = None;
         let engine = Arc::new(OneOcrOnnx::new(&dir()?.join(FILES[1]), gpu, choice)?);
-        engine.warm_up();
+        engine.warm_up(&settings.ocr_language);
         *slot = Some(engine.clone());
         Ok(engine)
     }
