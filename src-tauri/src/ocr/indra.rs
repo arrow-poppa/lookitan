@@ -359,6 +359,17 @@ impl IndraDet {
         if dims.len() != 4 || dims[1] < 3 {
             bail!("unexpected IndraOCR detector output shape {dims:?}");
         }
+        {
+            // What the model saw and answered, for lookups that find no line.
+            let ink: Vec<f32> = resized.pixels().map(|p| 1.0 - p.0[0] as f32 / 255.0).collect();
+            let inked = ink.iter().filter(|&&v| v > 0.5).count() as f32 / ink.len().max(1) as f32;
+            let mean = ink.iter().sum::<f32>() / ink.len().max(1) as f32;
+            let plane = (dims[2] * dims[3]) as usize;
+            let core = &out[..plane.min(out.len())];
+            let top = core.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let positive = core.iter().filter(|&&v| v > 0.0).count();
+            log::info!("IndraOCR's LineNet input {nw}×{nh} (padded {pw}×{ph}): mean ink {mean:.3}, {:.1}% over 0.5; output {dims:?}, core logit max {top:.2}, {positive} positive", inked * 100.0);
+        }
         Ok((decode_lines(&out, dims[2] as usize, dims[3] as usize), scale))
     }
 }

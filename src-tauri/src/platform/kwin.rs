@@ -212,6 +212,7 @@ pub fn capture_rect(x: i32, y: i32, width: u32, height: u32) -> Result<Capture> 
     if data.len() < stride * h as usize {
         bail!("ScreenShot2 returned {} bytes for {w}x{h}", data.len());
     }
+    log::info!("ScreenShot2 capture {w}×{h}, QImage format {format}, stride {stride}, {} bytes", data.len());
     // QImage formats: 4/5/6 = (A)RGB32 stored as BGRA on little-endian; 16/17/18 = RGBA8888.
     let bgra = matches!(format, 4 | 5 | 6);
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
