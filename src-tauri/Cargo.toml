@@ -87,6 +87,9 @@ sevenz-rust2 = { version = "0.24", default-features = false, features = ["ppmd",
 lzma-rust2 = { version = "0.22", default-features = false, features = ["std", "xz", "encoder"] }
 
 [target.'cfg(windows)'.dependencies]
+# Whether the video card is dedicated (ocr/gpu_kind.rs): Direct3D 12 asked whether DirectML's adapter is
+# UMA. The same version Tauri's WebView2 already builds.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 # PlayStation pads' HID reports (gamepad/playstation.rs), which XInput does not see.
 hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
 ort ={ version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "api-24", "directml"] }
@@ -102,6 +105,9 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5.17"
+# Whether the video card is dedicated (ocr/gpu_kind.rs): Vulkan's device types, the loader opened at run
+# time (no link to libvulkan).
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
 
 [profile.release]
 codegen-units = 1

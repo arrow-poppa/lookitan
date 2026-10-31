@@ -49,11 +49,12 @@ use crate::ocr::indra::{Group as IndraGroup, IndraDet, IndraRec};
 use crate::ocr::models;
 use crate::ocr::oneocr::OneOcr;
 use crate::ocr::screenai::ScreenAi;
+use crate::ocr::sessions::DeviceSessions;
 use crate::ocr::paddle::{recognize_boxes_with, split_focus, PaddleOcr, PaddleUse, TextBox, MANGA_REC};
 use crate::ocr::OcrLine;
 use crate::platform::{Capture, ForegroundApp, SessionKind};
 use crate::platform::geometry::DisplayGeometry;
-use crate::settings::{AppProfile, Detector, DictionaryConfig, DictionaryKind, FreezeMode, OcrEngineKind, OcrScope, Recognizer, Settings};
+use crate::settings::{AppProfile, Detector, DictionaryConfig, DictionaryKind, FreezeMode, GpuPreference, OcrEngineKind, OcrScope, Recognizer, Settings};
 
 /// The last OCR pass: what the overlay shows and what clicks on it look up.
 struct Recognition {
@@ -102,12 +103,14 @@ pub struct AppState {
     ort_ready: Mutex<Option<std::result::Result<(), String>>>,
     lens: Mutex<Option<Arc<LensOcr>>>,
     bing: Mutex<Option<Arc<BingOcr>>>,
-    /// IndraOCR's recognizer for one group, and whether it was asked for the GPU.
-    indra: Mutex<Option<(IndraGroup, bool, Arc<IndraRec>)>>,
-    /// IndraOCR's line detector, and whether it was asked for the GPU.
-    linenet: Mutex<Option<(bool, Arc<IndraDet>)>>,
-    /// comic-text-detector, and whether it was asked for the GPU.
-    ctd: Mutex<Option<(bool, Arc<CtdDet>)>>,
+    /// IndraOCR's recognizer for one group, IndraOCR's line detector and comic-text-detector, on the
+    /// CPU and the GPU with a dedicated card, else on the device last asked for (`DeviceSessions`).
+    indra: Mutex<DeviceSessions<IndraRec, IndraGroup>>,
+    linenet: Mutex<DeviceSessions<IndraDet>>,
+    ctd: Mutex<DeviceSessions<CtdDet>>,
+    /// Whether the card OCR runs on (for the card choice it was asked for) is dedicated
+    /// (`ocr::gpu_kind`), once known.
+    gpu_dedicated: Mutex<Option<(Option<GpuPreference>, bool)>>,
     /// Chrome ScreenAI's and OneOCR's helper processes, started with their first lookup.
     screenai: ScreenAi,
     oneocr: OneOcr,
@@ -1009,17 +1012,33 @@ fn ctd_engine(state: &AppState, settings: &Settings, gpu: bool) -> Result<Arc<Ct
     require(state, Downloaded::Ctd, "do comic-text-detector")?;
     ensure_ort(state)?;
     let mut slot = state.ctd.lock();
-    if let Some((on, d)) = slot.as_ref() {
-        if *on == gpu {
-            return Ok(d.clone());
-        }
+    if let Some(d) = slot.get((), gpu) {
+        return Ok(d);
     }
-    // Drop the previous session before loading its replacement.
-    *slot = None;
+    // Drop what it replaces before loading it.
+    let both = slot.holds_other((), gpu) && dedicated_gpu(state, settings);
+    slot.make_room((), gpu, both);
     let d = Arc::new(CtdDet::new(&models::CTD.dir()?, gpu, settings.gpu_choice())?);
     d.warm_up();
-    *slot = Some((gpu, d.clone()));
+    slot.insert((), gpu, d.clone());
     Ok(d)
+}
+
+/// Whether the card OCR runs on has its own memory (`ocr::gpu_kind`), asked once per card choice and
+/// only when a model is about to be on both devices; an unknown card counts as integrated.
+fn dedicated_gpu(state: &AppState, settings: &Settings) -> bool {
+    let choice = settings.gpu_choice();
+    let mut known = state.gpu_dedicated.lock();
+    if let Some((c, dedicated)) = *known {
+        if c == choice {
+            return dedicated;
+        }
+    }
+    let found = ocr::gpu_kind::dedicated(choice);
+    log::info!("OCR's video card: {}", match found { Some(true) => "dedicated", Some(false) => "integrated", None => "unknown" });
+    let dedicated = found.unwrap_or(false);
+    *known = Some((choice, dedicated));
+    dedicated
 }
 
 /// What finds `kind`'s lines, or, for a page engine, the block under the pointer.
@@ -1043,16 +1062,15 @@ fn linenet_engine(state: &AppState, settings: &Settings, gpu: bool) -> Result<Ar
     }
     ensure_ort(state)?;
     let mut slot = state.linenet.lock();
-    if let Some((on, d)) = slot.as_ref() {
-        if *on == gpu {
-            return Ok(d.clone());
-        }
+    if let Some(d) = slot.get((), gpu) {
+        return Ok(d);
     }
-    // Drop the previous session before loading its replacement.
-    *slot = None;
+    // Drop what it replaces before loading it.
+    let both = slot.holds_other((), gpu) && dedicated_gpu(state, settings);
+    slot.make_room((), gpu, both);
     let d = Arc::new(IndraDet::new(&models::INDRA.dir()?, gpu, settings.gpu_choice())?);
     d.warm_up();
-    *slot = Some((gpu, d.clone()));
+    slot.insert((), gpu, d.clone());
     Ok(d)
 }
 
@@ -1068,15 +1086,14 @@ fn indra_engine(state: &AppState, settings: &Settings, gpu: bool) -> Result<Arc<
     let group = IndraGroup::of(&settings.ocr_language);
     ensure_ort(state)?;
     let mut slot = state.indra.lock();
-    if let Some((g, on, r)) = slot.as_ref() {
-        if *g == group && *on == gpu {
-            return Ok(r.clone());
-        }
+    if let Some(r) = slot.get(group, gpu) {
+        return Ok(r);
     }
-    // One group at a time: drop the previous sessions before loading their replacements.
-    *slot = None;
+    // One group at a time: drop what it replaces before loading it.
+    let both = slot.holds_other(group, gpu) && dedicated_gpu(state, settings);
+    slot.make_room(group, gpu, both);
     let r = Arc::new(IndraRec::new(&models::INDRA.dir()?, group, gpu, settings.gpu_choice())?);
-    *slot = Some((group, gpu, r.clone()));
+    slot.insert(group, gpu, r.clone());
     Ok(r)
 }
 
@@ -1174,8 +1191,8 @@ impl Downloaded {
                 ocr::oneocr::remove()
             }
             Downloaded::Indra => {
-                *state.indra.lock() = None;
-                *state.linenet.lock() = None;
+                state.indra.lock().clear();
+                state.linenet.lock().clear();
                 models::INDRA.remove()
             }
             Downloaded::Manga => {
@@ -1183,7 +1200,7 @@ impl Downloaded {
                 models::MANGA.remove()
             }
             Downloaded::Ctd => {
-                *state.ctd.lock() = None;
+                state.ctd.lock().clear();
                 models::CTD.remove()
             }
         }
@@ -1763,15 +1780,10 @@ fn free_unused_engines(state: &AppState, settings: &Settings) {
         // A PP-OCR load that failed no longer matters.
         *state.engine_error.write() = None;
     }
-    if !settings.detects_with(Detector::LineNet) {
-        *state.linenet.lock() = None;
-    }
-    if !settings.detects_with(Detector::Ctd) {
-        *state.ctd.lock() = None;
-    }
-    if !settings.reads_with(Recognizer::Indra) {
-        *state.indra.lock() = None;
-    }
+    // Each device's session goes once no selector runs the model there.
+    state.linenet.lock().keep_devices(&settings.det_devices(Detector::LineNet));
+    state.ctd.lock().keep_devices(&settings.det_devices(Detector::Ctd));
+    state.indra.lock().keep_devices(&settings.rec_devices(Recognizer::Indra));
     // A page engine no selector reads with ends its helper now, not after `IDLE`.
     let selected = [settings.engine_for(false), settings.engine_for(true)];
     if !selected.contains(&OcrEngineKind::ScreenAi) {
@@ -2073,12 +2085,13 @@ fn engines_status(state: &AppState, settings: &Settings) -> Vec<[String; 2]> {
     let waiting = "carrega na primeira consulta";
     let paddle: Vec<(PaddleUse, Arc<PaddleOcr>)> = state.paddle.try_lock().map(|cache| cache.clone()).unwrap_or_default();
     let loaded = |kind: OcrEngineKind| settings.paddle_use(kind).and_then(|u| paddle.iter().find(|(p, _)| *p == u).map(|(_, e)| e.clone()));
+    let det_gpu = |kind: OcrEngineKind| settings.models(kind).det_gpu;
     let det = |kind: OcrEngineKind| match settings.models(kind).det {
-        Detector::LineNet => match state.linenet.try_lock().and_then(|d| d.as_ref().map(|(_, d)| d.on_gpu())) {
+        Detector::LineNet => match state.linenet.try_lock().and_then(|d| d.get((), det_gpu(kind)).map(|d| d.on_gpu())) {
             Some(gpu) => format!("LineNet na {}", device(gpu)),
             None => format!("LineNet ({waiting})"),
         },
-        Detector::Ctd => match state.ctd.try_lock().and_then(|d| d.as_ref().map(|(_, d)| d.on_gpu())) {
+        Detector::Ctd => match state.ctd.try_lock().and_then(|d| d.get((), det_gpu(kind)).map(|d| d.on_gpu())) {
             Some(gpu) => format!("comic-text-detector na {}", device(gpu)),
             None => format!("comic-text-detector ({waiting})"),
         },
@@ -2094,7 +2107,9 @@ fn engines_status(state: &AppState, settings: &Settings) -> Vec<[String; 2]> {
             None => format!("{name} ({waiting})"),
         };
         match settings.models(kind).rec {
-            Recognizer::Indra => other("IndraOCR", state.indra.try_lock().and_then(|i| i.as_ref().map(|(_, _, i)| i.on_gpu()))),
+            Recognizer::Indra => other("IndraOCR", state.indra.try_lock().and_then(|i| {
+                i.get(IndraGroup::of(&settings.ocr_language), settings.rec_gpu_for(kind)).map(|i| i.on_gpu())
+            })),
             rec @ (Recognizer::Paddle | Recognizer::Manga | Recognizer::Page) => match loaded(kind) {
                 Some(p) => format!("PP-OCRv6 {} na {}", p.rec_model, device(p.rec_on_gpu())),
                 None => format!("PP-OCRv6 {} ({waiting})", if rec == Recognizer::Manga { MANGA_REC } else { settings.rec_model() }),
@@ -2117,9 +2132,29 @@ fn engines_status(state: &AppState, settings: &Settings) -> Vec<[String; 2]> {
     // The custom engine in both selectors with the same mix reads as one too.
     if (pointer == screen || (pointer == OcrEngineKind::Custom && screen == OcrEngineKind::CustomScreen && settings.models(pointer) == settings.models(screen)))
         && pointer.is_local() {
-        return vec![["Cursor e tela inteira".into(), describe(pointer, false)]];
+        let mut rows = vec![["Cursor e tela inteira".into(), describe(pointer, false)]];
+        rows.extend(card_row(state, settings));
+        return rows;
     }
-    vec![["Cursor".into(), describe(pointer, false)], ["Tela inteira".into(), describe(screen, true)]]
+    let mut rows = vec![["Cursor".into(), describe(pointer, false)], ["Tela inteira".into(), describe(screen, true)]];
+    rows.extend(card_row(state, settings));
+    rows
+}
+
+/// "Estado do motor"'s line on the video card, once it is known for the card chosen (`dedicated_gpu`).
+fn card_row(state: &AppState, settings: &Settings) -> Option<[String; 2]> {
+    let (choice, dedicated) = (*state.gpu_dedicated.try_lock()?)?;
+    if choice != settings.gpu_choice() {
+        return None;
+    }
+    Some([
+        "Placa de vídeo".into(),
+        if dedicated {
+            "dedicada: um modelo usado na CPU e na GPU fica carregado nas duas".into()
+        } else {
+            "integrada (usa a RAM do sistema): cada modelo fica carregado num dispositivo só".into()
+        },
+    ])
 }
 
 #[tauri::command]
@@ -2549,9 +2584,10 @@ pub fn run() {
                 ort_ready: Mutex::new(None),
                 lens: Mutex::new(None),
                 bing: Mutex::new(None),
-                indra: Mutex::new(None),
-                linenet: Mutex::new(None),
-                ctd: Mutex::new(None),
+                indra: Mutex::new(DeviceSessions::default()),
+                linenet: Mutex::new(DeviceSessions::default()),
+                ctd: Mutex::new(DeviceSessions::default()),
+                gpu_dedicated: Mutex::new(None),
                 screenai: ScreenAi::default(),
                 oneocr: OneOcr::default(),
                 downloads: Mutex::new(HashMap::new()),

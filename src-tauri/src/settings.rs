@@ -443,6 +443,16 @@ impl Settings {
         kinds
     }
 
+    /// The devices (GPU or not) the engines in use run `det` on.
+    pub fn det_devices(&self, det: Detector) -> Vec<bool> {
+        self.engines_in_use().into_iter().map(|k| self.models(k)).filter(|m| m.det == det).map(|m| m.det_gpu).collect()
+    }
+
+    /// The devices the pointer's and the whole screen's engines run `recognizer` on.
+    pub fn rec_devices(&self, recognizer: Recognizer) -> Vec<bool> {
+        [self.engine_for(false), self.engine_for(true)].into_iter().filter(|&k| self.recognizer_for(k) == recognizer).map(|k| self.rec_gpu_for(k)).collect()
+    }
+
     /// Whether an engine in use finds its lines (or its block) with `det`.
     pub fn detects_with(&self, det: Detector) -> bool {
         self.engines_in_use().into_iter().any(|k| self.models(k).det == det)
@@ -1150,6 +1160,12 @@ mod tests {
         assert_eq!((s.models(OcrEngineKind::Custom).det, s.recognizer_for(OcrEngineKind::Custom)), (Detector::Ctd, Recognizer::Manga));
         assert_eq!((s.models(OcrEngineKind::CustomScreen).det, s.recognizer_for(OcrEngineKind::CustomScreen)), (Detector::PaddleSmall, Recognizer::Indra));
         assert!(s.reads_with(Recognizer::Manga) && s.reads_with(Recognizer::Indra), "each selector's recognizer is in use");
+        // The devices each model runs on, for keeping a session per device.
+        let gpu = cfg!(any(windows, target_os = "linux"));
+        assert_eq!(s.det_devices(Detector::Ctd), [gpu]);
+        assert_eq!(s.det_devices(Detector::PaddleSmall), [gpu]);
+        assert_eq!((s.rec_devices(Recognizer::Manga), s.rec_devices(Recognizer::Indra)), (vec![gpu], vec![false]));
+        assert!(s.det_devices(Detector::LineNet).is_empty());
         // Another engine over the whole screen: its mix is unused, and so are its models.
         s.screen_ocr_engine = Some(OcrEngineKind::Paddle);
         assert_eq!(s.engine_for(true), OcrEngineKind::Paddle);
