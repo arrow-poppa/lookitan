@@ -112,6 +112,8 @@ zbus = "5.17"
 # Whether the video card is dedicated (ocr/gpu_kind.rs): Vulkan's device types, the loader opened at run
 # time (no link to libvulkan).
 ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+# glibc's mallopt and malloc_trim, so freed memory goes back to the system (platform/memory.rs).
+libc = "0.2"
 
 [profile.release]
 codegen-units = 1

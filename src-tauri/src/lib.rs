@@ -1840,6 +1840,7 @@ fn free_unused_engines(state: &AppState, settings: &Settings) {
     if !selected.contains(&OcrEngineKind::Bing) {
         *state.bing.lock() = None;
     }
+    platform::memory::release();
 }
 
 /// How long the local models stay loaded without a lookup: Lookupper frees its OCR engine after 15
@@ -1851,15 +1852,25 @@ const MODELS_IDLE: std::time::Duration = std::time::Duration::from_secs(15 * 60)
 /// `MODELS_IDLE`; the next lookup loads them again. A pass still using one keeps it until it ends.
 fn free_models_when_idle(app: &AppHandle) {
     let app = app.clone();
+    // The start of the last pass whose buffers were given back to the system.
+    let mut trimmed: Option<Instant> = None;
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(30));
         let state = app.state::<AppState>();
         // OneOCR's models without oneocr.dll go after its helper's 5 minutes (`ocr::helper::IDLE`).
         if state.oneocr.free_if_idle(ocr::helper::IDLE) {
             log::info!("OneOCR unused for {} minutes; freeing its models", ocr::helper::IDLE.as_secs() / 60);
+            platform::memory::release();
             let _ = app.emit("engine-status", ());
         }
-        if state.ocr_used.lock().elapsed() < MODELS_IDLE {
+        let used = *state.ocr_used.lock();
+        if used.elapsed() < MODELS_IDLE {
+            // Once the last lookup's passes are over (its whole-screen pass included), what they
+            // freed goes back to the system, as Windows' heap does by itself.
+            if trimmed != Some(used) && used.elapsed() >= std::time::Duration::from_secs(20) {
+                trimmed = Some(used);
+                platform::memory::release();
+            }
             continue;
         }
         let loaded = !state.paddle.lock().is_empty()
@@ -1872,6 +1883,7 @@ fn free_models_when_idle(app: &AppHandle) {
             state.ctd.lock().clear();
             state.linenet.lock().clear();
             state.indra.lock().clear();
+            platform::memory::release();
             let _ = app.emit("engine-status", ());
         }
     });
@@ -2611,6 +2623,8 @@ fn word_image(state: tauri::State<'_, AppState>, name: String, crop: Option<[u32
 // ---------------------------------------------------------------------------------------------
 
 pub fn run() {
+    // First, before any thread: glibc's arenas are set up by the first allocations of each thread.
+    let malloc_set = platform::memory::configure();
     // On KDE Plasma Wayland the windows run through XWayland so the pop-up can be placed next to the
     // word and kept above other windows; pointer and capture come from KWin (see platform::kwin).
     #[cfg(target_os = "linux")]
@@ -2618,6 +2632,9 @@ pub fn run() {
         std::env::set_var("GDK_BACKEND", "x11");
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    if !malloc_set {
+        log::warn!("glibc refused the malloc settings; freed memory may stay in the process");
+    }
 
     // An OCR library's helper process (ocr/helper.rs): this executable, without the app.
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();

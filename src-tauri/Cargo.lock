@@ -3193,6 +3193,7 @@ dependencies = [
  "hunspell-sys",
  "image",
  "jieba-rs",
+ "libc",
  "libloading 0.8.9",
  "lindera",
  "log",
