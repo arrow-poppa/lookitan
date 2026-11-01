@@ -382,6 +382,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-11-01 (Claude, `main`): at the user's request `main` was fast-forwarded to `tests`, with the IndraOCR locale fix and `lazyRelease` taken out (the state with it is on `backup/tests-2026-11-01-lazyrelease`).
 - 2026-11-01 (Claude, `tests`): WebGPU's `lazyRelease` on integrated cards taken out (back to ONNX Runtime's buckets, as `main`), at the user's request, to test the whole-screen overlay's delay with the recognizer on the GPU; backup of the state before on branch `backup/tests-2026-11-01-lazyrelease`.
 - 2026-10-31 (Claude, `tests`): IndraOCR found no line on Linux because ONNX Runtime's environment was created under the desktop's pt_BR locale; it is now created at once in the "C" locale (`platform/locale.rs`, `ensure_ort`). The temporary capture and tensor dumps of 2fa5d52/a9fd25f are gone; the logs below stay. Tests: locale's `the_c_locale_holds_inside…`.
 - 2026-10-31 (Claude, `tests`): diagnostic logs for the user's "Nenhum texto encontrado" with IndraOCR on Linux (the models read the failing pages in a Python copy of the pipeline, PP-OCRv6 reads them in the app): each local pass logs its boxes, those by the pointer and the lines read (`ocr_pass`), LineNet its capture size and lines, IndraOCR its kept and dropped lines with their scores, and run_scan the no-text case. Read them with `journalctl --user | grep lookitan`.
