@@ -262,9 +262,9 @@ pub struct LanguageInfo {
     pub name: &'static str,
     /// Its recognition model by default; with `rec_tiny`, it can switch to `rec_small`.
     pub rec: &'static str,
-    /// An experimental recognizer it can switch to (`ocr::experimental_rec`).
+    /// Another recognizer it can switch to (`ocr::alternative_rec`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub experimental: Option<&'static str>,
+    pub alternative: Option<&'static str>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2271,7 +2271,7 @@ fn card_row(state: &AppState, settings: &Settings) -> Option<[String; 2]> {
 
 #[tauri::command]
 fn ocr_languages() -> Vec<LanguageInfo> {
-    ocr::LANGUAGES.iter().map(|l| LanguageInfo { tag: l.tag, name: l.name, rec: l.rec, experimental: ocr::experimental_rec(l.tag) }).collect()
+    ocr::LANGUAGES.iter().map(|l| LanguageInfo { tag: l.tag, name: l.name, rec: l.rec, alternative: ocr::alternative_rec(l.tag) }).collect()
 }
 
 #[tauri::command]

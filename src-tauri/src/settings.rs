@@ -350,9 +350,10 @@ pub struct Settings {
     /// Languages that read with `rec_tiny` and were switched to `rec_small` (Configurações › OCR,
     /// PP-OCRv6's "Reconhecimento"), each language on its own.
     pub small_recognizer: Vec<String>,
-    /// Languages switched to their experimental recognizer (`ocr::experimental_rec`; only Russian,
-    /// to PP-OCRv6 Tiny RU), each on its own.
-    pub experimental_recognizer: Vec<String>,
+    /// Languages switched to their alternative recognizer (`ocr::alternative_rec`; only Russian, to
+    /// PP-OCRv5 Cyrillic), each on its own. It replaced `experimentalRecognizer` (2026-11-01), which
+    /// listed Russian when it read with Tiny RU, its own model since: the old key is not read.
+    pub alternative_recognizer: Vec<String>,
     /// Where the engines run that the user has chosen no models for (`Settings::models`).
     pub use_gpu: bool,
     /// Settings saved while the models were chosen in one manual mode ("Escolher modelos
@@ -573,9 +574,9 @@ impl Settings {
     }
 
     /// The OCR language's PP-OCR recognition model (`ocr::rec_model`): its own, or Small for a
-    /// language on Tiny (`small_recognizer`), or the experimental one (`experimental_recognizer`).
+    /// language on Tiny (`small_recognizer`), or its alternative (`alternative_recognizer`).
     pub fn rec_model(&self) -> &'static str {
-        crate::ocr::rec_model(&self.ocr_language, &self.small_recognizer, &self.experimental_recognizer)
+        crate::ocr::rec_model(&self.ocr_language, &self.small_recognizer, &self.alternative_recognizer)
     }
 
     /// PP-OCRv6's plan (`plan_for`).
@@ -619,7 +620,7 @@ impl Default for Settings {
             screen_ocr_engine: None,
             ocr_language: "en-US".into(),
             small_recognizer: Vec::new(),
-            experimental_recognizer: Vec::new(),
+            alternative_recognizer: Vec::new(),
             use_gpu: true,
             ocr_manual: None,
             manual_det: "det_small".into(),
@@ -855,7 +856,7 @@ pub fn migrate(mut s: Settings) -> Settings {
                 s.ocr_models.remove(kind);
             }
             s.small_recognizer.clear();
-            s.experimental_recognizer.clear();
+            s.alternative_recognizer.clear();
         }
     }
     // MeikiOCR was removed (2026-10-30, at the user's request): its choices go, and a custom mix
@@ -1229,16 +1230,20 @@ mod tests {
     }
 
     #[test]
-    fn russian_reads_with_cyrillic_unless_tiny_ru_is_chosen() {
+    fn russian_reads_with_tiny_ru_unless_cyrillic_is_chosen() {
         let old: Settings = serde_json::from_str(r#"{"ocrLanguage": "ru-RU"}"#).unwrap();
-        assert_eq!(old.rec_model(), "rec_cyrillic", "settings saved before the option keep PP-OCRv5 Cyrillic");
-        let mut s: Settings = serde_json::from_str(r#"{"ocrLanguage": "ru-RU", "experimentalRecognizer": ["ru-RU"]}"#).unwrap();
-        assert_eq!(s.rec_model(), "rec_ru_tiny");
+        assert_eq!(old.rec_model(), "rec_ru_tiny", "Tiny RU is Russian's default");
+        // The key of the time when Tiny RU was the choice: it is the default now, the key is dropped.
+        let tried: Settings = serde_json::from_str(r#"{"ocrLanguage": "ru-RU", "experimentalRecognizer": ["ru-RU"]}"#).unwrap();
+        assert_eq!(tried.rec_model(), "rec_ru_tiny");
+        assert!(!serde_json::to_string(&tried).unwrap().contains("experimentalRecognizer"));
+        let mut s: Settings = serde_json::from_str(r#"{"ocrLanguage": "ru-RU", "alternativeRecognizer": ["ru-RU"]}"#).unwrap();
+        assert_eq!(s.rec_model(), "rec_cyrillic");
         let again: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
-        assert_eq!(again.rec_model(), "rec_ru_tiny", "the choice survives a save");
+        assert_eq!(again.rec_model(), "rec_cyrillic", "the choice survives a save");
         for tag in ["uk-UA", "bg-BG", "sr-Cyrl-RS"] {
             s.ocr_language = tag.into();
-            s.experimental_recognizer = vec![tag.into()];
+            s.alternative_recognizer = vec![tag.into()];
             assert_eq!(s.rec_model(), "rec_cyrillic", "{tag}");
         }
     }

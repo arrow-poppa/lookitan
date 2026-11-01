@@ -195,7 +195,7 @@ pub const LANGUAGES: &[LanguageModel] = &[
     LanguageModel { tag: "pt-BR", name: "Portuguese (Brazil)", rec: "rec_tiny" },
     LanguageModel { tag: "pt-PT", name: "Portuguese (Portugal)", rec: "rec_tiny" },
     LanguageModel { tag: "ro-RO", name: "Romanian", rec: "rec_small" },
-    LanguageModel { tag: "ru-RU", name: "Russian", rec: "rec_cyrillic" },
+    LanguageModel { tag: "ru-RU", name: "Russian", rec: RU_TINY },
     LanguageModel { tag: "sr-Cyrl-RS", name: "Serbian (Cyrillic)", rec: "rec_cyrillic" },
     LanguageModel { tag: "sr-Latn-RS", name: "Serbian (Latin)", rec: "rec_tiny" },
     LanguageModel { tag: "sk-SK", name: "Slovak", rec: "rec_tiny" },
@@ -220,24 +220,25 @@ pub fn language(tag: &str) -> &'static LanguageModel {
         .expect("the default language is in the table")
 }
 
-/// PP-OCRv6 Tiny RU (metrika-labs, fine-tuned on Russian scans and handwriting): an experimental
-/// recognizer for Russian only, chosen in the manual mode. It reads with the PP-OCRv5 Cyrillic
-/// character list, and wants the wide padding of its model card (`paddle::rec_padded_width`).
+/// PP-OCRv6 Tiny RU (metrika-labs' v2.0, fine-tuned from PP-OCRv6 Tiny on Cyrillic print and
+/// handwriting): Russian's own recognizer since 2026-11-01, at the user's request. It reads with the
+/// PP-OCRv5 Cyrillic character list, and wants the wide padding of its model card
+/// (`paddle::rec_padded_width`).
 pub const RU_TINY: &str = "rec_ru_tiny";
 
-/// The experimental recognizer a language may switch to, beside its own: Tiny RU for Russian.
-pub fn experimental_rec(tag: &str) -> Option<&'static str> {
-    (language(tag).tag == "ru-RU").then_some(RU_TINY)
+/// The other recognizer a language may switch to, beside its own: PP-OCRv5 Cyrillic for Russian.
+pub fn alternative_rec(tag: &str) -> Option<&'static str> {
+    (language(tag).tag == "ru-RU").then_some("rec_cyrillic")
 }
 
 /// The recognition model for `tag`: `rec_small` when the language reads with `rec_tiny` and is in
-/// `small`; its experimental model (`experimental_rec`) when it has one and is in `experimental`;
-/// otherwise its own. Languages on `rec_small` or on a model of their own choose nothing else.
-pub fn rec_model(tag: &str, small: &[String], experimental: &[String]) -> &'static str {
+/// `small`; its alternative (`alternative_rec`) when it has one and is in `alternative`; otherwise
+/// its own. Languages on `rec_small` or on a model of their own choose nothing else.
+pub fn rec_model(tag: &str, small: &[String], alternative: &[String]) -> &'static str {
     let l = language(tag);
     let listed = |list: &[String]| list.iter().any(|t| t.eq_ignore_ascii_case(l.tag));
-    match experimental_rec(l.tag) {
-        Some(model) if listed(experimental) => model,
+    match alternative_rec(l.tag) {
+        Some(model) if listed(alternative) => model,
         _ if l.rec == "rec_tiny" && listed(small) => "rec_small",
         _ => l.rec,
     }
@@ -469,14 +470,14 @@ mod tests {
     }
 
     #[test]
-    fn only_russian_can_read_with_the_experimental_tiny_ru() {
+    fn russian_reads_with_tiny_ru_and_only_it_can_switch_to_cyrillic() {
         let ru = vec!["ru-ru".to_string()];
-        assert_eq!(rec_model("ru-RU", &[], &[]), "rec_cyrillic", "PP-OCRv5 Cyrillic stays Russian's own");
-        assert_eq!(rec_model("ru-RU", &[], &ru), RU_TINY);
-        assert_eq!(rec_model("ru-RU", &ru, &[]), "rec_cyrillic", "the small choice is for rec_tiny languages");
+        assert_eq!(rec_model("ru-RU", &[], &[]), RU_TINY, "Tiny RU is Russian's own");
+        assert_eq!(rec_model("ru-RU", &[], &ru), "rec_cyrillic");
+        assert_eq!(rec_model("ru-RU", &ru, &[]), RU_TINY, "the small choice is for rec_tiny languages");
         let all: Vec<String> = LANGUAGES.iter().map(|l| l.tag.to_string()).collect();
         for l in LANGUAGES.iter().filter(|l| l.tag != "ru-RU") {
-            assert_eq!(experimental_rec(l.tag), None, "{}", l.tag);
+            assert_eq!(alternative_rec(l.tag), None, "{}", l.tag);
             assert_ne!(rec_model(l.tag, &[], &all), RU_TINY, "{}", l.tag);
         }
         for tag in ["uk-UA", "bg-BG", "sr-Cyrl-RS"] {

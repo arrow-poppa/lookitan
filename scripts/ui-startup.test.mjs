@@ -669,24 +669,24 @@ test('the chevron folds an engine\'s models under its selector', async () => {
     assert.equal(modelRow(fixture.root, 'paddle', 'Detecção').hidden, false);
 });
 
-test('Russian keeps PP-OCRv5 Cyrillic by default and can try Tiny RU; the other Cyrillic languages cannot', async () => {
-    const fixture = await settingsFixture({ocrLanguage: 'ru-RU', experimentalRecognizer: ['xx-XX']});
+test('Russian reads with Tiny RU by default and can switch to PP-OCRv5 Cyrillic; the other Cyrillic languages cannot', async () => {
+    const fixture = await settingsFixture({ocrLanguage: 'ru-RU', alternativeRecognizer: ['xx-XX']});
     const {view, root, settings} = fixture;
-    fixture.languages.resolve([{tag: 'ru-RU', name: 'Russian', rec: 'rec_cyrillic', experimental: 'rec_ru_tiny'},
+    fixture.languages.resolve([{tag: 'ru-RU', name: 'Russian', rec: 'rec_ru_tiny', alternative: 'rec_cyrillic'},
         {tag: 'uk-UA', name: 'Ukrainian', rec: 'rec_cyrillic'}, {tag: 'bg-BG', name: 'Bulgarian', rec: 'rec_cyrillic'}]);
     fixture.status.resolve({session: 'windows'});
     await fixture.initialization;
     const recognizer = () => selectIn(modelRow(root, 'paddle', 'Reconhecimento'));
-    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Cirílico (padrão)', 'Tiny RU (experimental)']);
-    assert.equal(recognizer().value, 'rec_cyrillic', 'PP-OCRv5 Cyrillic is the default');
+    assert.deepEqual(recognizer().children.map((o) => o.textContent), ['Tiny RU (padrão)', 'Cirílico (PP-OCRv5)']);
+    assert.equal(recognizer().value, 'rec_ru_tiny', 'Tiny RU is the default');
     assert.notEqual(recognizer().disabled, true);
-    recognizer().value = 'rec_ru_tiny';
-    recognizer().dispatch('change');
-    assert.equal(JSON.stringify(settings.experimentalRecognizer), '["xx-XX","ru-RU"]');
     recognizer().value = 'rec_cyrillic';
     recognizer().dispatch('change');
-    assert.equal(JSON.stringify(settings.experimentalRecognizer), '["xx-XX"]', 'back to Cyrillic; other entries kept');
+    assert.equal(JSON.stringify(settings.alternativeRecognizer), '["xx-XX","ru-RU"]');
     recognizer().value = 'rec_ru_tiny';
+    recognizer().dispatch('change');
+    assert.equal(JSON.stringify(settings.alternativeRecognizer), '["xx-XX"]', 'back to Tiny RU; other entries kept');
+    recognizer().value = 'rec_cyrillic';
     recognizer().dispatch('change');
     const language = view.document.getElementById('ocr-language');
     for (const tag of ['uk-UA', 'bg-BG']) {
@@ -697,7 +697,7 @@ test('Russian keeps PP-OCRv5 Cyrillic by default and can try Tiny RU; the other 
     }
     language.value = 'ru-RU';
     language.dispatch('change');
-    assert.equal(recognizer().value, 'rec_ru_tiny', 'the choice is restored');
+    assert.equal(recognizer().value, 'rec_cyrillic', 'the choice is restored');
 });
 
 test('the capture region offers only Automático and Personalizada, and custom dimensions save on change while OCR is pending', async () => {

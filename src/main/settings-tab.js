@@ -395,12 +395,12 @@ function modelsRow(engine) {
     return row;
 }
 
-const OWN_MODELS = {rec_arabic: 'Árabe', rec_cyrillic: 'Cirílico', rec_el: 'Grego', rec_korean: 'Coreano'};
-const EXPERIMENTAL_MODELS = {rec_ru_tiny: 'Tiny RU (experimental)'};
+const OWN_MODELS = {rec_arabic: 'Árabe', rec_cyrillic: 'Cirílico', rec_el: 'Grego', rec_korean: 'Coreano', rec_ru_tiny: 'Tiny RU'};
+const ALTERNATIVE_MODELS = {rec_cyrillic: 'Cirílico (PP-OCRv5)'};
 
 /**
  * PP-OCRv6's recognizer for the OCR language: one that reads with rec_tiny can switch to rec_small,
- * on its own; Russian can switch to its experimental model; one on rec_small or on a model of its
+ * on its own; Russian can switch to its alternative model; one on rec_small or on a model of its
  * own shows only that model (rec_tiny and rec_small have no Cyrillic, Arabic or Hangul). Null until
  * the languages are known.
  */
@@ -418,17 +418,17 @@ function paddleRecognizer() {
         options = [{value: 'tiny', label: 'Tiny (padrão)'}, {value: 'small', label: 'Small'}];
         value = others().length < small().length ? 'small' : 'tiny';
         choose = (v) => { s.smallRecognizer = v === 'small' ? [...others(), language.tag] : others(); };
-    } else if (language.experimental) {
-        // Russian: its own model, or PP-OCRv6 Tiny RU on trial (Settings `experimentalRecognizer`).
-        const chosen = () => (Array.isArray(s.experimentalRecognizer) ? s.experimentalRecognizer : []);
+    } else if (language.alternative) {
+        // Russian: PP-OCRv6 Tiny RU, its own, or PP-OCRv5 Cyrillic (Settings `alternativeRecognizer`).
+        const chosen = () => (Array.isArray(s.alternativeRecognizer) ? s.alternativeRecognizer : []);
         const rest = () => chosen().filter((t) => String(t).toLowerCase() !== tag);
-        desc = 'Este idioma tem um modelo próprio. O Tiny RU é experimental: foi treinado em documentos e manuscritos e, em texto de tela, errou mais nos nossos testes.';
+        desc = 'Vale só para este idioma. O Tiny RU (PP-OCRv6) é o padrão; o Cirílico do PP-OCRv5 errou um pouco menos nos nossos testes com texto de tela.';
         options = [
             {value: language.rec, label: `${OWN_MODELS[language.rec] || language.rec} (padrão)`},
-            {value: language.experimental, label: EXPERIMENTAL_MODELS[language.experimental] || language.experimental},
+            {value: language.alternative, label: ALTERNATIVE_MODELS[language.alternative] || language.alternative},
         ];
-        value = rest().length < chosen().length ? language.experimental : language.rec;
-        choose = (v) => { s.experimentalRecognizer = v === language.experimental ? [...rest(), language.tag] : rest(); };
+        value = rest().length < chosen().length ? language.alternative : language.rec;
+        choose = (v) => { s.alternativeRecognizer = v === language.alternative ? [...rest(), language.tag] : rest(); };
     } else {
         const only = language.rec === 'rec_small';
         desc = only ? 'Este idioma só tem o modelo small do PP-OCR.' : 'Este idioma tem um modelo próprio no PP-OCR.';
