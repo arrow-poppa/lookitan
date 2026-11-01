@@ -56,12 +56,14 @@ MODEL_REPOS = {
     "rec_el": ("PaddlePaddle/el_PP-OCRv5_mobile_rec_onnx", "8152b89d2ee0e1d4c92decab75fe75e5e3d836b6"),
     "rec_korean": ("PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx", "5c6f574b8e2230adf4287b33e736d71b9fabd28e"),
     # Experimental, for Russian only (ocr::RU_TINY). The repository was vladlinv/PP-OCRv6_tiny_rec_ru_onnx.
-    "rec_ru_tiny": ("metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx", "7b6f4f0f232eb5199e01961d3744a3828a905334"),
+    # Its v2.0 (2026-10-29): the repository's history was rewritten then, and 7b6f4f0f, the model
+    # pinned before, is gone. Same character list, input and output as before.
+    "rec_ru_tiny": ("metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx", "9ce7426d93685b4db3f07bdfd0a218cd934e3cad"),
 }
 # Model files not named inference.onnx.
 MODEL_FILES = {"rec_ru_tiny": "model.onnx"}
 # SHA-256 a model must have whatever its repository reports (models outside PaddlePaddle's).
-MODEL_SHA256 = {"rec_ru_tiny": "54feb4032b359561c224747547b1f0c44f9437aff39a98f47924b2c9ebc4002d"}
+MODEL_SHA256 = {"rec_ru_tiny": "87ad7e9c5681417b314ced82fccc8f703e05ae084edaf7a8aa31948a71a1a773"}
 # Models whose rec_keys.txt (one character a line) must equal their inference.yml's character list.
 MODEL_KEYS = {"rec_ru_tiny"}
 
