@@ -382,6 +382,7 @@ scripts/*.test.mjs        Node tests (`npm test`); scripts/check-linux-rpm.py ch
 
 Newest first. One line per change that matters to the next agent.
 
+- 2026-11-01 (Claude, `main`): at the user's request `main` was fast-forwarded to `tests` again, with Tiny RU as Russian's default, and a backup of `tests` pushed to `arrow-poppa/lookitan-old` as `backup/tests-2026-11-01`.
 - 2026-11-01 (Claude, `tests`): at the user's request, PP-OCRv6 Tiny RU is Russian's default and PP-OCRv5 Cyrillic its alternative (`ocr::alternative_rec`, `alternativeRecognizer` replacing `experimentalRecognizer`, `LanguageInfo.alternative`). Tests: ocr/mod.rs, settings.rs, ui-startup's Russian test.
 - 2026-11-01 (Claude, `tests`): PP-OCRv6 Tiny RU pinned to metrika-labs' v2.0 (9ce7426d), at the user's request: the model pinned before vanished from Hugging Face and `main`'s CI failed downloading it. Measured before: CER 1.0% vs the old one's 2.3% (Cyrillic 0.5%). Tests: paddle's `real_russian_recognizers_read_the_fixture` on CI, now on a fresh download.
 - 2026-11-01 (Claude, `main`): at the user's request `main` was fast-forwarded to `tests`, with the IndraOCR locale fix and `lazyRelease` taken out (the state with it is on `backup/tests-2026-11-01-lazyrelease`).
