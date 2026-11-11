@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Downloads the OCR models and the ONNX Runtime library into src-tauri/resources.
 
-Everything comes from official sources at pinned versions:
+Everything comes from official sources, at pinned versions but for one:
   * PaddleOCR ONNX models from huggingface.co/PaddlePaddle (Apache-2.0), pinned by commit; each
     file is checked against the SHA-256 that Hugging Face reports for that commit.
-  * PP-OCRv6 Tiny RU (Apache-2.0), an experimental Russian recognizer fine-tuned by metrika-labs
-    from PP-OCRv6_tiny_rec: pinned by commit and by its own SHA-256 (MODEL_SHA256). Its file is
-    model.onnx, and its rec_keys.txt must match the character list of its inference.yml.
+  * PP-OCRv6 Tiny RU (Apache-2.0), Russian's recognizer, fine-tuned by metrika-labs from
+    PP-OCRv6_tiny_rec: the repository's latest commit at build time, at the user's request
+    (2026-11-11; its history was rewritten twice and pinned commits vanished). Checked against the
+    SHA-256 Hugging Face reports for that commit; the commit is written to rec_ru_tiny.revision.txt,
+    and a copy of another commit is fetched again. Its .onnx (inference.onnx, model.onnx before)
+    is found by name; a rec_keys.txt, when there is one, must match its inference.yml's list.
   * ONNX Runtime (MIT): the 1.24.4 DirectML build from NuGet on Windows; on Linux, the native
     library of Microsoft's onnxruntime-webgpu 1.27.0 wheel from PyPI (CPU plus the WebGPU provider,
     with Dawn linked in), checked against the SHA-256 that PyPI reports.
@@ -55,17 +58,11 @@ MODEL_REPOS = {
     "rec_arabic": ("PaddlePaddle/arabic_PP-OCRv5_mobile_rec_onnx", "14aaedcd75825982689ecf5cd64ab33ee083215a"),
     "rec_el": ("PaddlePaddle/el_PP-OCRv5_mobile_rec_onnx", "8152b89d2ee0e1d4c92decab75fe75e5e3d836b6"),
     "rec_korean": ("PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx", "5c6f574b8e2230adf4287b33e736d71b9fabd28e"),
-    # Experimental, for Russian only (ocr::RU_TINY). The repository was vladlinv/PP-OCRv6_tiny_rec_ru_onnx.
-    # Its v2.0 (2026-10-29): the repository's history was rewritten then, and 7b6f4f0f, the model
-    # pinned before, is gone. Same character list, input and output as before.
-    "rec_ru_tiny": ("metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx", "9ce7426d93685b4db3f07bdfd0a218cd934e3cad"),
+    # Russian's default (ocr::RU_TINY), formerly vladlinv/PP-OCRv6_tiny_rec_ru_onnx. LATEST: the
+    # repository's newest commit (pinned before at 7b6f4f0f, then 9ce7426d; both were rewritten away).
+    "rec_ru_tiny": ("metrika-labs/PP-OCRv6_tiny_rec_cyrillic_onnx", "LATEST"),
 }
-# Model files not named inference.onnx.
-MODEL_FILES = {"rec_ru_tiny": "model.onnx"}
-# SHA-256 a model must have whatever its repository reports (models outside PaddlePaddle's).
-MODEL_SHA256 = {"rec_ru_tiny": "87ad7e9c5681417b314ced82fccc8f703e05ae084edaf7a8aa31948a71a1a773"}
-# Models whose rec_keys.txt (one character a line) must equal their inference.yml's character list.
-MODEL_KEYS = {"rec_ru_tiny"}
+LATEST = "LATEST"
 
 # language -> (npm package, version, SHA-256 of the package tarball)
 HUNSPELL = {
@@ -171,21 +168,45 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def latest_revision(repo: str) -> str:
+    """The commit a repository's main branch is at now."""
+    sha = json.loads(get(f"{HF}/api/models/{repo}")).get("sha", "")
+    if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+        sys.exit(f"{repo}: Hugging Face gave no commit ({sha!r})")
+    return sha
+
+
+def model_file(stem: str, rev: str, names: list) -> str:
+    """The .onnx of a repository: inference.onnx, else model.onnx, else its only one."""
+    for name in ("inference.onnx", "model.onnx"):
+        if name in names:
+            return name
+    onnx = [n for n in names if n.endswith(".onnx") and "/" not in n]
+    if len(onnx) != 1:
+        sys.exit(f"{stem} at {rev}: no single .onnx file ({onnx})")
+    return onnx[0]
+
+
 def fetch_models() -> None:
     MODELS.mkdir(parents=True, exist_ok=True)
     for stem, (repo, rev) in MODEL_REPOS.items():
-        if have(MODELS / f"{stem}.onnx") and (stem.startswith("det_") or have(MODELS / f"{stem}.dict.json")):
+        latest = rev == LATEST
+        marker = MODELS / f"{stem}.revision.txt"
+        if latest:
+            rev = latest_revision(repo)
+        cached = have(MODELS / f"{stem}.onnx") and (stem.startswith("det_") or have(MODELS / f"{stem}.dict.json"))
+        if cached and (not latest or (marker.exists() and marker.read_text().strip() == rev)):
             print(f"{stem}: cached")
             continue
         info = json.loads(get(f"{HF}/api/models/{repo}/revision/{rev}?blobs=true"))
         expected = {s["rfilename"]: (s.get("lfs") or {}).get("sha256") for s in info.get("siblings", [])}
-        name = MODEL_FILES.get(stem, "inference.onnx")
+        name = model_file(stem, rev, list(expected)) if latest else "inference.onnx"
         onnx = get(f"{HF}/{repo}/resolve/{rev}/{name}")
         want = expected.get(name)
+        if latest and not want:
+            sys.exit(f"{repo} {name}: Hugging Face reports no SHA-256 to check it against")
         if want and sha256(onnx) != want:
             sys.exit(f"checksum mismatch for {repo} {name}")
-        if stem in MODEL_SHA256 and sha256(onnx) != MODEL_SHA256[stem]:
-            sys.exit(f"{repo} {name} is not the pinned model (sha256 {sha256(onnx)})")
         (MODELS / f"{stem}.onnx").write_bytes(onnx)
         if stem.startswith("rec_"):
             cfg = yaml.safe_load(get(f"{HF}/{repo}/resolve/{rev}/inference.yml"))
@@ -193,8 +214,8 @@ def fetch_models() -> None:
                 sys.exit(f"{repo}: not a CTC recognizer")
             chars = cfg["PostProcess"]["character_dict"]
             chars = ["" if c is None else str(c) for c in chars]
-            if stem in MODEL_KEYS:
-                # One character a line; this repository has CRLF line ends.
+            if "rec_keys.txt" in expected:
+                # One character a line; Tiny RU's had CRLF line ends.
                 keys = get(f"{HF}/{repo}/resolve/{rev}/rec_keys.txt").decode("utf-8").replace("\r\n", "\n").split("\n")
                 if keys[-1] == "":
                     keys.pop()
@@ -204,6 +225,9 @@ def fetch_models() -> None:
             print(f"{stem}: {len(onnx) / 1e6:.1f} MB, {len(chars)} characters")
         else:
             print(f"{stem}: {len(onnx) / 1e6:.1f} MB")
+        if latest:
+            marker.write_text(rev + "\n")
+            print(f"{stem}: {repo} at {rev}, sha256 {sha256(onnx)}")
 
 
 def fetch_hunspell() -> None:
@@ -311,8 +335,15 @@ def fetch_ort_linux() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--platform", choices=["windows", "linux"], required=True)
+    ap.add_argument("--platform", choices=["windows", "linux"])
+    ap.add_argument("--latest-revisions", action="store_true",
+                    help="print the commits the LATEST models would be fetched at (CI's cache key) and stop")
     args = ap.parse_args()
+    if args.latest_revisions:
+        print("-".join(latest_revision(repo)[:12] for repo, rev in MODEL_REPOS.values() if rev == LATEST))
+        return
+    if not args.platform:
+        ap.error("--platform is required")
     fetch_models()
     fetch_hunspell()
     fetch_arabic()

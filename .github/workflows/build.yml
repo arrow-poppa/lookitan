@@ -53,6 +53,14 @@ jobs:
             libxcb1-dev libxcb-randr0-dev libxrandr-dev libdbus-1-dev libpipewire-0.3-dev \
             libwayland-dev libegl-dev libgbm-dev libclang-dev libudev-dev pkg-config libfuse2t64 file
 
+      # PP-OCRv6 Tiny RU is fetched at its repository's latest commit: a new one is a new cache.
+      - name: Resolve the latest PP-OCRv6 Tiny RU
+        id: latest-models
+        shell: bash
+        run: |
+          python -m pip install --quiet pyyaml
+          echo "revisions=$(python scripts/fetch-assets.py --latest-revisions)" >> "$GITHUB_OUTPUT"
+
       - name: Cache OCR models, ONNX Runtime and Hunspell dictionaries
         uses: actions/cache@v4
         with:
@@ -60,7 +68,7 @@ jobs:
             src-tauri/resources/models
             src-tauri/resources/ort
             src-tauri/resources/hunspell
-          key: assets-${{ matrix.platform }}-${{ hashFiles('scripts/fetch-assets.py') }}
+          key: assets-${{ matrix.platform }}-${{ hashFiles('scripts/fetch-assets.py') }}-${{ steps.latest-models.outputs.revisions }}
 
       - name: Fetch OCR models, ONNX Runtime and Hunspell dictionaries
         run: |
