@@ -60,15 +60,16 @@ pub static INDRA: ModelSet = ModelSet {
     ],
 };
 
-/// PP-OCRv6 Manga v0.2's recognizer (Kellenok/PP-OCRv6_manga, Apache-2.0; `main` on 2026-10-30,
-/// whose v0.2 files are those of its 2026-09-28 commit): PP-OCRv6's small recognizer fine-tuned on
+/// PP-OCRv6 Manga v0.2's recognizer (Kellenok/PP-OCRv6_manga, Apache-2.0; commit 02af751f of
+/// 2026-10-22, the last before v0.3, whose v0.2 files are those of its 2026-09-28 commit; pinned at
+/// 62375557 until 2026-11-11, when a rewritten history had removed that commit, same file): PP-OCRv6's small recognizer fine-tuned on
 /// manga, webtoons and illustrations, Japanese and Chinese. It reads with rec_small's character
 /// list (its ppocrv6_dict.txt is the same file), so the list is not downloaded. Its detector was
 /// removed on 2026-10-30 at the user's request (`remove_retired` deletes a downloaded one).
 pub static MANGA: ModelSet = ModelSet {
     id: "ppocrv6-manga-v0.2",
     repo: "Kellenok/PP-OCRv6_manga",
-    revision: "62375557b5b0a4b2bc8e05484a97c7ea1df7229e",
+    revision: "02af751fcea728fba69ee421a95838f3e549daa2",
     source: Source::HuggingFace,
     files: &[
         ModelFile { name: "rec/manga_rec_v0.2.onnx", bytes: 21_167_540, sha256: "de12c84c63e62c80339e882e675983d886670dcb6f0147e1ed041afd6fa81888" },
@@ -91,6 +92,10 @@ pub static CTD: ModelSet = ModelSet {
 /// request.
 const RETIRED: [&str; 3] = ["meiki-rec-v0-a28cf587", "meiki-det-v0.1-a9cffa4f", "ppocrv6-manga-v0.2-62375557/manga_det_v0.2.onnx"];
 
+/// Folders of a model set pinned again at another commit with the same files: (old, new). A copy
+/// already downloaded is moved, not downloaded again.
+const MOVED: [(&str, &str); 1] = [("ppocrv6-manga-v0.2-62375557", "ppocrv6-manga-v0.2-02af751f")];
+
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_root(dir: PathBuf) {
@@ -111,6 +116,21 @@ pub fn remove_retired() {
         match removed {
             Ok(()) => log::info!("removed retired OCR models {}", path.display()),
             Err(e) => log::warn!("could not remove retired OCR models {}: {e}", path.display()),
+        }
+    }
+    move_repinned(&root);
+}
+
+/// Moves each `MOVED` folder to its new name, unless the new one is there already.
+fn move_repinned(root: &Path) {
+    for (old, new) in MOVED {
+        let (from, to) = (root.join(old), root.join(new));
+        if !from.is_dir() || to.exists() {
+            continue;
+        }
+        match std::fs::rename(&from, &to) {
+            Ok(()) => log::info!("moved OCR models {} to {}", from.display(), to.display()),
+            Err(e) => log::warn!("could not move OCR models {}: {e}", from.display()),
         }
     }
 }
@@ -182,6 +202,20 @@ fn has(path: &Path, bytes: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_set_pinned_again_keeps_the_copy_already_downloaded() {
+        let root = std::env::temp_dir().join(format!("lookitan-models-moved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (old, new) = MOVED[0];
+        std::fs::create_dir_all(root.join(old).join("rec")).unwrap();
+        std::fs::write(root.join(old).join("rec/manga_rec_v0.2.onnx"), b"model").unwrap();
+        move_repinned(&root);
+        assert!(!root.join(old).exists());
+        assert_eq!(std::fs::read(root.join(new).join("rec/manga_rec_v0.2.onnx")).unwrap(), b"model");
+        assert_eq!(format!("{}-{}", MANGA.id, &MANGA.revision[..8]), new, "the new name is MANGA's folder");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn model_sets_are_pinned() {
