@@ -5,6 +5,38 @@ O REA foi usado para identificar contratos e examinar evidências do Lookupper 2
 Não foi recuperado o fonte de sua engine NativeAOT: este trabalho reproduz comportamentos
 com uma implementação independente, e não afirma equivalência de todos os algoritmos.
 
+## Notes for agents (moved from AGENTS.md on 2026-11-11)
+
+- **Local dictionaries (0.2):** the sections after this one (in Portuguese) give formats, evidence and limits.
+  The settings wire tag `kind: mdict` is retained for all local readers to keep existing settings
+  compatible; `DictInfo.format` identifies the actual format. Do not use this tag to infer file format.
+  **Storage follows Lookupper's model (user's decision, 2026-10-15): no database.** Importing a ZIP
+  unpacks it into `<local data>/dictionaries/content/<id>/` (`source::install`; ZIP, RAR, 7z, TAR or gz/bz2/xz, `dictionaries/archive.rs`), and the files are
+  read from there unchanged; removing the dictionary deletes that copy. A main file chosen directly
+  is read in place. MDict reads its own key index on every open (no sidecar). Every other format
+  keeps a headword index beside its files, `<main>.lkidx` (`dictionaries/lkidx.rs`: Lookupper's
+  HeadwordIndex layout plus each entry's offset/length in the source; in the app cache for a file
+  used in place), and renders the entry from the source bytes at lookup time: Yomitan
+  (`yomitan.lkidx`, `dictionaries/yomitan.rs`) and the rest in `dictionaries/inplace.rs`, which
+  re-runs the format's reader over the entry's span. `.dz` is read by chunk (`dictzip.rs`); plain
+  gzip/bzip2 lexicon files are unpacked once into the cache. There is no SQLite any more. Lookupper's formats: mdict, yomitan, stardict, slob, dsl, cc-cedict, gcide,
+  webster-text, wordnet-lmf-xml, jmdict-simplified-json, kanjidic2-json, kaikki-jsonl; Codex's
+  other readers stay as extras. All
+  source/AI sections follow one configured popup order. Anki retains all homographs per source.
+  MDict block caches are bounded by bytes; do not restore a count-only cache. Imports/loads are
+  serialized in AppState, with atomic index publication and safe ZIP extraction. Cleanup at start
+  deletes only `.unpacking-*` folders and copies marked `.lookitan-removed`, never unmarked ones.
+  Morphology uses the OCR language. Order of forms: on-screen spelling, then Hunspell stems
+  (Lookupper's de/en/es/fr/pt/ru plus every other recognition language with a wooorm/dictionaries
+  package: bg cs da el hr hu it la nb nl pl ro sk sl sr sr-latn sv tr uk; Bosnian uses hr; ar is AyaSpell from LibreOffice's dictionaries; fi and id have none;
+  `dictionaries/hunspell.rs`; files in `resources/hunspell/` from
+  `fetch-assets.py`, one language loaded at a time), then Yomitan rules for ja, en, es, ar, uk
+  and de (zu-infinitive only; `data/*-yomitan.json` from yomidevs/yomitan d3c54c1, Arabic and
+  some Ukrainian rules carry Yomitan's pattern, run with fancy-regex), German ge…t/ge…en
+  participles written in morphology.rs, WordNet EN exceptions and conservative PT rules. Original Lookupper language packs/algorithms are not copied.
+  Run reader tests on GitHub Actions (`dictionary-engine` / `scripts/dictionary-harness`), never
+  compile Rust locally. Dependency lockfile resolution without compiling is allowed.
+
 ## Adicionar um dicionário
 
 Em **Dicionários → Adicionar**, selecione o arquivo compactado do dicionário, como no Lookupper:

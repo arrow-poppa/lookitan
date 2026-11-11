@@ -1,0 +1,108 @@
+# Text analysis: words, scripts, vertical text, paragraphs and sentences
+
+Read before changing `words.rs`, `segment/`, `layout.rs`, `sentence.rs` or RTL handling in `ocr/mod.rs`. Moved from AGENTS.md on 2026-11-11; keep it current in the same commit as the change it describes.
+
+- **Sentence:** like Lookupper, the context is the word's paragraph, and `Pick.sentence` is the sentence cut from it.
+- **Words of other scripts and right-to-left text (words.rs, ocr/mod.rs `reverse_rtl`), as in Lookupper (REA on 2026-10-21):**
+  - A word is a run without a space, cut where unspaced-script text starts or ends, trimmed at its ends of what is not a letter or digit ("(U.S.A.)," → "U.S.A"), or kept whole when nothing would be left, so punctuation alone ("？", "—", "。") is a word with its own box and pick, as Lookupper's `GetTrimmedWordAndRect` (`0x14015e6c0`) does; the analyzers' punctuation tokens are words too, as in its resegmenter. Only a space is off any word. Punctuation inside stays ("end.Next"); its pieces are tried too, the one under the pointer first.
+  - A paragraph with no letter and no digit ("— •"), or of a single Latin or Cyrillic letter, is noise: no word boxes, no pick (Lookupper's `IsNoiseParagraph`). Lookupper also drops a paragraph of digits; the user chose to keep any paragraph with a digit, so a number alone can be looked up.
+  - A line-end hyphen (-, U+2010, U+2011) after a letter joins the next line's word when that starts lowercase, or uppercase after a word with no lowercase ("EXAM-" "PLE"). The test is `char.IsLower` in Lookupper's `Any` call.
+  - Right-to-left: a line with more RTL characters (U+0590–08FF, FB1D–FDFF, FE70–FEFF) than other letters is reversed into reading order, a character at a time. The Arabic recognizer gives the exact reverse of the text, each mark before its letter ("ًاشطع" for "عطشاً", checked on the model's output 2026-10-24). Lookupper turns it a grapheme at a time (`0x14094cc60`), which put each mark on the letter before it and moved a word's last mark onto the next word, stretching that word's box over its neighbour; Lookitan did the same until 2026-10-24. Unlike Lookupper, which reverses all of it, runs of digits and LTR words keep their order, as in PaddleOCR's `pred_reverse`, and brackets are mirrored.
+  - The word trim (`trimmed` in words.rs) drops combining marks at a word's ends, as Lookupper's L*/Nd test does: Rust's `is_alphanumeric` counts Arabic harakat as letters.
+  - The pop-up's headword, context, saved-card word and quote, and the Palavras fields have `dir="auto"` (or `<bdi>`), so Arabic shows right to left.
+  - Arabic words run together (`segment/arabic.rs`, the `Segment` that `segment::current` returns for ar, so `pick`, `word_boxes` and `manual_candidates` use it; Lookupper has nothing like it): the recognizer misses narrow spaces ("جماعةالضفادع"). A whitespace run, trimmed as words.rs trims, that is not a word is cut into two words of at least two letters, the cut with the highest product of counts winning (counts under 500 count as 0). A word is a form seen at least 50 times in the CAMeL Arabic Frequency Lists (MSA + dialectal, counts added; `resources/hunspell/ar.words.tsv.gz`, made by `fetch-assets.py`, about 1.49 million forms, 6.3 MB, counts written only from 500) or one AyaSpell accepts (`hunspell::check`). Marks and tatweel are left out when comparing and stay with their letter. Chosen on 2026-10-24 by measuring in the scratchpad (spylls + the lists): the top-200k lists alone cut 668 of 1500 rarer real words, the 1.5M forms none of 3000; the 9 runs on the user's page are cut right, and 49 slang words stay whole. The bundled-file test in arabic.rs checks those cases in CI. The munzirtaha/ayaspell `.aff` is broken (a PFX block runs into REP), so the LibreOffice copy is used.
+    - PaddleOCR (`paddle.rs` `decode_line`) reads RTL text as drawn. Lens gives words in reading order, so `lens.rs` lays them out as drawn for the ink snapping, then reverses once.
+    - Characters of an RTL line run right to left on screen, so boxes take the min/max of their characters (`span_x`), and the pieces of a row in an RTL paragraph read right to left.
+  - Lemmas: Lookupper has Hunspell only for de/en/es/fr/pt/ru, and uses one stem only when the word as written finds nothing (`StemAsync` `0x140243a40`, lookup `0x1402a5bb0`). Lookitan tries more forms, and has Hunspell for uk, bg, el, ar and the other languages listed under Morphology.
+- **Vertical text (`OcrLine.flow`: `Across`, `Down`, `Up`):** as in Lookupper (REA on 2026-10-21), plus bottom-to-top text, which Lookupper does not read (it ships no orientation model):
+  - A detected box with height ≥ 1.5 × width is read on its side: XpressOCR's test is at `0x140949830`; PaddleOCR rotates it the same way.
+  - Lookupper sorts a paragraph as columns when most of its lines are taller than 1.2 × their width (`SortParagraphLines` `0x14015ed00`, with the lambda `0x14015f6c0`).
+  - Lookitan:
+    - `paddle.rs` `rec_crop` turns a vertical crop a quarter left (`Turn::Left`, `rotate270`), so the top of the column is at the left. `decode_line` maps the CTC steps down the column, so `OcrChar.x0..x1` are y spans on a vertical line, and `ink_y` holds its ink columns.
+    - Lookitan's own additions, with no extra model:
+      - A vertical box is always read as a column, however short, as in Lookupper. Reading short ones upright too (for an "I" alone) was tried and removed: upright, the squeezed 期許。 read 期 as surely as the column read 期許, and won the tie.
+      - When the top-to-bottom reading scores under 0.85, the box is also read turned right (`Turn::Right`, `Flow::Up`, bottom to top, as on Portuguese book spines and chart axes).
+      - Horizontal boxes and well-read columns cost nothing extra.
+    - Lens spreads a vertical paragraph's letters down each word.
+    - `split_focus` takes the columns beside a vertical target.
+    - words.rs `upright` turns a vertical line to lie the way it reads, and all the picking, paragraphs and sentences are reused. `on_screen` turns the boxes back.
+      - `Down`: top at the left, columns right to left.
+      - `Up`: bottom at the left, lines left to right.
+    - Lens lines from a vertical paragraph are `Down`. A line Lens gives turned a quarter is `Down` or `Up` by its words' order.
+    - Lines with different flows never join in one paragraph.
+- **Words of Japanese, Chinese and Korean (`segment/`, used by words.rs `pick`, `word_boxes` and `manual_candidates`):** as in Lookupper, the word under the pointer is the analyzed word holding that character, not the longest match from the pointer.
+  - Lookupper (REA on 2026-10-21; addresses are in the exe with SHA-256 16af03f1…):
+    - `OcrWordResegmenter.ResegmentParagraph` (`0x14015f940`) joins the paragraph's OCR words into one text, with no space between CJK characters, even across lines. It analyzes that text and rebuilds the word boxes from the words, a piece on each line for a word broken across lines.
+    - The analyzers, downloaded per language into LocalState `models/`: Sudachi split mode C with SudachiDict core (`system.dic`); jieba with CC-CEDICT words added (`dict.txt`, `hmm.txt`, plus `pinyin.txt`); Kiwi (`kiwi.dll`, LGPL-2.1).
+    - The Japanese chunker is `0x1401a37a0`, with its attach rule at `0x1401a3d40` and its lemma list at `0x1401a4720`. A content morpheme takes:
+      - auxiliaries after a predicate;
+      - 非自立 adjectives (ない);
+      - て/で/ば/たり/だり, and the 非自立 verb after them or after a 連用形 verb;
+      - する after a サ変 noun;
+      - suffixes (名詞的 only after a noun);
+      - そう/よう after a predicate.
+    - Also in Japanese, a prefix takes the next morpheme, and a number its 助数詞 counter. Particles, auxiliaries alone and symbols are their own words. The lemmas are, in order: the する compound, the prefix + head, the head's dictionary form, then the surface.
+    - The Korean chunker is `0x1401a1540`, with its attach rule at `0x1401a17e0` and lemmas at `0x1401a1b00`. Particles and XSN go on a nominal, endings on a verbal, XSV/XSA/VCP on a nominal, a bound noun on a number, and a VX after an EC, never across a space. The lemma is the stem + 다, the noun before 이다/아니다, or the noun (also without 들).
+  - Lookitan:
+    - Korean (`segment/kiwi.rs`, since 2026-10-22) is Lookupper's:
+      - The analyzer is Kiwi 0.23.2 (Apache-2.0), the version in Lookupper's `models/kiwi/VERSION`, with its base (CoNg) model.
+      - It is loaded at run time through its C API (`libloading`), with Lookupper's options: `kiwi_init(model, 1, KIWI_BUILD_DEFAULT, 0)` and `kiwi_analyze_w(top_n 1, KIWI_MATCH_ALL_WITH_NORMALIZING, dialect cost 3, typo threshold 2.5)`.
+      - The library comes from the release's archive (Windows x64 `kiwi.dll`, Linux x86_64/aarch64 `libkiwi.so`), and the model from `kiwi_model_v0.23.2_base.tgz`. All are pinned by SHA-256 and kept in `segmenters/kiwi-0.23.2/`.
+      - Morphemes are base forms with their tag (했 → 하/VV + 었/EP); a contracted syllable's morphemes share its characters. korean.rs therefore treats `start <= previous end` as written together.
+      - Kiwi's `-R`/`-I` tag marks are dropped, and `W_*` tags read as SL.
+      - Other platforms keep lindera 6.2.0's prebuilt `lindera-ko-dic` (20 MB; the same Sejong tags). Where Kiwi runs, that folder is deleted.
+    - Japanese (`segment/sudachidict.rs`, since 2026-10-22) is Lookupper's:
+      - The analyzer is sudachi.rs, pinned by git tag `v0.6.11`. 0.7 reads only the newer dictionary format.
+      - It runs in split mode C, with Sudachi's default plugins minus IgnoreYomigana, as Lookupper has them.
+      - The dictionary is SudachiDict core 20260723. Its `system.dic` (217,466,039 bytes) is the same one Lookupper downloads. It comes from the GitHub release's wheel (72 MB, pinned), unpacked into `segmenters/sudachidict-core-20260723/` with `char.def` (pinned, from sudachi.rs) and our `sudachi.json`.
+      - Morphemes carry surface, the 6 part-of-speech fields, reading, normalized form and dictionary form. The lemma is the head's dictionary form, as Lookupper's (いました → いる).
+      - The old `lindera-sudachidict-6.2.0` folder is deleted.
+    - Chinese (`segment/chinese.rs`, since 2026-10-22) is Lookupper's:
+      - The algorithm is jieba-rs 0.11 (`=0.11.0`, no default dictionary): `cut` with the HMM.
+      - The dictionary is merged once into `<local data>/segmenters/jieba-cedict-1/dict.txt`. It is jieba's `dict.txt.big`, pinned by commit and SHA-256, plus every CC-CEDICT headword it lacks, traditional and simplified, at frequency 1.
+      - CC-CEDICT comes from MDBG's daily zip. It is checked by its header, not a hash.
+      - NOTICE.txt keeps jieba's MIT notice and CC-CEDICT's licence header.
+      - The old `lindera-jieba-6.2.0` folder is deleted.
+    - They are pinned by size and SHA-256 in `PACKS`, downloaded on first use into `<local data>/segmenters/`, and unpacked through `archive::unpack`. Only the recognition language's dictionary is loaded.
+    - `warm_segmenter` runs at start-up and on a language change. Its progress shows in Configurações › OCR › Estado do motor (`EngineStatus.segmenter`). A lookup while it downloads or loads waits for it (`wait_for_segmenter`, at the start of `run_scan`, before the capture): the pop-up opens by the pointer with the progress (`segment::pending` → `segmenter-wait` event, `showWaiting` in the popup), and when it is ready the pop-up hides and the lookup captures as usual. Closing the pop-up gives that lookup up; the download goes on. After a failed download, and for other languages, the old longest-match path is used; the next lookup tries the download again (`segment::want`).
+    - Configurações › Essenciais › "Separação de palavras (…)" (`segmenterRow` in settings-tab.js, under the recognition language, only for ja/zh/ko), like Lookupper's analyzer model Download/Delete buttons (`Settings_AnalyzerModel_*`, `AnalyzerModelDownloadDialog`; texts are our own): its state, "Apagar" (asked first, `plugin-dialog` `ask`) when its files are there, else "Baixar". A "Baixar de novo" button was tried and removed at the user's request: delete, then download. Commands `install_segmenter` and `remove_segmenter` (`segment::remove`: refused while it downloads; unloads it, waiting up to 5 s for lookups to let it go, since Windows will not delete a loaded kiwi.dll or a mapped system.dic; then deletes its folder). `EngineStatus.segmenter_installed` says whether its folder is there. A removed analyzer comes back with the next lookup in that language or the next start.
+    - The rules in japanese.rs and korean.rs are Lookitan's own, written to Lookupper's behavior.
+    - Candidates: the lemmas, the word as written, then (for unspaced scripts) its prefixes, longest first. The Yomitan rules in morphology.rs still expand each of them.
+    - A word the analyzer joined across a line or column break (進 at the foot of one column, めて at the head of the next, as in Lookupper) keeps a box per piece; `analyzed_spans` gives its pieces one `WordBox::group` (`OverlayWord.group`), and the overlay highlights the whole group when one piece is selected, seen or hovered (`groupsUnder`, `.w.hover`), each piece in its own box, nothing drawn between them. The pick keeps the box of the piece under the pointer (pop-up placement, `is_under`), and `context_at` is where the whole word starts (`context_in`), whichever piece was picked; before 2026-10-27 it was the piece's start.
+    - With lindera's SudachiDict, used before 2026-10-22:
+      - there was no dictionary form, so lemmas came from the normalized form (居る for いる);
+      - digits were split apart;
+      - there were no Sudachi plugins.
+    - SudachiDict gives counters such as 人 as 接尾辞-名詞的-一般, so 12 and 人 stay apart, as in Lookupper.
+    - Lookupper's analyzers, in detail (REA on 2026-10-21):
+      - Chinese is its own jieba code: `jieba.cut` with HMM (`0x1401adfc0`, DAG `0x140271b60`, max log-frequency route). Its `dict.txt` is jieba's `dict.txt.big` unchanged, plus the 58,837 CC-CEDICT words missing from it at frequency 1. Its `hmm.txt` is jieba's `finalseg` tables.
+      - lindera-jieba, used before 2026-10-22, had only `dict.txt.big`'s 584,429 words, with trained costs and no HMM. It split words Lookupper keeps, such as 緬因貓 (as 緬因/貓吧).
+      - Japanese is its own Sudachi port, mode C, with the default plugins: `CollapseProlongedSoundMarks`, `JoinNumerics`, `JoinKatakanaOovs` (min length 3), MeCab OOV and `rewrite.def`.
+      - Korean is `kiwi.dll` through its C API: `kiwi_init(model, 1 thread, 0xf)` and `kiwi_analyze_w(top_n 1, match 0x81003f)`.
+      - Rebuilt boxes (`0x14015f940`): a word on one line is the `minAreaRect` of its OCR words' corners. A word inside a larger OCR word gets that word's box.
+    - CI runs `segment::tests::real_dictionaries` (`--ignored`) with the real dictionaries cached.
+  - Paragraphs are Lookupper's (`layout.rs`, since 2026-10-22): `layout::paragraphs` numbers each line's paragraph, and `words::paragraph` puts the lines of the pointer's in reading order. See "Paragraphs (layout.rs)" below.
+  - `sentence::split` applies Lookupper's rules (see the module header). Text longer than 400 characters without sentence marks falls back to the pointer row ±1.
+  - `Pick.sentence_lines` frames the "sentence" screenshot (`focus_lines`).
+  - `Pick.context` is the whole paragraph, as Lookupper shows and sends it to its AI. Past 1500 characters it keeps the whole sentences nearest the word's. `context_at` locates the word in it.
+  - Who reads what (`aiText` in the popup): the AI word card, Explicar and, since 2026-10-27 at the user's request, the context translator read `context`, and so does their `{{sentence}}` placeholder. The translator's text is the paragraph with the word's sentence between ⟦ and ⟧ (`markSentence`: the occurrence holding `contextAt`; unmarked when the sentence is the whole paragraph or cannot be placed), and `CONTEXT_PROMPT` asks to keep those marks around that sentence's translation, so one request gives both: `splitContextTranslation` keeps the paragraph's as `contextTranslation` (shown in the pop-up, marks left out) and the sentence's as `sentenceTranslation` ('' when the reply has no marks; the paragraph's when it is one sentence). The earlier sentence-only default (`SENTENCE_CONTEXT_PROMPT`) moves to it. Anki's `{sentence}`, cloze markers and `{context-translation}` follow `anki.contextMode` (Anki › "Contexto no card"): `sentence` (the default) or `paragraph`; `{sentence-translation}` and `{paragraph-translation}` are fixed. A missing sentence translation falls back to `contextTranslation` (also for words saved before, whose `contextTranslation` was the sentence's). With `paragraph`, a lookup without a paragraph falls back to the sentence. Saved words keep `context`, `contextTranslation` and `sentenceTranslation` (Palavras: "Tradução do contexto", "Tradução da frase"; the CSV's "Tradução da frase" is the sentence's), so exports from the Words tab follow the option.
+- **Paragraphs (`layout.rs`):** Lookupper's layout analyzer (`0x140952880`, decoded with REA on 2026-10-21 and 2026-10-22), ported whole.
+  - Pairs (`0x140959e80`): lines sorted by centre; each line with the nearest line below it that runs the same way, overlaps it across by ≥ 0.2 × the narrower width (or 3 px), and is at most 2.2 × the smaller height down.
+  - Line features (`0x140953340`): words between spaces, CJK count (kana, hanzi, hangul), the first letter or digit (lower, capital, digit), a list marker (`1409536e0`: bullet, `- `, ①–⑳, `1.`/`a)` + space), and the end: sentence mark, hyphen, comma, colon, a Japanese particle or Chinese function word (`0x140953800`). Also "key: value", open brackets, all capitals, any letter, any cased letter.
+  - Look (`layout::look`, `0x1409538e0`), on the capture shrunk so the median line is 20 px (0.08 to 1, INTER_AREA as Lookupper):
+    - Ink (`0x140954000`): Otsu on the line's box, the smaller side is the ink. The ink height is the shortest run of rows holding 85% of it, and its colour is the mean under it.
+    - Frames (`0x140954ac0`): around all lines (2.5 line heights out, shrunk to ≤ 800 px), grey, 3 × 3 median, Scharr across and down (CV_16S), absolute, added, over 40. Edge parts mostly inside the lines' boxes or shorter than 1.2 line heights are dropped. The rest, inverted and median-filtered, gives 8-connected parts. A line's frame is the part filling most of its box (parts ≥ max(16, 4 h²)), if that part holds the box; it is "filled" at ≥ 60% and "small" under half the area. These are OpenCV calls in Lookupper (REA named each P/Invoke: `imgproc_Scharr`, `imgproc_medianBlur`, `imgproc_connectedComponentsWithStats`…); Lookitan does them in Rust.
+    - `OcrLine::look` holds it (`#[serde(skip)]`). `ocr_pass` measures every pass, Lens too. The background pass measures all lines again after each batch, so the frames' numbers hold.
+  - Regions (`0x140956b60`): a pair is linked when the gap ≤ 1.3 h (1.8 in one small frame), the overlap ≥ 0.45 × the narrower width, the size ratio ≤ 1.35 (1.6), and they are not in two different small frames. Links make runs top to bottom, cut where a step is > 1.3 × the median step and > median + 0.3 h.
+  - Region kinds (`0x1409575c0`), in this order:
+    - list-like when ≥ 85% of the cased lines start with a capital or a digit (not mostly all capitals, and not `early` < 0.3 with > 3 words);
+    - framed when one small frame holds ≥ 70% of its lines, no line is in another small frame, and the text spans much of it;
+    - prose when ≥ half the cased lines start in lower case;
+    - centred when the centres vary < 0.6 × the ends;
+    - list-like when its lines are short and spaced, or most have a short line level with them in a column to the right (`0x140958740`);
+    - then by `early`, the share of lines ending short whose next first word would have fitted (`0x140958a80`): ≤ 0.25 prose, ≥ 0.35 list-like, else other.
+  - Score (`0x140958b50`), joined under 1:
+    - adds 5 for a list marker below; 7/4/1.5 for a size ratio over 1.7/1.45/1.3 (heights or ink heights); 3/1.5 for ink colours over 100/55 apart; 3 for two different filled frames, one small; 3.5 for a step over 1.35 × the region's; 5/3/1.5 for a gap over 1.6/1.1/0.8 h; 1.5 for different regions; 5 when neither has a letter; 1.5 for a sentence end then a capital or digit (outside prose); 2 for an ending colon; 3 for two "key: value" lines;
+    - by region kind and how the upper line ends (reaches the edge / wraps / would have fitted): prose 0 / −3 / +0.5; list-like +1.5 / +1 / +3, plus 2.5 when its lines start with capitals; centred −1.5; framed −2.5; other +0.5 / +0.5 / +2.5;
+    - takes 4 for an ending hyphen, 2.5 for a comma, 2.5 for an open bracket, 4 for a lower-case start below, 4 for a list item's next line at its text's indent, 3 for a CJK line ending in a particle.
+  - Lookitan's own on top: pieces of one row (overlap ≥ half the height, gap ≤ 1.5 h, height ratio ≤ 1.6) are one paragraph too, since Lookupper keeps a row the detector split apart.
