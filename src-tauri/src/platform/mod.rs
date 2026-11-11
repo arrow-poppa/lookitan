@@ -3,6 +3,9 @@
 
 #[cfg(target_os = "linux")]
 pub mod kwin;
+#[cfg(target_os = "linux")]
+pub mod linux_mouse;
+pub mod mouse_hotkey;
 #[cfg(windows)]
 pub mod win;
 pub mod geometry;

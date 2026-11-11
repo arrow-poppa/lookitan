@@ -43,6 +43,9 @@ export const api = {
     gamepadCapture: (on) => invoke('gamepad_capture', {on}),
     /** The connected controller's name, or null. */
     gamepadStatus: () => invoke('gamepad_status'),
+    mouseHotkeyStatus: () => invoke('mouse_hotkey_status'),
+    mouseHotkeySetup: (rule) => invoke('mouse_hotkey_setup', {rule}),
+    mouseHotkeyCommands: (rule) => invoke('mouse_hotkey_commands', {rule}),
     /** `handler({buttons, done})` as a combination is recorded. Resolves to the unlisten function. */
     onGamepadCapture: async (handler) => {
         const {listen} = await import('@tauri-apps/api/event');

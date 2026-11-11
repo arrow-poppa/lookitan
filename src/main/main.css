@@ -67,6 +67,12 @@ body { display: flex; flex-direction: column; background: var(--bg-grad), var(--
 .card-row .d { color: var(--muted); font-size: 12.5px; }
 .card-row .ctl { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .card-row .ctl.wide { width: min(450px, 48%); }
+/* Configurações › Atalhos on Linux: the mouse shortcut's permission, under "Acesso ao mouse". */
+.card-row.mouse-permission { flex-direction: column; align-items: stretch; gap: 10px; padding-left: 60px; }
+.mouse-permission-part { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; }
+.mouse-permission-part input { margin-top: 2px; }
+.mouse-permission-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.mouse-commands { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; }
 .card-row .ctl select, .card-row .ctl input { min-width: 220px; }
 /* An engine's models, under its selector in Configurações › OCR: indented inside a row as wide as
    the others, so every control column lines up. */

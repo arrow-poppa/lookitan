@@ -15,6 +15,7 @@ mod layout;
 mod mdict;
 mod ocr;
 mod platform;
+mod popup_size;
 mod protocol;
 mod segment;
 mod sentence;
@@ -1761,9 +1762,66 @@ fn apply_mouse_hotkey(app: &AppHandle, cfg: &settings::MouseHotkey) {
         let handle = app.clone();
         platform::win::set_mouse_hotkey(cfg.clone(), move || scan(&handle));
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let handle = app.clone();
+        platform::linux_mouse::set_mouse_hotkey(cfg.clone(), move || scan(&handle));
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (app, cfg);
+    }
+}
+
+/// What the mouse shortcut can do on Linux (permissions, mice, blocking), for Configurações ›
+/// Atalhos. None elsewhere: Windows' hook needs nothing.
+#[tauri::command]
+fn mouse_hotkey_status() -> Option<serde_json::Value> {
+    #[cfg(target_os = "linux")]
+    { serde_json::to_value(platform::linux_mouse::status()).ok() }
+    #[cfg(not(target_os = "linux"))]
+    { None }
+}
+
+/// Writes (`rule`) or removes (null) Lookitan's udev rule for the mouse shortcut, through polkit,
+/// only when the user clicks for it; then the backend looks at the devices again.
+#[tauri::command]
+async fn mouse_hotkey_setup(rule: Option<serde_json::Value>) -> std::result::Result<Option<serde_json::Value>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let rule: Option<platform::linux_mouse::setup::Rule> = match rule {
+            Some(v) => Some(serde_json::from_value(v).map_err(|e| e.to_string())?),
+            None => None,
+        };
+        tauri::async_runtime::spawn_blocking(move || {
+            let result = platform::linux_mouse::setup(rule);
+            // udev has settled when the script ends; give the thread's own look a moment.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            result
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        Ok(serde_json::to_value(platform::linux_mouse::status()).ok())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = rule;
+        Err("Só no Linux.".into())
+    }
+}
+
+/// The same change as `mouse_hotkey_setup`, as terminal commands.
+#[tauri::command]
+fn mouse_hotkey_commands(rule: Option<serde_json::Value>) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        let rule = rule.and_then(|v| serde_json::from_value::<platform::linux_mouse::setup::Rule>(v).ok());
+        platform::linux_mouse::setup::manual(rule)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = rule;
+        String::new()
     }
 }
 
@@ -2733,6 +2791,10 @@ pub fn run() {
                 #[cfg(not(windows))]
                 let _ = window;
             }
+            // The pop-up opens at the size the user last gave it (popup_size.rs).
+            if let (Some(popup), Some(size)) = (app.get_webview_window("popup"), popup_size::load(&app.state::<AppState>().config_dir)) {
+                let _ = popup.set_size(tauri::LogicalSize::new(size.width, size.height));
+            }
 
             if let Err(e) = apply_hotkey(&handle, &hotkey) {
                 log::warn!("{e}");
@@ -2778,7 +2840,10 @@ pub fn run() {
                 "quit" => {
                     close_overlay(app);
                     #[cfg(target_os = "linux")]
-                    platform::kwin::stop();
+                    {
+                        platform::kwin::stop();
+                        platform::linux_mouse::stop();
+                    }
                     app.exit(0);
                 }
                 _ => {}
@@ -2791,6 +2856,14 @@ pub fn run() {
                     if let WindowEvent::Focused(false) = event {
                         if !h.state::<AppState>().pinned.load(Ordering::SeqCst) {
                             dismiss_popup(&h);
+                        }
+                    }
+                    // Nothing in Lookitan resizes the pop-up once it is up: a new size is the
+                    // user's, kept for the next lookups and the next start.
+                    if let WindowEvent::Resized(size) = event {
+                        if let Some(win) = h.get_webview_window("popup").filter(|w| w.is_visible().unwrap_or(false)) {
+                            let scale = win.scale_factor().unwrap_or(1.0).max(0.5);
+                            popup_size::remember(&h.state::<AppState>().config_dir, size.width as f64 / scale, size.height as f64 / scale);
                         }
                     }
                 });
@@ -2867,6 +2940,9 @@ pub fn run() {
             word_image,
             gamepad_capture,
             gamepad_status,
+            mouse_hotkey_status,
+            mouse_hotkey_setup,
+            mouse_hotkey_commands,
             popup_dismiss,
             audio_lookup,
             audio_db_sources,

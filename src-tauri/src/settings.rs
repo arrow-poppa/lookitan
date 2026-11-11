@@ -265,7 +265,7 @@ pub enum MouseButton {
     X2,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct MouseHotkey {
     pub button: MouseButton,
@@ -274,11 +274,14 @@ pub struct MouseHotkey {
     pub shift: bool,
     /// Trigger when the button is held instead of clicked.
     pub long_press: bool,
+    /// Keep the shortcut's click from the program under the pointer (click mode). Windows' hook
+    /// always does; on Linux it needs /dev/uinput (platform/linux_mouse) and can be turned off.
+    pub block_click: bool,
 }
 
 impl Default for MouseHotkey {
     fn default() -> Self {
-        Self { button: MouseButton::None, alt: false, ctrl: false, shift: false, long_press: false }
+        Self { button: MouseButton::None, alt: false, ctrl: false, shift: false, long_press: false, block_click: true }
     }
 }
 
@@ -914,6 +917,16 @@ mod tests {
 
     fn dictionary(id: &str, enabled: bool) -> DictionaryConfig {
         DictionaryConfig { id: id.into(), kind: DictionaryKind::Mdict, path: format!("{id}.mdx"), name: id.into(), enabled }
+    }
+
+    #[test]
+    fn a_mouse_shortcut_saved_before_block_click_blocks_the_click() {
+        let saved: Settings = serde_json::from_str(r#"{"mouseHotkey": {"button": "x1", "ctrl": true, "longPress": false}}"#).unwrap();
+        assert_eq!(saved.mouse_hotkey.button, MouseButton::X1);
+        assert!(saved.mouse_hotkey.ctrl && saved.mouse_hotkey.block_click);
+        let off: Settings = serde_json::from_str(r#"{"mouseHotkey": {"button": "middle", "blockClick": false}}"#).unwrap();
+        assert!(!off.mouse_hotkey.block_click);
+        assert_eq!(serde_json::to_value(&off.mouse_hotkey).unwrap()["blockClick"], false);
     }
 
     #[test]

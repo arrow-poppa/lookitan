@@ -100,15 +100,21 @@ async function settingsFixture(overrides = {}) {
     let later = null;
     const gamepadCapture = {handler: null};
     const picked = {path: null};
+    const mouse = {status: null, setup: []};
     const settings = {ocrLanguage: 'en-US', appMode: 'popup', profiles: [], mouseHotkey: {button: 'none'}, useGpu: true,
         ocrScope: 'screen', captureWidth: 900, captureHeight: 260, ...overrides};
-    const ui = await load('src/main/settings-tab.js', {document: view.document, location: {reload: () => calls.push('reload')}}, {
+    const ui = await load('src/main/settings-tab.js', {document: view.document, location: {reload: () => calls.push('reload')},
+        setTimeout: () => 0, clearTimeout: () => {}}, {
         '@tauri-apps/api/app': {getVersion: async () => 'test'},
         '@tauri-apps/plugin-dialog': {ask: async () => true, open: async () => picked.path},
         [file('src/lib/api.js')]: {api: {ocrLanguages: () => languages.promise, engineStatus: () => later ?? status.promise,
             importOneocr: async (path) => { calls.push(`import ${path}`); },
             installSegmenter: async () => { calls.push('install'); }, removeSegmenter: async () => { calls.push('remove'); },
-            gamepadStatus: async () => 'Xbox Controller', gamepadCapture: async (on) => { calls.push(`capture ${on}`); },
+            gamepadStatus: async () => 'Xbox Controller',
+            mouseHotkeyStatus: async () => mouse.status,
+            mouseHotkeySetup: async (rule) => { mouse.setup.push(rule); return {...mouse.status, rule, uinput: !!rule?.uinput}; },
+            mouseHotkeyCommands: async (rule) => `sudo tee rule ${JSON.stringify(rule)}`,
+            gamepadCapture: async (on) => { calls.push(`capture ${on}`); },
             onGamepadCapture: async (handler) => { gamepadCapture.handler = handler; },
             chooseSettingsProfile: async (id) => { calls.push(`choose ${id}`); }, createSettingsProfile: async (name) => { calls.push(`create ${name}`); },
             deleteSettingsProfile: async (id) => { calls.push(`delete ${id}`); }}, escapeHtml: String},
@@ -119,10 +125,10 @@ async function settingsFixture(overrides = {}) {
         [file('src/main/store.js')]: { saveNow: async () => {},store: {settings, anki: {}}, save: () => { saves += 1; }},
     });
     const initialization = ui.initSettingsTab(root);
-    return {view, root, settings, languages, status, initialization, calls, ui, gamepadCapture, picked,
-        setStatus: (next) => { later = Promise.resolve(next); }, saves: () => saves, finish: async () => {
+    return {view, root, settings, languages, status, initialization, calls, ui, gamepadCapture, picked, mouse,
+        setStatus: (next) => { later = Promise.resolve(next); }, saves: () => saves, finish: async (session = 'windows') => {
         languages.resolve([{tag: 'en-US', name: 'English'}]);
-        status.resolve({session: 'windows'});
+        status.resolve({session});
         await initialization;
     }};
 }
@@ -418,6 +424,69 @@ test('the gamepad section folds, records combinations and each action takes one 
     chevron.dispatch('click');
     const navigation = descendants(fixture.root).find((node) => node.className === 'card-row' && node.textContent.startsWith('Navegação pelo gamepad'));
     assert.equal(navigation.hidden, true);
+});
+
+const LINUX_MOUSE = {supported: true, enabled: true, state: 'needs-permission', message: 'O Lookitan ainda não tem acesso aos botões do mouse.',
+    mice: [{name: 'Logitech USB Optical Mouse', node: 'event4', hasButton: true, readable: false, grabbed: false, note: null}],
+    keyboard: false, needsKeyboard: false, uinput: false, wantsBlocking: true, blocking: false, rule: null,
+    rulePath: '/etc/udev/rules.d/70-lookitan-input.rules', canElevate: true};
+
+test('on Linux the mouse shortcut is recorded, blocks its click, and asks for permission only on a click', async () => {
+    const fixture = await settingsFixture({mouseHotkey: {button: 'middle', alt: false, ctrl: false, shift: false, longPress: false, blockClick: true}});
+    fixture.mouse.status = LINUX_MOUSE;
+    await fixture.finish('kde-wayland');
+    await flush();
+    const rows = () => descendants(fixture.root).filter((node) => node.className === 'card-row');
+    const row = (title) => rows().find((node) => node.textContent.startsWith(title));
+    assert(!fixture.root.textContent.includes('Disponível no Windows'), 'the mouse box works on Linux');
+    assert(fixture.root.textContent.includes('Botão do meio'));
+    assert(row('Acionar o mouse'), 'click or long press, as on Windows');
+    assert(row('Bloquear o clique'));
+    assert(row('Atalho no Wayland'), 'the lookitan --scan row stays');
+    const access = row('Acesso ao mouse');
+    assert(access.textContent.includes('ainda não tem acesso'));
+    assert(access.textContent.includes('Logitech USB Optical Mouse: sem acesso'));
+    assert.deepEqual(fixture.mouse.setup, [], 'nothing is installed before the user asks');
+    const panel = descendants(fixture.root).find((node) => node.id === 'mouse-permission');
+    assert.equal(panel.hidden, true);
+    const button = (root, text) => descendants(root).find((node) => node.tagName === 'button' && node.textContent === text);
+    button(access, 'Dar permissão').dispatch('click');
+    assert.equal(panel.hidden, false);
+    assert(panel.textContent.includes('uaccess') && panel.textContent.includes('/etc/udev/rules.d/70-lookitan-input.rules'));
+    const boxes = descendants(panel).filter((node) => node.tagName === 'input');
+    assert.deepEqual(boxes.map((b) => [Boolean(b.checked ?? b.attributes.checked !== undefined), b.disabled === true || b.attributes.disabled !== undefined]), [[true, true], [false, false], [true, false]],
+        'mice always; keyboards only when the shortcut has a key; uinput because the click is blocked');
+    // The keyboard is the user's choice.
+    boxes[1].checked = true;
+    boxes[1].dispatch('change');
+    button(panel, 'Comandos para o terminal').dispatch('click');
+    await flush();
+    assert(descendants(panel).some((node) => node.tagName === 'textarea' && node.value.includes('"keyboard":true')), 'the terminal commands carry the parts ticked');
+    button(panel, 'Instalar a regra').dispatch('click');
+    await flush();
+    assert.equal(JSON.stringify(fixture.mouse.setup), JSON.stringify([{keyboard: true, uinput: true}]));
+    assert(panel.textContent.includes('Regra instalada: mouses, teclados (Ctrl, Alt, Shift), dispositivo virtual (bloquear o clique).'));
+    // Turning blocking off is saved with the shortcut.
+    const blockSwitch = descendants(row('Bloquear o clique')).find((node) => node.tagName === 'input');
+    blockSwitch.checked = false;
+    blockSwitch.dispatch('change');
+    assert.equal(fixture.settings.mouseHotkey.blockClick, false);
+});
+
+test('a long press on Linux keeps the click, so there is nothing to block; Windows shows no Linux rows', async () => {
+    const linux = await settingsFixture({mouseHotkey: {button: 'x1', longPress: true, blockClick: true}});
+    linux.mouse.status = {...LINUX_MOUSE, state: 'active', message: 'Ativo: segure o botão; o clique continua chegando ao programa.', wantsBlocking: false};
+    await linux.finish('x11');
+    await flush();
+    const titles = (root) => descendants(root).filter((node) => node.className === 'card-row').map((node) => node.children[1].textContent);
+    assert(titles(linux.root).some((t) => t.startsWith('Acesso ao mouse')));
+    assert(!titles(linux.root).some((t) => t.startsWith('Bloquear o clique')));
+    assert(!titles(linux.root).some((t) => t.startsWith('Atalho no Wayland')), 'X11 has global shortcuts of its own');
+    const windows = await settingsFixture({mouseHotkey: {button: 'x1'}});
+    await windows.finish();
+    await flush();
+    assert(titles(windows.root).some((t) => t.startsWith('Acionar o mouse')));
+    assert(!titles(windows.root).some((t) => t.startsWith('Acesso ao mouse') || t.startsWith('Bloquear o clique')));
 });
 
 test('the word analyzer row deletes it, then downloads it', async () => {

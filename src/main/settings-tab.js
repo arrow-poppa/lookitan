@@ -106,20 +106,184 @@ function mouseBox(supported) {
             val.textContent = 'Use Alt, Ctrl ou Shift junto com o botão esquerdo ou direito.';
             return;
         }
-        store.settings.mouseHotkey = {button, alt: ev.altKey, ctrl: ev.ctrlKey, shift: ev.shiftKey, longPress: m.longPress};
+        const was = store.settings.mouseHotkey || {};
+        store.settings.mouseHotkey = {button, alt: ev.altKey, ctrl: ev.ctrlKey, shift: ev.shiftKey, longPress: !!was.longPress, blockClick: was.blockClick !== false};
         capturing = false;
         box.classList.remove('capturing');
         val.textContent = mouseLabel(store.settings.mouseHotkey);
         val.classList.remove('placeholder');
         save();
+        followMouseStatus();
     });
     clear.addEventListener('click', () => {
-        store.settings.mouseHotkey = {button: 'none', alt: false, ctrl: false, shift: false, longPress: false};
+        const was = store.settings.mouseHotkey || {};
+        store.settings.mouseHotkey = {button: 'none', alt: false, ctrl: false, shift: false, longPress: false, blockClick: was.blockClick !== false};
         val.textContent = 'Não definido';
         val.classList.add('placeholder');
         save();
+        followMouseStatus();
     });
     return box;
+}
+
+// ------------------------------------------------------------------ Linux mouse shortcut
+
+/** Linux only: what the mouse shortcut can do (`mouse_hotkey_status`), shown under the Mouse row. */
+let mouseStatus = null;
+let mouseStatusTimer = null;
+let mouseStatusLater = null;
+/** The permission panel, open or not, with the parts the user ticked; kept across redraws. */
+const mousePanel = {open: false, keyboard: false, uinput: true, touched: false, error: '', busy: false, commands: ''};
+
+/** Asks the backend again, after `delay` ms (the backend takes the new shortcut on its own thread). */
+export function refreshMouseStatus(delay = 0) {
+    const ask = () => api.mouseHotkeyStatus().then((next) => {
+        const unsupported = next?.state === 'unsupported' && mouseStatus?.state !== 'unsupported';
+        mouseStatus = next || null;
+        if (unsupported && rootEl) { render(rootEl); return; }
+        fillMouseRows();
+    }, () => {});
+    clearTimeout(mouseStatusTimer);
+    if (!delay) { return ask(); }
+    mouseStatusTimer = setTimeout(ask, delay);
+    return undefined;
+}
+
+/** After a change of the shortcut: once it is saved, and once a mouse had time to be taken. */
+function followMouseStatus() {
+    if (!mouseStatus) { return; }
+    refreshMouseStatus(900);
+    clearTimeout(mouseStatusLater);
+    mouseStatusLater = setTimeout(() => refreshMouseStatus(), 4200);
+}
+
+function mouseStatusText() {
+    if (!mouseStatus) { return 'Verificando o acesso ao mouse…'; }
+    const lines = [mouseStatus.message];
+    const usable = (mouseStatus.mice || []).filter((m) => m.hasButton);
+    if (mouseStatus.enabled && usable.length) {
+        lines.push(usable.map((m) => `${m.name}: ${m.grabbed ? 'clique bloqueado' : m.readable ? 'lido' : 'sem acesso'}`).join(' · '));
+    }
+    return lines.join('\n');
+}
+
+function ruleLabel(rule) {
+    if (!rule) { return 'Nenhuma regra do Lookitan instalada.'; }
+    const parts = ['mouses'];
+    if (rule.keyboard) { parts.push('teclados (Ctrl, Alt, Shift)'); }
+    if (rule.uinput) { parts.push('dispositivo virtual (bloquear o clique)'); }
+    return `Regra instalada: ${parts.join(', ')}.`;
+}
+
+/** The rows `linuxMouseRows` drew last, filled in place as the status comes. */
+const mouseRows = {line: null, panel: null, button: null};
+
+/** Redraws the status line and the permission panel in place, never the whole tab. */
+function fillMouseRows() {
+    const {line, panel, button} = mouseRows;
+    if (line) { line.textContent = mouseStatusText(); }
+    if (panel) { fillMousePanel(panel); }
+    if (button) {
+        const ready = mouseStatus && ['active', 'off', 'no-mouse'].includes(mouseStatus.state) && (!mouseStatus.wantsBlocking || mouseStatus.uinput);
+        button.textContent = mousePanel.open ? 'Fechar' : ready ? 'Permissões' : 'Dar permissão';
+        button.classList.toggle('primary', !ready && !mousePanel.open);
+    }
+}
+
+function fillMousePanel(panel) {
+    panel.hidden = !mousePanel.open;
+    if (!mousePanel.open) { panel.replaceChildren(); return; }
+    const st = mouseStatus || {};
+    if (!mousePanel.touched) {
+        // Start from what is installed, else from what the shortcut needs.
+        mousePanel.keyboard = st.rule ? st.rule.keyboard : !!st.needsKeyboard;
+        mousePanel.uinput = st.rule ? st.rule.uinput : st.wantsBlocking !== false;
+    }
+    const check = (key, label, warning) => {
+        const input = el('input', {type: 'checkbox'});
+        input.checked = mousePanel[key];
+        input.disabled = mousePanel.busy;
+        input.addEventListener('change', () => {
+            mousePanel[key] = input.checked;
+            mousePanel.touched = true;
+            mousePanel.commands = '';
+            fillMousePanel(panel);
+        });
+        return el('label', {class: 'mouse-permission-part'}, input, el('span', {}, el('b', {}, label), ' ', warning));
+    };
+    const rule = {keyboard: mousePanel.keyboard, uinput: mousePanel.uinput};
+    const install = el('button', {type: 'button', class: 'primary', disabled: mousePanel.busy || !st.canElevate},
+        mousePanel.busy ? 'Aguardando a senha…' : st.rule ? 'Atualizar a regra' : 'Instalar a regra');
+    install.addEventListener('click', () => runMouseSetup(rule));
+    const remove = st.rule ? el('button', {type: 'button', disabled: mousePanel.busy || !st.canElevate}, 'Remover a regra') : null;
+    remove?.addEventListener('click', async () => {
+        if (!await ask('Remover a regra do Lookitan? O atalho do mouse para de funcionar (o acesso já dado vale até você sair da sessão).',
+            {title: 'Remover permissão', kind: 'warning', okLabel: 'Remover', cancelLabel: 'Cancelar'})) { return; }
+        await runMouseSetup(null);
+    });
+    const showCommands = el('button', {type: 'button', class: 'ghost'}, mousePanel.commands ? 'Ocultar comandos' : 'Comandos para o terminal');
+    showCommands.addEventListener('click', async () => {
+        mousePanel.commands = mousePanel.commands ? '' : await api.mouseHotkeyCommands(rule).catch(() => '');
+        fillMousePanel(panel);
+    });
+    let commands = null;
+    if (mousePanel.commands) {
+        commands = el('textarea', {rows: '8', spellcheck: 'false', readonly: true, class: 'mouse-commands'});
+        commands.value = mousePanel.commands;
+    }
+    panel.replaceChildren(...[
+        el('div', {class: 'd'}, 'O Lookitan lê os botões direto do mouse, o que funciona no X11 e em qualquer Wayland. Para isso ele instala, ',
+            'com a sua senha de administrador, uma regra do udev em ', el('code', {}, st.rulePath || '/etc/udev/rules.d/70-lookitan-input.rules'),
+            ' que dá acesso a você somente enquanto estiver na sessão do computador (uaccess). Nada muda de grupo nem fica aberto a todos, ',
+            'e o Lookitan nunca roda como administrador.'),
+        el('label', {class: 'mouse-permission-part'}, el('input', {type: 'checkbox', checked: true, disabled: true}),
+            el('span', {}, el('b', {}, 'Mouses:'), ' ler os botões (sempre).')),
+        check('keyboard', 'Teclados:', 'ver se Ctrl, Alt ou Shift estão pressionados, para atalhos com essas teclas. O Lookitan não lê o que é digitado, mas qualquer programa seu poderia.'),
+        check('uinput', 'Dispositivo virtual:', 'impedir que o clique do atalho chegue ao programa. Qualquer programa seu poderia simular teclas e cliques.'),
+        el('div', {class: 'd'}, ruleLabel(st.rule)),
+        st.canElevate === false ? el('div', {class: 'd'}, 'O pkexec (polkit) não está disponível: use os comandos para o terminal.') : null,
+        mousePanel.error ? el('div', {class: 'd error'}, mousePanel.error) : null,
+        el('div', {class: 'mouse-permission-actions'}, install, remove, showCommands),
+        commands,
+    ].filter(Boolean));
+}
+
+async function runMouseSetup(rule) {
+    const {panel} = mouseRows;
+    mousePanel.busy = true;
+    mousePanel.error = '';
+    if (panel) { fillMousePanel(panel); }
+    try {
+        const next = await api.mouseHotkeySetup(rule);
+        if (next) { mouseStatus = next; }
+        mousePanel.touched = false;
+    } catch (e) {
+        mousePanel.error = String(e?.message || e);
+    } finally {
+        mousePanel.busy = false;
+        fillMouseRows();
+        followMouseStatus();
+    }
+}
+
+/** The Linux rows under the Mouse shortcut: blocking the click, then the status and permission. */
+function linuxMouseRows(s) {
+    const block = s.mouseHotkey.longPress ? null : cardRow({icon: 'mouse', title: 'Bloquear o clique',
+        desc: 'O clique do atalho não chega ao programa sob o cursor, como no Windows. Precisa da permissão de dispositivo virtual; sem ela, o atalho funciona e o clique passa.',
+        control: toggle(s.mouseHotkey.blockClick !== false, (v) => { s.mouseHotkey.blockClick = v; save(); followMouseStatus(); })});
+    const toggleButton = el('button', {type: 'button', id: 'mouse-permission-toggle'}, 'Dar permissão');
+    toggleButton.addEventListener('click', () => {
+        mousePanel.open = !mousePanel.open;
+        mousePanel.touched = false;
+        mousePanel.commands = '';
+        fillMouseRows();
+    });
+    const line = el('span', {id: 'mouse-hotkey-status', style: 'white-space: pre-line'}, mouseStatusText());
+    const state = cardRow({icon: 'alert', title: 'Acesso ao mouse', desc: line, control: toggleButton});
+    const panel = el('div', {class: 'card-row mouse-permission', id: 'mouse-permission', hidden: true});
+    Object.assign(mouseRows, {line, panel, button: toggleButton});
+    fillMouseRows();
+    return [block, state, panel];
 }
 
 // Controller buttons by their Xbox names, as gamepad.rs reads them.
@@ -810,6 +974,7 @@ export async function initSettingsTab(root) {
         }),
         refreshStatus(),
     ]);
+    if (status?.session && status.session !== 'windows') { await refreshMouseStatus(); }
 }
 
 export async function refreshStatus() {
@@ -943,11 +1108,14 @@ function render(root) {
         cardRow({icon: 'bookmark', title: 'Salvar palavras automaticamente', control: toggle(s.saveWordsAutomatically, (v) => { s.saveWordsAutomatically = v; save(); })}),
     ));
 
-    const longPress = toggle(s.mouseHotkey.longPress, (v) => { s.mouseHotkey.longPress = v; save(); rerender(); }, {on: 'Segurar', off: 'Clicar'});
+    const isLinux = !isWindows;
+    const longPress = toggle(s.mouseHotkey.longPress, (v) => { s.mouseHotkey.longPress = v; save(); rerender(); followMouseStatus(); }, {on: 'Segurar', off: 'Clicar'});
+    const mouseSupported = isWindows || (isLinux && mouseStatus?.state !== 'unsupported');
     root.append(heading('Atalhos'), el('div', {class: 'group'},
         cardRow({icon: 'keyboard', title: 'Teclado', desc: 'Pressione para consultar a palavra sob o cursor.', wide: true, control: keyboardBox()}),
-        cardRow({icon: 'mouse', title: 'Mouse', desc: isWindows ? 'Um botão do mouse, com Alt, Ctrl ou Shift se quiser.' : 'No Linux, use o atalho de teclado ou o comando abaixo.', wide: true, control: mouseBox(isWindows)}),
-        isWindows ? cardRow({icon: 'mouse', title: 'Acionar o mouse', desc: 'Clicar dispara na hora; segurar dispara após meio segundo e mantém o clique normal.', control: longPress}) : null,
+        cardRow({icon: 'mouse', title: 'Mouse', desc: mouseSupported ? 'Um botão do mouse, com Alt, Ctrl ou Shift se quiser.' : 'Indisponível neste computador: use o atalho de teclado.', wide: true, control: mouseBox(mouseSupported)}),
+        mouseSupported ? cardRow({icon: 'mouse', title: 'Acionar o mouse', desc: 'Clicar dispara na hora; segurar dispara após meio segundo e mantém o clique normal.', control: longPress}) : null,
+        ...(isLinux && mouseSupported ? linuxMouseRows(s) : []),
         ...gamepadSection(),
         isWayland ? cardRow({icon: 'keyboard', title: 'Atalho no Wayland', desc: 'Em Configurações do Sistema › Atalhos › Adicionar novo › Comando, use este comando:', wide: true,
             control: (() => { const i = textInput('lookitan --scan', () => {}); i.readOnly = true; return i; })()}) : null,
