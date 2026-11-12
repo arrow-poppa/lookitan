@@ -38,31 +38,53 @@ async function addDictionary() {
     // As in Lookupper, a dictionary normally comes as an archive (ZIP, RAR, 7z, TAR, gzip/bzip2/xz),
     // which is unpacked into Lookitan's own folder. A main file can also be chosen; it is then read
     // where it is.
-    const path = await open({multiple: false, directory: false, filters: [
+    const selection = await open({multiple: true, directory: false, filters: [
         {name: 'Dicionário compactado', extensions: ['zip', 'rar', '7z', 'tar', 'tgz', 'gz', 'bz2', 'xz', 'txz', 'tbz2']},
         {name: 'Arquivo de dicionário', extensions: ['mdx', 'ifo', 'dsl', 'dz', 'xml', 'gz', 'bz2', 'txt', 'u8', 'json', 'jsonl', 'slob', 'noun', 'verb', 'adj', 'adv']},
     ]});
-    if (!path) { return; }
+    if (!selection || !selection.length) { return; }
+    const paths = Array.isArray(selection) ? selection : [selection];
     const btn = document.getElementById('add-dict');
     const label = btn.innerHTML;
     btn.disabled = true;
     btn.textContent = 'Abrindo dicionário…';
     let stop;
+    let current = 0;
+    const errors = [];
+    const before = new Set(dicts.map((d) => d.id));
     try {
-        stop = await api.onDictionaryProgress?.(({stage, entries, bytes}) => {
-            btn.textContent = stage === 'unpacking' ? `Extraindo… ${Math.round(Number(bytes || 0) / 1048576).toLocaleString('pt-BR')} MB`
-                : stage === 'indexing' ? `Indexando… ${Number(entries).toLocaleString('pt-BR')} verbetes` : 'Lendo dicionário…';
+        stop = await api.onDictionaryProgress?.(({stage, entries, bytes, dictionary, total}) => {
+            const prefix = paths.length > 1 ? `${current + 1}/${paths.length} — ` : '';
+            const item = total > 1 ? ` (${dictionary}/${total})` : '';
+            btn.textContent = prefix + (stage === 'unpacking' ? `Extraindo… ${Math.round(Number(bytes || 0) / 1048576).toLocaleString('pt-BR')} MB`
+                : stage === 'indexing' ? `Indexando${item}… ${Number(entries).toLocaleString('pt-BR')} verbetes` : `Lendo dicionário${item}…`);
         });
-        dicts = await api.addDictionary(path);
-        selectedId = dicts[dicts.length - 1]?.id || selectedId;
+        // Sources are processed sequentially to bound memory. Each archive is an atomic batch;
+        // an error in one selected source does not prevent importing the remaining sources.
+        for (const [index, path] of paths.entries()) {
+            current = index;
+            try {
+                dicts = await api.addDictionary(path);
+                selectedId = dicts.find((d) => !before.has(d.id))?.id || selectedId;
+            } catch (e) {
+                errors.push(`${path}: ${String(e)}`);
+            }
+        }
     } catch (e) {
-        alertDetail(String(e));
+        errors.push(String(e));
     } finally {
         stop?.();
         btn.innerHTML = label;
         btn.disabled = false;
     }
     renderList();
+    const added = dicts.filter((d) => !before.has(d.id)).length;
+    if (added) {
+        document.getElementById('dict-detail').prepend(el('p', {role: 'status'},
+            added === 1 ? '1 dicionário importado.' : `${added} dicionários importados.`));
+    }
+    errors.forEach(alertDetail);
+
 }
 
 function alertDetail(text) {
@@ -155,7 +177,7 @@ function renderMdict(root, d) {
             cardRow({icon: 'book', title: 'Formato', control: el('span', {class: 'muted'}, d.format || 'Dicionário local')}),
             cardRow({icon: 'list', title: 'Verbetes', control: el('span', {class: 'muted'}, d.loaded ? d.entries.toLocaleString('pt-BR') : (d.enabled ? 'Carregando…' : 'Desativado'))}),
             cardRow({icon: 'folder', title: 'Arquivos de recursos (.mdd)', control: el('span', {class: 'muted'}, String(d.resourceFiles))}),
-            cardRow({icon: 'folder', title: d.installed ? 'Pasta' : 'Arquivo', desc: d.path, control: remove})),
+            cardRow({icon: 'folder', title: 'Local', desc: d.path, control: remove})),
     );
 }
 

@@ -11,7 +11,7 @@ com uma implementação independente, e não afirma equivalência de todos os al
   The settings wire tag `kind: mdict` is retained for all local readers to keep existing settings
   compatible; `DictInfo.format` identifies the actual format. Do not use this tag to infer file format.
   **Storage follows Lookupper's model (user's decision, 2026-10-15): no database.** Importing a ZIP
-  unpacks it into `<local data>/dictionaries/content/<id>/` (`source::install`; ZIP, RAR, 7z, TAR or gz/bz2/xz, `dictionaries/archive.rs`), and the files are
+  unpacks it into `<local data>/dictionaries/content/<id>/` (`source::install_batch`/`source::install`; ZIP, RAR, 7z, TAR or gz/bz2/xz, `dictionaries/archive.rs`), and the files are
   read from there unchanged; removing the dictionary deletes that copy. A main file chosen directly
   is read in place. MDict reads its own key index on every open (no sidecar). Every other format
   keeps a headword index beside its files, `<main>.lkidx` (`dictionaries/lkidx.rs`: Lookupper's
@@ -43,8 +43,22 @@ Em **Dicionários → Adicionar**, selecione o arquivo compactado do dicionário
 ZIP, RAR (RAR4/RAR5, também dividido em volumes `.part1.rar`… ou `.rar`/`.r00`…), 7z, TAR
 (`.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`) ou um único arquivo `.gz`/`.bz2`/`.xz`. Ele é
 extraído para uma pasta própria do aplicativo. Também é possível escolher o arquivo principal
-abaixo; ele é lido onde está, com os arquivos companheiros ao lado. Quando um arquivo compactado
-contém vários dicionários independentes, extraia-o e adicione cada principal.
+abaixo; ele é lido onde está, com os arquivos companheiros ao lado. É possível selecionar vários
+arquivos de uma vez. Se um pacote contém vários dicionários, todos são importados automaticamente,
+sem seleção adicional. Cada um fica em uma pasta própria e pode ser removido separadamente,
+apagando sua cópia física sem afetar os demais. No MDict, cada `.mdx` leva apenas os `.mdd`/`.N.mdd`
+do mesmo nome-base. Recursos soltos potencialmente compartilhados são copiados para cada pasta.
+Os MDX/MDD exclusivos são movidos da extração temporária, sem duplicar os arquivos grandes.
+
+Cada arquivo selecionado é uma transação: se um principal não puder ser aberto, nenhum dicionário
+daquele arquivo é cadastrado, e as pastas criadas são removidas. Os próximos arquivos selecionados
+continuam sendo processados; sucessos e erros aparecem ao final. Falhas de MDD continuam como
+avisos, conforme o comportamento anterior. Arquivos escolhidos diretamente são lidos no lugar e
+nunca são apagados por uma falha ou remoção. Pacotes com um só dicionário mantêm o layout anterior.
+
+A extração e a distribuição das cópias preservam limites de 32 GiB e 200 mil itens; os recursos
+copiados para várias pastas contam novamente no orçamento da instalação. Durante a importação,
+recursos compartilhados podem ocupar espaço temporário adicional; não há cópia integral em RAM.
 
 | Formato | Arquivo principal | Conteúdo lido |
 | --- | --- | --- |
@@ -152,7 +166,12 @@ O engine é validado com arquivos sintéticos completos, um Slob gerado pelo Wri
 de referência e testes de integração dos leitores com índices .lkidx/ZIP/recursos. Eles rodam em
 Windows e Linux no workflow `dictionary-engine`. O harness compila os módulos reais do app
 sem carregar Tauri/OCR, e o workflow principal ainda compila o aplicativo completo.
-Os testes JavaScript exercitam ordem das fontes, todos os homógrafos no Anki e áudio/links.
+Os testes JavaScript exercitam ordem das fontes, todos os homógrafos no Anki, áudio/links e a
+seleção de vários arquivos, execução sequencial e resultados mistos na importação. O harness
+Rust cobre pacotes 7z com dois MDX e MDDs numerados, recursos, reabertura, exclusão independente,
+rollback e descoberta de formatos mistos. O workflow `dictionary-engine` aceita opcionalmente
+`real_mdict_archive_url` no disparo manual para validar o pacote real com dois MDX no Linux;
+o arquivo baixado permanece no diretório temporário do runner e não é incluído no repositório.
 Não se executam builds Rust neste PC, conforme `AGENTS.md`.
 
 Referências dos formatos: [MDict](https://github.com/zhansliu/writemdict/blob/master/fileformat.md),

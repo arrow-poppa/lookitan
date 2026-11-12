@@ -2355,30 +2355,39 @@ async fn add_dictionary(app: AppHandle, path: String) -> std::result::Result<Vec
         // Like Lookupper: an archive is unpacked into the app's own folder and read from there.
         let content = content_dir(&state);
         let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "unpacking", "bytes": 0}));
-        let installed = dictionaries::source::install(&source, &content, &id, &|bytes| {
+        let mut batch = dictionaries::source::install_batch(&source, &content, &id, &|bytes| {
             let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "unpacking", "bytes": bytes}));
         }).map_err(|e| format!("{e:#}"))?;
-        let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "reading", "entries": 0}));
-        let opened = Dictionary::open_cached(&id, &installed, &state.dictionaries_dir, &|entries| {
-            let _ = app.emit("dictionary-progress", serde_json::json!({"stage": "indexing", "entries": entries}));
-        });
-        let dict = match opened {
-            Ok(d) => d,
-            Err(e) => {
-                if dictionaries::source::is_installed_copy(&installed, &content) {
-                    let _ = std::fs::remove_dir_all(&installed);
-                }
-                return Err(format!("{e:#}"));
+        // Readers are declared after the rollback guard, so they are dropped first on failure.
+        let mut opened = Vec::new();
+        let mut configs = Vec::new();
+        for (index, installed) in batch.paths.iter().enumerate() {
+            let dict_id = if batch.paths.len() == 1 { id.clone() } else { format!("{id}-{}", index + 1) };
+            if state.settings.read().dictionaries.iter().any(|d| d.id == dict_id
+                || std::path::Path::new(&d.path).canonicalize().ok().as_ref() == Some(installed)) {
+                return Err(format!("Este dicionário já está instalado: {}", installed.display()));
             }
-        };
-        let path = installed.to_string_lossy().into_owned();
-        let name = dict.name.clone();
-        {
-            let mut s = state.settings.write();
-            s.dictionaries.push(DictionaryConfig { id: id.clone(), kind: DictionaryKind::Mdict, path: path.clone(), name, enabled: true });
-            settings::save(&state.config_dir, &s).map_err(|e| format!("{e:#}"))?;
+            let _ = app.emit("dictionary-progress", serde_json::json!({
+                "stage": "reading", "entries": 0, "dictionary": index + 1, "total": batch.paths.len()
+            }));
+            let dict = Dictionary::open_cached(&dict_id, installed, &state.dictionaries_dir, &|entries| {
+                let _ = app.emit("dictionary-progress", serde_json::json!({
+                    "stage": "indexing", "entries": entries, "dictionary": index + 1, "total": batch.paths.len()
+                }));
+            }).map_err(|e| format!("{}: {e:#}", installed.display()))?;
+            configs.push(DictionaryConfig { id: dict_id, kind: DictionaryKind::Mdict,
+                path: installed.to_string_lossy().into_owned(), name: dict.name.clone(), enabled: true });
+            opened.push(Arc::new(dict));
         }
-        state.dicts.write().push(Arc::new(dict));
+        {
+            let mut settings = state.settings.write();
+            let mut updated = settings.clone();
+            updated.dictionaries.extend(configs);
+            settings::save(&state.config_dir, &updated).map_err(|e| format!("{e:#}"))?;
+            *settings = updated;
+        }
+        state.dicts.write().extend(opened);
+        batch.commit();
         drop(_loading);
         load_dictionaries(&state);
         Ok(dictionary_infos(&state))
@@ -2389,26 +2398,27 @@ async fn add_dictionary(app: AppHandle, path: String) -> std::result::Result<Vec
 
 #[tauri::command]
 fn remove_dictionary(state: tauri::State<'_, AppState>, id: String) -> std::result::Result<Vec<DictInfo>, String> {
-    {
-        let mut s = state.settings.write();
-        if s.dictionaries.iter().any(|d| d.id == id && d.kind != DictionaryKind::Mdict) {
+    let _loading = state.dictionary_gate.lock();
+    let removed = {
+        let mut settings = state.settings.write();
+        if settings.dictionaries.iter().any(|d| d.id == id && d.kind != DictionaryKind::Mdict) {
             return Err("Built-in dictionaries can be turned off but not removed.".into());
         }
-        let removed: Vec<String> = s.dictionaries.iter().filter(|d| d.id == id).map(|d| d.path.clone()).collect();
-        s.dictionaries.retain(|d| d.id != id);
-        settings::save(&state.config_dir, &s).map_err(|e| format!("{e:#}"))?;
-        drop(s);
-        state.dicts.write().retain(|d| d.id != id);
-        // The unpacked copy is Lookitan's own and goes with the dictionary, as in Lookupper. A file
-        // used in place is the user's and stays. A copy still in use is removed at the next start.
-        let content = content_dir(&state);
-        for path in removed {
-            let path = std::path::Path::new(&path);
-            if dictionaries::source::is_installed_copy(path, &content) {
-                if let Err(e) = std::fs::remove_dir_all(path) {
-                    log::warn!("remove {}: {e}; retrying at the next start", path.display());
-                    let _ = std::fs::write(path.join(dictionaries::source::REMOVED_MARKER), b"");
-                }
+        let removed: Vec<PathBuf> = settings.dictionaries.iter().filter(|d| d.id == id)
+            .map(|d| PathBuf::from(&d.path)).collect();
+        let mut updated = settings.clone();
+        updated.dictionaries.retain(|d| d.id != id);
+        settings::save(&state.config_dir, &updated).map_err(|e| format!("{e:#}"))?;
+        *settings = updated;
+        removed
+    };
+    state.dicts.write().retain(|d| d.id != id);
+    let content = content_dir(&state);
+    for path in removed {
+        if dictionaries::source::is_installed_copy(&path, &content) {
+            if let Err(e) = std::fs::remove_dir_all(&path) {
+                log::warn!("remove {}: {e}; retrying at the next start", path.display());
+                let _ = std::fs::write(path.join(dictionaries::source::REMOVED_MARKER), b"");
             }
         }
     }

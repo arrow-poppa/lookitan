@@ -233,3 +233,57 @@ fn validates_inflated_sizes_and_key_terminators() {
     let mut full = MAX_INDEX_BYTES;
     assert!(charge(&mut full, 1).is_err());
 }
+
+#[test]
+fn a_seven_zip_collection_installs_mdxs_and_their_resources_independently() {
+    use crate::{dict::Dictionary, dictionaries::source};
+    struct Temp(PathBuf);
+    impl Drop for Temp { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let temp = Temp(std::env::temp_dir().join(format!("lkt-mdx-bulk-{}-{stamp}", std::process::id())));
+    let input = temp.0.join("input");
+    std::fs::create_dir_all(&input).unwrap();
+    let mdx = fixture(true, Encoding::Utf8, "", &[("cat", 0)], &[b"<img src=\"images/cat.png\">"], 2);
+    for name in ["Photo Dictionary", "PicDic"] {
+        std::fs::write(input.join(format!("{name}.mdx")), &mdx.bytes).unwrap();
+        let image: &[u8] = if name == "PicDic" { b"second image" } else { b"first image" };
+        let mdd = fixture(true, Encoding::Utf16, "", &[("\\images\\cat.png", 0)], &[image], 2);
+        std::fs::write(input.join(format!("{name}.mdd")), mdd.bytes).unwrap();
+    }
+    let numbered = fixture(true, Encoding::Utf16, "", &[("\\extra.png", 0)], &[b"extra image"], 2);
+    std::fs::write(input.join("PicDic.2.mdd"), numbered.bytes).unwrap();
+    std::fs::write(input.join("PicDic.css"), "img { max-width: 100%; }").unwrap();
+    std::fs::write(input.join("readme.txt"), "not a dictionary").unwrap();
+    let archive = temp.0.join("picturedict.7z");
+    sevenz_rust2::compress_to_path(&input, &archive).unwrap();
+    let cache = temp.0.join("cache");
+    let content = cache.join("content");
+    let mut batch = source::install_batch(&archive, &content, "pictures", &|_| {}).unwrap();
+    assert_eq!(batch.paths.len(), 2);
+    let names: Vec<_> = batch.paths.iter().map(|p| source::main_file(p).unwrap().file_stem().unwrap().to_string_lossy().into_owned()).collect();
+    assert_eq!(names, ["Photo Dictionary", "PicDic"]);
+    let first = Dictionary::open_cached("pictures-1", &batch.paths[0], &cache, &|_| {}).unwrap();
+    let second = Dictionary::open_cached("pictures-2", &batch.paths[1], &cache, &|_| {}).unwrap();
+    assert_eq!(first.mdds.len(), 1);
+    assert_eq!(second.mdds.len(), 2);
+    assert_eq!(first.resource("images/cat.png"), Some(b"first image".to_vec()));
+    assert_eq!(second.resource("images/cat.png"), Some(b"second image".to_vec()));
+    assert_eq!(second.resource("extra.png"), Some(b"extra image".to_vec()));
+    assert!(!batch.paths[0].join("PicDic.mdx").exists());
+    assert!(!batch.paths[0].join("PicDic.mdd").exists());
+    assert!(!batch.paths[0].join("PicDic.2.mdd").exists());
+    assert!(!batch.paths[1].join("Photo Dictionary.mdd").exists());
+    assert!(second.entry_html(second.find("cat")[0]).unwrap().contains("images/cat.png"));
+    drop(first); drop(second);
+    batch.commit();
+    let paths = batch.paths.clone();
+    drop(batch);
+    std::fs::remove_dir_all(&paths[0]).unwrap();
+    let reopened = Dictionary::open_cached("pictures-2", &paths[1], &cache, &|_| {}).unwrap();
+    assert_eq!(reopened.resource("images/cat.png"), Some(b"second image".to_vec()));
+    assert!(!paths[0].exists(), "removing one dictionary deletes its physical files");
+    assert!(input.join("Photo Dictionary.mdd").is_file(), "original files are untouched");
+    drop(reopened);
+    std::fs::remove_dir_all(&paths[1]).unwrap();
+    assert_eq!(std::fs::read_dir(&content).unwrap().count(), 0, "no staging or shared extraction remains");
+}

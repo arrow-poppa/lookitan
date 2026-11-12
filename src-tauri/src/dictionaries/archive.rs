@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 
-const MAX_TOTAL: u64 = 32 * 1024 * 1024 * 1024;
-const MAX_MEMBERS: u64 = 200_000;
+pub(super) const MAX_TOTAL: u64 = 32 * 1024 * 1024 * 1024;
+pub(super) const MAX_MEMBERS: u64 = 200_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Compression { None, Gzip, Bzip2, Xz }

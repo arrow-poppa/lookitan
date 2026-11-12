@@ -231,3 +231,107 @@ fn a_damaged_lkidx_is_rebuilt_and_a_dsl_is_read_where_it_is() {
     let recovered = Dictionary::open_cached("lkidx", &source, &cache, &|_| {}).unwrap();
     assert_eq!(recovered.find("word").len(), 1, "a damaged index is rebuilt");
 }
+
+#[test]
+fn batch_import_rolls_back_on_a_bad_dictionary_and_preserves_earlier_installs() {
+    let directory = Directory::new();
+    let cache = directory.0.join("cache");
+    let content = cache.join("content");
+    let source_zip = directory.0.join("batch.zip");
+    archive(&source_zip, &[("A.dsl", b"#NAME \"Good\"\nword\n\tdefinition\n"), ("B.mdx", b"damaged")]);
+    let old = content.join("old");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("keep"), "previous dictionary").unwrap();
+    {
+        let batch = source::install_batch(&source_zip, &content, "batch", &|_| {}).unwrap();
+        let first = Dictionary::open_cached("batch-1", &batch.paths[0], &cache, &|_| {}).unwrap();
+        assert!(Dictionary::open_cached("batch-2", &batch.paths[1], &cache, &|_| {}).is_err());
+        drop(first); // Readers are released before the batch's rollback, including on Windows.
+    }
+    assert_eq!(fs::read_to_string(old.join("keep")).unwrap(), "previous dictionary");
+    assert_eq!(fs::read_dir(&content).unwrap().count(), 1);
+    assert!(source_zip.is_file());
+}
+
+#[test]
+fn batch_import_groups_nested_yomitan_and_stardict_companions_without_hiding_siblings() {
+    let directory = Directory::new();
+    let archive_path = directory.0.join("mixed.zip");
+    archive(&archive_path, &[
+        ("one/index.json", br#"{"title":"One","format":3,"revision":"1"}"#),
+        ("one/term_bank_1.json", b"[]"), ("one/resources/notes.txt", b"resource"),
+        ("two/index.json", br#"{"title":"Two","format":3,"revision":"1"}"#),
+        ("two/term_bank_1.json", b"[]"),
+        ("three/words.ifo", b"StarDict's dict ifo file\nversion=2.4.2\n"),
+        ("three/words.idx", b"index"), ("three/words.dict", b"data"),
+        ("three/other.mdx", b"placeholder for discovery"), ("three/other.mdd", b"media"),
+        ("four/data.noun", b"data"), ("four/index.noun", b"index"),
+        ("readme.txt", b"not a dictionary"),
+    ]);
+    let content = directory.0.join("content");
+    let batch = source::install_batch(&archive_path, &content, "mixed", &|_| {}).unwrap();
+    assert_eq!(batch.paths.len(), 5);
+    for path in &batch.paths { source::main_file(path).unwrap(); }
+    let stardict = batch.paths.iter().find(|p| p.join("words.ifo").exists()).unwrap();
+    assert!(stardict.join("words.idx").exists());
+    assert!(!stardict.join("other.mdd").exists());
+    let mdx = batch.paths.iter().find(|p| p.join("other.mdx").exists()).unwrap();
+    assert!(mdx.join("other.mdd").exists());
+    assert!(!mdx.join("words.ifo").exists());
+    assert!(!mdx.join("words.idx").exists());
+    let yomitan = batch.paths.iter().find(|p| p.join("resources/notes.txt").exists()).unwrap();
+    assert_eq!(source::main_files(yomitan).unwrap().len(), 1);
+    drop(batch);
+    assert_eq!(fs::read_dir(&content).unwrap().count(), 0);
+}
+
+#[test]
+fn a_single_archive_and_direct_main_keep_their_existing_storage_contract() {
+    let directory = Directory::new();
+    let content = directory.0.join("content");
+    let archive_path = directory.0.join("single.zip");
+    archive(&archive_path, &[("nested/words.dsl", b"#NAME \"One\"\nword\n\tdefinition\n")]);
+    let mut batch = source::install_batch(&archive_path, &content, "single", &|_| {}).unwrap();
+    assert_eq!(batch.paths, vec![content.join("single")]);
+    assert!(batch.paths[0].join("nested/words.dsl").is_file());
+    batch.commit();
+    drop(batch);
+    assert!(content.join("single").exists());
+    assert!(source::install_batch(&archive_path, &content, "single", &|_| {}).is_err());
+    let direct = directory.0.join("direct.dsl");
+    fs::write(&direct, "word\n\tdefinition\n").unwrap();
+    let batch = source::install_batch(&direct, &content, "direct", &|_| {}).unwrap();
+    assert_eq!(batch.paths, vec![direct.canonicalize().unwrap()]);
+    drop(batch);
+    assert!(direct.exists(), "rollback never deletes a directly selected original");
+}
+
+/// Optional real-file regression, supplied only to a manually dispatched CI run. The dictionary
+/// archive is never checked into Git. Synthetic MDX/MDD coverage above runs on both platforms.
+#[test]
+fn real_mdict_collection_installs_reopens_and_removes_independently() {
+    let Ok(archive_path) = std::env::var("LOOKITAN_REAL_MDICT_ARCHIVE") else { return };
+    let directory = Directory::new();
+    let cache = directory.0.join("cache");
+    let content = cache.join("content");
+    let mut batch = source::install_batch(Path::new(&archive_path), &content, "real-pictures", &|_| {}).unwrap();
+    assert_eq!(batch.paths.len(), 2, "the reported picturedict archive contains two dictionaries");
+    for (i, path) in batch.paths.iter().enumerate() {
+        let dict = Dictionary::open_cached(&format!("real-{i}"), path, &cache, &|_| {}).unwrap();
+        assert!(dict.len() > 0);
+        assert!(!dict.mdds.is_empty());
+        let resource = dict.mdds[0].headword(0).unwrap();
+        assert!(!dict.resource(resource).unwrap().is_empty(), "the companion's image must be served");
+        println!("real archive: {}: {} entries, {} MDDs, resource {}", dict.name, dict.len(), dict.mdds.len(), resource);
+    }
+    batch.commit();
+    let paths = batch.paths.clone();
+    drop(batch);
+    fs::remove_dir_all(&paths[0]).unwrap();
+    let reopened = Dictionary::open_cached("real-second", &paths[1], &cache, &|_| {}).unwrap();
+    let resource = reopened.mdds[0].headword(0).unwrap();
+    assert!(!reopened.resource(resource).unwrap().is_empty());
+    drop(reopened);
+    fs::remove_dir_all(&paths[1]).unwrap();
+    assert_eq!(fs::read_dir(&content).unwrap().count(), 0);
+}

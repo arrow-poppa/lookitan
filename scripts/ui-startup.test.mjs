@@ -51,6 +51,7 @@ class Element {
         if (name === 'value') { this.value = value; }
     }
     append(...children) { this.children.push(...children); }
+    prepend(...children) { this.children.unshift(...children); }
     replaceChildren(...children) { this._text = ''; this.children = children; }
     addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); }
     dispatch(type) { for (const listener of this.listeners[type] || []) { listener({target: this}); } }
@@ -1298,4 +1299,78 @@ test('the audio test result sits under its description, not beside the button', 
     const row = fixture.root.children.at(-1);
     const txt = row.children.find((node) => node.className === 'txt');
     assert(txt.children.includes(result), 'inside the text column');
+});
+
+async function bulkImportFixture(selection, importSource) {
+    const view = dom();
+    const button = view.add('add-dict');
+    const detail = view.add('dict-detail');
+    view.add('dict-list');
+    let progress;
+    let stopped = 0;
+    let options;
+    const ui = await load('src/main/dicts-tab.js', {document: view.document}, {
+        '@tauri-apps/plugin-dialog': {open: async (o) => { options = o; return selection; }, ask: async () => true},
+        [file('src/lib/api.js')]: {api: {
+            listDictionaries: async () => [],
+            addDictionary: (path) => importSource(path, progress),
+            onDictionaryProgress: async (handler) => { progress = handler; return () => { stopped++; }; },
+        }, escapeHtml: String},
+        [file('src/lib/icons.js')]: {icon: () => ''},
+        [file('src/lib/ai/explain.js')]: {DEFAULT_MODELS: {}, explain: async () => ''},
+        [file('src/main/store.js')]: {store: {settings: {}, ai: normalizeAiOptions({})}, save: () => {}},
+    });
+    await ui.initDictsTab();
+    const run = () => button.listeners.click[0]();
+    return {run, button, detail, options: () => options, stopped: () => stopped};
+}
+function importedDictionary(id) {
+    return {id, kind: 'mdict', name: id, enabled: true, loaded: true, installed: true,
+        entries: 1, resourceFiles: 1, path: `/content/${id}`, format: 'MDict', description: 'Test dictionary', warnings: []};
+}
+
+test('bulk import processes selected sources sequentially and retains visible errors and successes', async () => {
+    const pending = deferred();
+    const calls = [];
+    const fixture = await bulkImportFixture(['/bad.7z', '/pictures.7z', '/last.mdx'], async (path, progress) => {
+        calls.push(path);
+        if (path === '/bad.7z') { throw new Error('arquivo danificado'); }
+        if (path === '/pictures.7z') {
+            progress({stage: 'reading', dictionary: 1, total: 2});
+            await pending.promise;
+            return [importedDictionary('photo'), importedDictionary('picdic')];
+        }
+        return [importedDictionary('photo'), importedDictionary('picdic'), importedDictionary('last')];
+    });
+    const importing = fixture.run();
+    await flush();
+    assert.equal(fixture.options().multiple, true);
+    assert.deepEqual(calls, ['/bad.7z', '/pictures.7z']);
+    assert.equal(fixture.button.disabled, true);
+    assert.match(fixture.button.textContent, /2\/3.*1\/2/);
+    pending.resolve();
+    await importing;
+    assert.deepEqual(calls, ['/bad.7z', '/pictures.7z', '/last.mdx']);
+    assert.equal(fixture.button.disabled, false);
+    assert.equal(fixture.stopped(), 1);
+    assert.match(fixture.detail.textContent, /3 dicionários importados/);
+    assert.match(fixture.detail.textContent, /bad\.7z.*arquivo danificado/);
+});
+
+test('one archive can add multiple dictionaries without asking for a selection', async () => {
+    const calls = [];
+    const fixture = await bulkImportFixture(['/pictures.7z'], async (path) => {
+        calls.push(path);
+        return [importedDictionary('photo'), importedDictionary('picdic')];
+    });
+    await fixture.run();
+    assert.deepEqual(calls, ['/pictures.7z']);
+    assert.match(fixture.detail.textContent, /2 dicionários importados/);
+});
+
+test('cancelling file selection does not start an import', async () => {
+    const fixture = await bulkImportFixture(null, () => { throw new Error('must not import'); });
+    await fixture.run();
+    assert.notEqual(fixture.button.disabled, true);
+    assert.equal(fixture.stopped(), 0);
 });

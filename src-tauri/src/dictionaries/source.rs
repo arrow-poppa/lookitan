@@ -13,7 +13,9 @@ fn is_main(path: &Path) -> bool {
         || ((name.ends_with(".txt") || name.ends_with(".txt.gz")) && !name.starts_with("readme") && !name.starts_with("license"))
 }
 
-fn discover(root: &Path) -> Result<PathBuf> {
+/// All main files, in stable path order. Format companions and loose resource files are not
+/// separate dictionaries. Selection is scoped to each directory, so sibling dictionaries survive.
+fn discover_all(root: &Path) -> Result<Vec<PathBuf>> {
     let mut stack = vec![(root.to_path_buf(), 0)];
     let mut found = Vec::new();
     let mut visited = 0;
@@ -28,32 +30,28 @@ fn discover(root: &Path) -> Result<PathBuf> {
         }
     }
     found.sort();
-    // A Yomitan archive's bank/resource files belong to its index, not to separate dictionaries.
-    let yomitan: Vec<_> = found.iter().filter(|p| p.file_name().map(|n| n == "index.json").unwrap_or(false)).collect();
-    if yomitan.len() == 1 { return Ok(yomitan[0].to_path_buf()); }
-    // StarDict's data and index files describe one dictionary.
-    let ifos: Vec<_> = found.iter().filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("ifo")).unwrap_or(false)).collect();
-    if ifos.len() == 1 { return Ok(ifos[0].to_path_buf()); }
-    // A file only these formats use wins over loose text or XML files beside it (a read-me.txt in
-    // an MDict archive is not a CC-CEDICT dictionary).
-    let distinct: Vec<_> = found.iter().filter(|p| {
+    found.dedup();
+    let yomitan: Vec<_> = found.iter().filter(|p| p.file_name().map(|n| n == "index.json").unwrap_or(false))
+        .filter_map(|p| p.parent().map(Path::to_path_buf)).collect();
+    // Banks and resources below a Yomitan root belong to its index.
+    found.retain(|p| !yomitan.iter().any(|dir| p.starts_with(dir) && p != &dir.join("index.json")));
+    let specific: Vec<_> = found.iter().filter(|p| {
         let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-        [".mdx", ".dsl", ".dsl.dz", ".slob"].iter().any(|s| name.ends_with(s)) || name == "cide.a"
+        [".mdx", ".ifo", ".dsl", ".dsl.dz", ".slob"].iter().any(|s| name.ends_with(s))
+            || ["index.json", "data.noun", "cide.a", "gcide.xml"].contains(&name.as_str())
             || (name.ends_with(".json") && super::jsondict::detect(p).is_some())
             || (name.ends_with(".xml") && super::wnlmf::detect(p))
             || (name.ends_with(".txt") && super::webster_text::detect(p))
-    }).collect();
-    if distinct.len() == 1 { return Ok(distinct[0].to_path_buf()); }
-    let gcide: Vec<_> = found.iter().filter(|p| p.file_name().map(|n| n == "gcide.xml").unwrap_or(false)).collect();
-    if gcide.len() == 1 { return Ok(gcide[0].to_path_buf()); }
-    if let Some(data) = found.iter().find(|p| p.file_name().map(|n| n == "data.noun").unwrap_or(false)) {
-        return Ok(data.clone());
-    }
-    found.dedup();
-    match found.as_slice() {
-        [path] => Ok(path.clone()),
-        [] => bail!("nenhum dicionário compatível encontrado no arquivo"),
-        _ => bail!("o arquivo contém vários dicionários; extraia-o e adicione cada arquivo principal separadamente"),
+    }).cloned().collect();
+    found.retain(|p| specific.contains(p) || !specific.iter().any(|main| main.parent() == p.parent()));
+    if found.is_empty() { bail!("nenhum dicionário compatível encontrado no arquivo"); }
+    Ok(found)
+}
+
+/// Main files for a batch import. A directly selected main file bypasses folder discovery.
+pub fn main_files(path: &Path) -> Result<Vec<PathBuf>> {
+    if path.is_dir() { discover_all(path) } else if path.is_file() { Ok(vec![path.to_path_buf()]) } else {
+        bail!("No dictionary folder at '{}'.", path.display())
     }
 }
 
@@ -89,8 +87,8 @@ pub fn install(path: &Path, content: &Path, id: &str, progress: &dyn Fn(u64)) ->
     let pending = PendingDirectory { path: content.join(format!(".unpacking-{id}-{unique}")), parent: content.to_path_buf() };
     fs::create_dir(&pending.path)?;
     super::archive::unpack(&path, kind, &pending.path, progress)?;
-    // An archive that holds several dictionaries, or none, is refused before it is kept.
-    discover(&pending.path)?;
+    // Refuse archives with no main file before publishing the extracted copy.
+    discover_all(&pending.path)?;
     fs::rename(&pending.path, &target).context("publish unpacked dictionary")?;
     Ok(target)
 }
@@ -98,8 +96,10 @@ pub fn install(path: &Path, content: &Path, id: &str, progress: &dyn Fn(u64)) ->
 /// The main file of an installed dictionary: the path itself when it is a file, otherwise the
 /// one dictionary in the folder.
 pub fn main_file(path: &Path) -> Result<PathBuf> {
-    if path.is_dir() { discover(path) } else if path.is_file() { Ok(path.to_path_buf()) } else {
-        bail!("No dictionary folder at '{}'.", path.display())
+    let files = main_files(path)?;
+    match files.as_slice() {
+        [path] => Ok(path.clone()),
+        _ => bail!("o arquivo contém vários dicionários; adicione cada arquivo principal separadamente"),
     }
 }
 
@@ -109,6 +109,136 @@ pub fn is_installed_copy(path: &Path, content: &Path) -> bool {
         (Ok(path), Ok(content)) => path.parent() == Some(content.as_path()) && path.is_dir(),
         _ => false,
     }
+}
+
+/// A source is registered only after every dictionary has opened and settings were saved.
+/// Dropping an unsuccessful batch rolls back only the directories created by this import.
+pub struct InstalledBatch {
+    pub paths: Vec<PathBuf>,
+    copies: Vec<PathBuf>,
+    content: PathBuf,
+    committed: bool,
+}
+
+impl InstalledBatch {
+    pub fn commit(&mut self) { self.committed = true; }
+}
+
+impl Drop for InstalledBatch {
+    fn drop(&mut self) {
+        if !self.committed {
+            for path in &self.copies {
+                let pending = PendingDirectory { path: path.clone(), parent: self.content.clone() };
+                drop(pending);
+                // A live reader elsewhere can keep a Windows file mapped; retry at startup.
+                if path.is_dir() { let _ = fs::write(path.join(REMOVED_MARKER), b""); }
+            }
+        }
+    }
+}
+
+fn mdd_companion(main: &Path, resource: &Path) -> bool {
+    if !main.extension().map(|e| e.eq_ignore_ascii_case("mdx")).unwrap_or(false)
+        || main.parent() != resource.parent() || !resource.extension().map(|e| e.eq_ignore_ascii_case("mdd")).unwrap_or(false) {
+        return false;
+    }
+    let stem = main.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
+    let name = resource.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
+    name == stem || name.strip_prefix(&format!("{stem}.")).and_then(|n| n.parse::<u64>().ok()).is_some()
+}
+
+fn stardict_companion(main: &Path, resource: &Path) -> bool {
+    if main.parent() != resource.parent() || !main.extension().map(|e| e.eq_ignore_ascii_case("ifo")).unwrap_or(false) {
+        return false;
+    }
+    let stem = main.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
+    let name = resource.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+    ["idx", "idx.gz", "dict", "dict.dz", "syn"].iter().any(|ext| name == format!("{stem}.{ext}"))
+}
+
+#[derive(Default)]
+struct CopyBudget { bytes: u64, members: u64 }
+impl CopyBudget {
+    fn charge(&mut self, bytes: u64) -> Result<()> {
+        self.bytes = self.bytes.checked_add(bytes).context("batch size overflow")?;
+        self.members += 1;
+        if self.bytes > super::archive::MAX_TOTAL { bail!("a instalação em lote passa de 32 GiB"); }
+        if self.members > super::archive::MAX_MEMBERS { bail!("a instalação em lote tem mais de 200 mil itens"); }
+        Ok(())
+    }
+}
+
+/// Preserve paths relative to this main file, but exclude other dictionaries and their known
+/// companions. Loose resources are copied to give each installation independent ownership.
+fn copy_dictionary(main: &Path, mains: &[PathBuf], target: &Path, budget: &mut CopyBudget) -> Result<()> {
+    let root = main.parent().context("dictionary main file has no parent")?;
+    let mut stack = vec![(root.to_path_buf(), target.to_path_buf())];
+    while let Some((from, to)) = stack.pop() {
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let path = entry.path();
+            let kind = entry.file_type()?;
+            if kind.is_symlink() { bail!("dictionary archive symlinks are unsupported"); }
+            if kind.is_dir() {
+                // A nested dictionary owns its directory; it is not a resource of this one.
+                if mains.iter().any(|other| other != main && other.parent() == Some(path.as_path())) { continue; }
+                budget.charge(0)?;
+                let dest = to.join(entry.file_name());
+                fs::create_dir(&dest)?;
+                stack.push((path, dest));
+            } else if kind.is_file() {
+                if mains.iter().any(|other| other != main && (other == &path
+                    || (other.extension().map(|e| e.eq_ignore_ascii_case("mdx")).unwrap_or(false) && mdd_companion(other, &path))
+                    || stardict_companion(other, &path))) { continue; }
+                // MDict never opens another name's MDD. Do not retain orphan resource databases.
+                if main.extension().map(|e| e.eq_ignore_ascii_case("mdx")).unwrap_or(false)
+                    && path.extension().map(|e| e.eq_ignore_ascii_case("mdd")).unwrap_or(false)
+                    && !mdd_companion(main, &path) { continue; }
+                budget.charge(entry.metadata()?.len())?;
+                let dest = to.join(entry.file_name());
+                if path == main || mdd_companion(main, &path) || stardict_companion(main, &path) {
+                    // Exclusive large files move on the same filesystem: no second MDD copy.
+                    fs::rename(&path, &dest)?;
+                } else {
+                    fs::copy(&path, &dest)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Extract once, then install each discovered dictionary in its own removable directory. Direct
+/// main files are read in place. Archives with one dictionary retain the previous directory layout.
+pub fn install_batch(path: &Path, content: &Path, id: &str, progress: &dyn Fn(u64)) -> Result<InstalledBatch> {
+    let source = path.canonicalize().with_context(|| format!("open {}", path.display()))?;
+    let mut batch = InstalledBatch { paths: Vec::new(), copies: Vec::new(), content: content.to_path_buf(), committed: false };
+    if super::archive::kind(&source).is_none() {
+        batch.paths = main_files(&source)?;
+        return Ok(batch);
+    }
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let stage = install(&source, content, &format!(".unpacking-batch-{id}-{unique}"), progress)?;
+    let pending = PendingDirectory { path: stage.clone(), parent: content.to_path_buf() };
+    let mains = main_files(&stage)?;
+    let mut budget = CopyBudget::default();
+    for (index, main) in mains.iter().enumerate() {
+        let target = content.join(if mains.len() == 1 { id.to_string() } else { format!("{id}-{}", index + 1) });
+        if target.join(REMOVED_MARKER).is_file() { fs::remove_dir_all(&target).context("remove the earlier copy of this dictionary")?; }
+        if target.exists() { bail!("este dicionário já está instalado"); }
+        if mains.len() == 1 {
+            fs::rename(&stage, &target).context("publish unpacked dictionary")?;
+            batch.copies.push(target.clone());
+        } else {
+            budget.charge(0)?;
+            fs::create_dir(&target)?;
+            batch.copies.push(target.clone());
+            copy_dictionary(main, &mains, &target, &mut budget)?;
+        }
+        batch.paths.push(target);
+    }
+    drop(pending);
+    Ok(batch)
 }
 
 /// Resolve both MDict backslashes and web paths. Case-insensitive traversal also works on Linux.
@@ -139,6 +269,14 @@ pub fn resource(root: &Path, relative: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn distributing_shared_resources_cannot_expand_past_the_archive_budget() {
+        let mut bytes = CopyBudget { bytes: super::super::archive::MAX_TOTAL, members: 0 };
+        assert!(bytes.charge(1).is_err());
+        let mut members = CopyBudget { bytes: 0, members: super::super::archive::MAX_MEMBERS };
+        assert!(members.charge(0).is_err());
+    }
+
     #[test]
     fn resources_use_dictionary_root_and_case_insensitive_nested_paths() {
         let root = std::env::temp_dir().join(format!("lkt-path-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));

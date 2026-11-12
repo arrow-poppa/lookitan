@@ -11,6 +11,11 @@ on:
       - '.github/workflows/dictionaries.yml'
   pull_request:
   workflow_dispatch:
+    inputs:
+      real_mdict_archive_url:
+        description: 'Optional direct URL of the reported two-dictionary MDX/MDD archive (Linux regression)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -32,6 +37,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: scripts/dictionary-harness
+      - name: Fetch optional real MDict regression archive
+        if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.real_mdict_archive_url != ''
+        env:
+          ARCHIVE_URL: ${{ inputs.real_mdict_archive_url }}
+        run: |
+          curl --fail --location --retry 2 --max-time 600 "$ARCHIVE_URL" -o "$RUNNER_TEMP/mdict-regression.7z"
+          echo "LOOKITAN_REAL_MDICT_ARCHIVE=$RUNNER_TEMP/mdict-regression.7z" >> "$GITHUB_ENV"
       - name: Test the actual dictionary readers and persistent indexes
         run: cargo test --locked --manifest-path scripts/dictionary-harness/Cargo.toml
       # The published dictionaries of the formats Lookupper reads, at pinned releases.
