@@ -12,6 +12,7 @@ anyhow = "1"
 base64 = "0.23"
 bzip2 = "0.6"
 encoding_rs = "0.8"
+fancy-regex = "0.13"
 flate2 = "1"
 hunspell-rs = "0.4"
 # hunspell-rs turns off hunspell-sys's default features, so its bindgen would not load libclang
