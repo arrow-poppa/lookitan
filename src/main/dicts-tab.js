@@ -84,7 +84,6 @@ async function addDictionary() {
             added === 1 ? '1 dicionário importado.' : `${added} dicionários importados.`));
     }
     errors.forEach(alertDetail);
-
 }
 
 function alertDetail(text) {

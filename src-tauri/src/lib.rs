@@ -2397,32 +2397,37 @@ async fn add_dictionary(app: AppHandle, path: String) -> std::result::Result<Vec
 }
 
 #[tauri::command]
-fn remove_dictionary(state: tauri::State<'_, AppState>, id: String) -> std::result::Result<Vec<DictInfo>, String> {
-    let _loading = state.dictionary_gate.lock();
-    let removed = {
-        let mut settings = state.settings.write();
-        if settings.dictionaries.iter().any(|d| d.id == id && d.kind != DictionaryKind::Mdict) {
-            return Err("Built-in dictionaries can be turned off but not removed.".into());
-        }
-        let removed: Vec<PathBuf> = settings.dictionaries.iter().filter(|d| d.id == id)
-            .map(|d| PathBuf::from(&d.path)).collect();
-        let mut updated = settings.clone();
-        updated.dictionaries.retain(|d| d.id != id);
-        settings::save(&state.config_dir, &updated).map_err(|e| format!("{e:#}"))?;
-        *settings = updated;
-        removed
-    };
-    state.dicts.write().retain(|d| d.id != id);
-    let content = content_dir(&state);
-    for path in removed {
-        if dictionaries::source::is_installed_copy(&path, &content) {
-            if let Err(e) = std::fs::remove_dir_all(&path) {
-                log::warn!("remove {}: {e}; retrying at the next start", path.display());
-                let _ = std::fs::write(path.join(dictionaries::source::REMOVED_MARKER), b"");
+async fn remove_dictionary(app: AppHandle, id: String) -> std::result::Result<Vec<DictInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let _loading = state.dictionary_gate.lock();
+        let removed = {
+            let mut settings = state.settings.write();
+            if settings.dictionaries.iter().any(|d| d.id == id && d.kind != DictionaryKind::Mdict) {
+                return Err("Built-in dictionaries can be turned off but not removed.".into());
+            }
+            let removed: Vec<PathBuf> = settings.dictionaries.iter().filter(|d| d.id == id)
+                .map(|d| PathBuf::from(&d.path)).collect();
+            let mut updated = settings.clone();
+            updated.dictionaries.retain(|d| d.id != id);
+            settings::save(&state.config_dir, &updated).map_err(|e| format!("{e:#}"))?;
+            *settings = updated;
+            removed
+        };
+        state.dicts.write().retain(|d| d.id != id);
+        let content = content_dir(&state);
+        for path in removed {
+            if dictionaries::source::is_installed_copy(&path, &content) {
+                if let Err(e) = std::fs::remove_dir_all(&path) {
+                    log::warn!("remove {}: {e}; retrying at the next start", path.display());
+                    let _ = std::fs::write(path.join(dictionaries::source::REMOVED_MARKER), b"");
+                }
             }
         }
-    }
-    Ok(dictionary_infos(&state))
+        Ok(dictionary_infos(&state))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
