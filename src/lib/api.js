@@ -33,6 +33,7 @@ export const api = {
     openExternal: (url) => invoke('open_external', {url}),
     openSettings: () => invoke('open_settings'),
     entryHtml: (dictId, entry) => invoke('entry_html', {dictId, entry}),
+    dictionaryResource: (dictId, path) => invoke('dictionary_resource', {dictId, path}),
     captureImage: (recognition, area) => invoke('capture_image', {recognition: recognition ?? null, area}),
     listWords: () => invoke('list_words'),
     saveWord: (card) => invoke('save_word', {card}),

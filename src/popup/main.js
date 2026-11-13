@@ -3,7 +3,8 @@
 // it to Anki.
 
 import {emit, listen} from '@tauri-apps/api/event';
-import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown} from '../lib/api.js';
+import {api, entryUrl, escapeHtml, loadAllSettings, renderMarkdown, schemeBase} from '../lib/api.js';
+import {dictionaryPictureFile, entryPictures, pictureSource} from '../lib/dictionary-images.js';
 import {explain, isConfigured} from '../lib/ai/explain.js';
 import {aiOptionsFor} from '../lib/ai/defaults.js';
 import {AiResponseCache} from '../lib/ai/response-cache.js';
@@ -573,7 +574,7 @@ async function runImages(body, force = false) {
         if (!current()) { return; }
         const items = await searchCached(query, force);
         if (!current()) { return; }
-        lookup.images = {query, items, selected: new Set()};
+        lookup.images = {key: ++galleryCount, query, items, selected: new Set()};
         renderImages(body, lookup);
     } catch (e) {
         if (current() && e?.name !== 'AbortError') { body.innerHTML = `<p class="error">${escapeHtml(e?.message || String(e))}</p>`; }
@@ -594,30 +595,24 @@ function setChecked(button, selected) {
     button.setAttribute('aria-pressed', String(selected));
 }
 
+/** Each strip of pictures (the "Imagens" section's, a picture dictionary's) gets its own number. */
+let galleryCount = 0;
+
 /**
  * A horizontal strip, as in Migaku. The check mark shows on hover (and stays on a checked
  * picture); only a click on it checks the picture for Anki. A click anywhere else enlarges it.
+ * @param {{key: number, query: string, items: {src: string, thumb: string, title?: string}[], selected: Set<number>}} gallery
  */
-function renderImages(body, lookup) {
-    const {query, items} = lookup.images;
-    // Below the pictures, as in Migaku: the search that was made and the meme mode switch.
-    const foot = `<div class="img-foot">
-            <span class="img-query hint">Busca: ${escapeHtml(query)}</span>
-            <label class="switch img-meme" title="Busca imagens de memes da palavra. Cuidado: os resultados podem ser inadequados ou ofensivos.">
-                <span class="label">Modo meme</span><input type="checkbox"${ai.imageMemeMode === true ? ' checked' : ''}><span class="track"></span>
-            </label>
-        </div>`;
-    const empty = (text) => {
-        body.innerHTML = `<p class="hint">${text}</p>${foot}`;
-        bindMemeMode(body);
-    };
-    if (items.length === 0) { empty(`Nenhuma imagem para “${escapeHtml(query)}”.`); return; }
-    body.innerHTML = `<div class="img-strip" role="list">${items.map((item, i) => `
-        <div class="img-tile${lookup.images.selected.has(i) ? ' sel' : ''}" role="listitem" data-i="${i}">
-            <img src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || query)}" draggable="false" referrerpolicy="no-referrer">
-            ${checkButton(lookup.images.selected.has(i))}
-        </div>`).join('')}</div>${foot}`;
-    bindMemeMode(body);
+function stripHtml(gallery, extraClass = '') {
+    return `<div class="img-strip${extraClass}" role="list" data-gallery="${gallery.key}">${gallery.items.map((item, i) => `
+        <div class="img-tile${gallery.selected.has(i) ? ' sel' : ''}" role="listitem" data-i="${i}">
+            <img src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || gallery.query)}" draggable="false" referrerpolicy="no-referrer">
+            ${checkButton(gallery.selected.has(i))}
+        </div>`).join('')}</div>`;
+}
+
+/** The strip's wheel, check marks and viewer; `onEmpty` when no picture of it could be loaded. */
+function bindStrip(body, gallery, lookup, onEmpty) {
     const strip = body.querySelector('.img-strip');
     strip?.addEventListener('wheel', (ev) => {
         // The wheel scrolls the strip sideways while it can, then the pop-up again.
@@ -633,21 +628,41 @@ function renderImages(body, lookup) {
         // A picture the site does not serve is left out, as Migaku leaves it out.
         tile.querySelector('img')?.addEventListener('error', () => {
             tile.remove();
-            if (state === lookup && !strip?.querySelector('.img-tile')) { empty(`Nenhuma imagem pôde ser carregada para “${escapeHtml(query)}”.`); }
+            if (state === lookup && !strip?.querySelector('.img-tile')) { onEmpty(); }
         }, {once: true});
         tile.addEventListener('click', (ev) => {
             if (state !== lookup) { return; }
             const check = ev.target.closest?.('.img-check');
             if (check) {
                 ev.stopPropagation();
-                toggleImage(lookup, i);
-                setChecked(check, lookup.images.selected.has(i));
-                tile.classList.toggle('sel', lookup.images.selected.has(i));
+                toggleImage(gallery, i);
+                setChecked(check, gallery.selected.has(i));
+                tile.classList.toggle('sel', gallery.selected.has(i));
                 return;
             }
-            openViewer(lookup, i);
+            openViewer(lookup, gallery, i);
         });
     }
+}
+
+function renderImages(body, lookup) {
+    const gallery = lookup.images;
+    const {query, items} = gallery;
+    // Below the pictures, as in Migaku: the search that was made and the meme mode switch.
+    const foot = `<div class="img-foot">
+            <span class="img-query hint">Busca: ${escapeHtml(query)}</span>
+            <label class="switch img-meme" title="Busca imagens de memes da palavra. Cuidado: os resultados podem ser inadequados ou ofensivos.">
+                <span class="label">Modo meme</span><input type="checkbox"${ai.imageMemeMode === true ? ' checked' : ''}><span class="track"></span>
+            </label>
+        </div>`;
+    const empty = (text) => {
+        body.innerHTML = `<p class="hint">${text}</p>${foot}`;
+        bindMemeMode(body);
+    };
+    if (items.length === 0) { empty(`Nenhuma imagem para “${escapeHtml(query)}”.`); return; }
+    body.innerHTML = `${stripHtml(gallery)}${foot}`;
+    bindMemeMode(body);
+    bindStrip(body, gallery, lookup, () => empty(`Nenhuma imagem pôde ser carregada para “${escapeHtml(query)}”.`));
 }
 
 /** The meme mode switch searches again at once and is kept for the next lookups, as in Migaku. */
@@ -669,18 +684,18 @@ async function saveMemeMode(on) {
     } catch (e) { ankiStatus(`Configurações: ${e?.message || e}`, true); }
 }
 
-function toggleImage(lookup, i) {
-    const selected = lookup.images.selected;
+function toggleImage(gallery, i) {
+    const selected = gallery.selected;
     if (selected.has(i)) { selected.delete(i); } else { selected.add(i); }
 }
 
 /** Shows a checked or unchecked picture the same way in the strip, after a change in the viewer. */
-function syncTile(lookup, i) {
-    const tile = document.querySelector?.(`.img-tile[data-i="${i}"]`);
+function syncTile(gallery, i) {
+    const tile = document.querySelector?.(`.img-strip[data-gallery="${gallery.key}"] .img-tile[data-i="${i}"]`);
     const check = tile?.querySelector('.img-check');
     if (!tile || !check) { return; }
-    tile.classList.toggle('sel', lookup.images.selected.has(i));
-    setChecked(check, lookup.images.selected.has(i));
+    tile.classList.toggle('sel', gallery.selected.has(i));
+    setChecked(check, gallery.selected.has(i));
 }
 
 // The enlarged picture covers the pop-up. The arrows at its sides, ← →, or dragging the picture
@@ -690,14 +705,14 @@ let viewer = null;
 /** How far the picture must be dragged to move to the next one, in CSS pixels. */
 const SWIPE_PX = 60;
 
-function openViewer(lookup, i) {
+function openViewer(lookup, gallery, i) {
     closeViewer();
     const box = document.createElement('div');
     box.className = 'img-viewer';
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-label', 'Imagem ampliada');
     $('card').append(box);
-    viewer = {box, lookup, i, swiped: false};
+    viewer = {box, lookup, gallery, i, swiped: false};
     box.addEventListener('click', (ev) => {
         // The click that ends a drag is not a click outside the picture.
         if (viewer?.swiped) { viewer.swiped = false; return; }
@@ -708,22 +723,22 @@ function openViewer(lookup, i) {
 
 function drawViewer(from = '') {
     if (!viewer) { return; }
-    const {box, lookup, i} = viewer;
-    const items = lookup.images.items;
+    const {box, gallery, i} = viewer;
+    const items = gallery.items;
     const item = items[i];
-    const selected = lookup.images.selected.has(i);
+    const selected = gallery.selected.has(i);
     const several = items.length > 1;
     let host = '';
     try { host = item.page ? new URL(item.page).hostname.replace(/^www\./, '') : ''; } catch (_e) { /* not a URL */ }
     box.innerHTML = `
         <div class="img-frame">
-            <img class="full${from ? ` from-${from}` : ''}" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || lookup.images.query)}" draggable="false" referrerpolicy="no-referrer">
+            <img class="full${from ? ` from-${from}` : ''}${item.path !== undefined ? ' light' : ''}" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || gallery.query)}" draggable="false" referrerpolicy="no-referrer">
             ${several ? `<button class="img-nav prev" title="Anterior (←)" aria-label="Anterior">${icon('chevronLeft')}</button>
             <button class="img-nav next" title="Próxima (→)" aria-label="Próxima">${icon('chevronRight')}</button>` : ''}
         </div>
         <div class="img-bar">
             ${several ? `<span class="img-count">${i + 1}/${items.length}</span>` : ''}
-            <span class="img-caption">${escapeHtml(item.title || lookup.images.query)}</span>
+            <span class="img-caption">${escapeHtml(item.title || gallery.query)}</span>
             <button class="ghost icon img-zoom-out" title="Diminuir (−)" aria-label="Diminuir">${icon('zoomOut')}</button>
             <button class="ghost icon img-zoom-in" title="Ampliar (+, roda do mouse ou clique duplo)" aria-label="Ampliar">${icon('zoomIn')}</button>
             ${host ? `<button class="ghost img-page" title="${escapeHtml(item.page)}">${icon('open', 'sm')}${escapeHtml(host)}</button>` : ''}
@@ -745,8 +760,8 @@ function drawViewer(from = '') {
     }
     box.querySelector('.img-pick')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        toggleImage(lookup, i);
-        syncTile(lookup, i);
+        toggleImage(gallery, i);
+        syncTile(gallery, i);
         drawViewer();
     });
     box.querySelector('.img-nav.prev')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(-1); });
@@ -851,7 +866,7 @@ function gestures(frame, full, several) {
 
 function stepViewer(delta) {
     if (!viewer) { return; }
-    const n = viewer.lookup.images.items.length;
+    const n = viewer.gallery.items.length;
     viewer.i = (viewer.i + delta + n) % n;
     // The next picture slides in from the side it comes from.
     drawViewer(delta > 0 ? 'right' : 'left');
@@ -865,12 +880,18 @@ function closeViewer() {
     return true;
 }
 
-/** The checked pictures as files for {image}, in the strip's order; unreadable ones are skipped. */
+/**
+ * The checked pictures as files for {image}: each strip in the pop-up's dictionary order (the
+ * "Imagens" section's and the picture dictionaries'), each in its own order; unreadable ones are skipped.
+ */
 async function checkedImageFiles(lookup) {
-    const images = lookup.images;
-    if (!images || images.selected.size === 0) { return []; }
-    const order = [...images.selected].sort((a, b) => a - b);
-    const files = await Promise.all(order.map((i) => downloadImage(images.items[i]).catch(() => null)));
+    const strips = dicts.filter((d) => d.enabled)
+        .map((d) => (d.kind === 'ai-images' ? lookup.images : lookup.dictImages?.get(d.id)))
+        .filter((gallery) => gallery && gallery.selected.size > 0);
+    const read = (gallery, item) => (gallery === lookup.images ? downloadImage(item)
+        : dictionaryPictureFile(item, api.dictionaryResource, downloadImage));
+    const files = await Promise.all(strips.flatMap((gallery) => [...gallery.selected].sort((a, b) => a - b)
+        .map((i) => read(gallery, gallery.items[i]).catch(() => null))));
     return files.filter(Boolean);
 }
 
@@ -881,15 +902,51 @@ function renderDictionary(d) {
     const mine = entries.filter((e) => e.dictId === d.id);
     if (mine.length === 0) { return false; }
     const body = section(d.name);
+    void fillDictionary(body, d, mine, state);
+    return true;
+}
+
+/**
+ * A picture dictionary (every entry only pictures, as PicDic) gets the "Imagens" strip, with its
+ * check marks for {image} and the viewer; any other dictionary its entries' own pages.
+ */
+async function fillDictionary(body, d, mine, lookup) {
+    const gallery = await dictionaryGallery(d, mine).catch(() => null);
+    if (state !== lookup) { return; }
+    if (gallery) {
+        (lookup.dictImages ||= new Map()).set(d.id, gallery);
+        body.classList.add('dict-images');
+        body.innerHTML = stripHtml(gallery, ' dict');
+        bindStrip(body, gallery, lookup, () => { body.innerHTML = '<p class="hint">Nenhuma imagem deste dicionário pôde ser carregada.</p>'; });
+        return;
+    }
     body.classList.add('entry');
     for (const e of mine) {
         const frame = document.createElement('iframe');
-        frame.src = entryUrl(e.dictId, e.entry) + (state.payload.fragment ? `#${encodeURIComponent(state.payload.fragment)}` : '');
+        frame.src = entryUrl(e.dictId, e.entry) + (lookup.payload.fragment ? `#${encodeURIComponent(lookup.payload.fragment)}` : '');
         frame.title = `${d.name}: ${e.headword}`;
         frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
         body.append(frame);
     }
-    return true;
+}
+
+/** The pictures of a dictionary's entries as a strip, or null when any entry is more than pictures. */
+async function dictionaryGallery(d, mine) {
+    const pages = await Promise.all(mine.map((e) => api.entryHtml(e.dictId, e.entry)));
+    const items = [];
+    const seen = new Set();
+    for (const [n, e] of mine.entries()) {
+        const pictures = entryPictures(pages[n], e.headword);
+        if (!pictures) { return null; }
+        for (const picture of pictures) {
+            const source = pictureSource(schemeBase(), e.dictId, picture.src);
+            if (!source || seen.has(source.url)) { continue; }
+            seen.add(source.url);
+            items.push({src: source.url, thumb: source.url, path: source.path, dictId: e.dictId, title: picture.title || e.headword || ''});
+        }
+    }
+    if (items.length === 0) { return null; }
+    return {key: ++galleryCount, query: mine[0].headword || state.payload.word || d.name, items, selected: new Set()};
 }
 
 function stopDictionaryAudio() {

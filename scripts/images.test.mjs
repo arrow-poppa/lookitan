@@ -308,3 +308,24 @@ test('orderNoteFields puts the fields in the note type\'s order, its first field
     assert.equal(ordered.deckName, 'D');
     assert.equal(orderNoteFields(note, []), note, 'no field list: unchanged');
 });
+
+test('picture dictionaries: an entry of pictures alone (or with its headword) is a strip, any other entry is not', async () => {
+    const {entryPictures, pictureSource, sniffType} = await import('../src/lib/dictionary-images.js');
+    assert.deepEqual(entryPictures('<div><img src="a.png" alt="alvo"> - <img src=\'b.jpg\'><img src="a.png"></div>'),
+        [{src: 'a.png', title: 'alvo'}, {src: 'b.jpg', title: ''}], 'PicDic\'s "-" is no text; a repeated picture is shown once');
+    assert.equal(entryPictures('<img src="a.png"><p>a mark to aim at</p>', 'target'), null, 'a definition keeps the entry\'s page');
+    assert.deepEqual(entryPictures('<b>Target</b><img src="a.png">', 'target'), [{src: 'a.png', title: ''}], 'the headword as a caption is allowed');
+    assert.equal(entryPictures('<a href="sound://t.mp3"><img src="speaker.png"></a>'), null, 'a speaker icon is not a picture dictionary');
+    assert.equal(entryPictures('<p>no pictures</p>'), null);
+    assert.deepEqual(entryPictures('<style>.x{}</style><script>var a="text";</script><img src="a&amp;b.png">'), [{src: 'a&b.png', title: ''}]);
+
+    assert.deepEqual(pictureSource('lkt://localhost', 'd 1', '\\Images\\a b.png'), {url: 'lkt://localhost/d/d%201/Images/a%20b.png', path: 'Images/a b.png'});
+    assert.deepEqual(pictureSource('http://lkt.localhost', 'x', './p%C3%A9.jpg?v=2'), {url: 'http://lkt.localhost/d/x/p%C3%A9.jpg', path: 'pé.jpg'});
+    assert.deepEqual(pictureSource('lkt://localhost', 'x', 'https://e.example/a.png'), {url: 'https://e.example/a.png', path: null});
+    assert.deepEqual(pictureSource('lkt://localhost', 'x', '//e.example/a.png'), {url: 'https://e.example/a.png', path: null});
+    assert.equal(pictureSource('lkt://localhost', 'x', 'file:///etc/a.png'), null);
+    assert.equal(pictureSource('lkt://localhost', 'x', '../a.png'), null);
+
+    assert.equal(sniffType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), 'image/jpeg');
+    assert.equal(sniffType(new Uint8Array([1, 2, 3])), '');
+});

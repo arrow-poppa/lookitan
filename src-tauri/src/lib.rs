@@ -2596,6 +2596,15 @@ fn entry_html(state: tauri::State<'_, AppState>, dict_id: String, entry: u32) ->
     d.entry_html(entry).map_err(|e| format!("{e:#}"))
 }
 
+/// A file of a dictionary (next to the .mdx or inside its .mdd), as raw bytes: the pop-up reads a
+/// picture dictionary's pictures with it for Anki's {image}, since the `lkt:` scheme is another origin.
+#[tauri::command]
+fn dictionary_resource(state: tauri::State<'_, AppState>, dict_id: String, path: String) -> std::result::Result<tauri::ipc::Response, String> {
+    let dicts = state.dicts.read().clone();
+    let d = dicts.iter().find(|d| d.id == dict_id).ok_or("unknown dictionary")?;
+    d.resource(&path).map(tauri::ipc::Response::new).ok_or_else(|| format!("{path} is not in the dictionary"))
+}
+
 #[tauri::command]
 fn list_words(state: tauri::State<'_, AppState>) -> Vec<serde_json::Value> {
     state.cards.list()
@@ -2949,6 +2958,7 @@ pub fn run() {
             open_external,
             open_settings,
             entry_html,
+            dictionary_resource,
             list_words,
             save_word,
             delete_word,

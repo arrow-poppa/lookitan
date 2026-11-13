@@ -33,7 +33,7 @@ class Element {
     remove() { this.removed = true; }
 }
 
-async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, audioRows = async () => null, words = []} = {}) {
+async function fixture({explain = async () => '', ready = true, connection = {}, entryHtml = async () => '', dictionaries = [], images = {}, audioRows = async () => null, words = [], dictionaryResource = async () => new ArrayBuffer(0)} = {}) {
     const nodes = new Map();
     const document = {getElementById: (id) => {
         if (!nodes.has(id)) { nodes.set(id, new Element()); }
@@ -50,8 +50,8 @@ async function fixture({explain = async () => '', ready = true, connection = {},
         '@tauri-apps/api/event': {listen: async (name, handler) => { calls.listeners.set(name, handler); return () => {}; }, emit: async (...args) => { calls.events.push(args); }},
         [file('src/lib/api.js')]: {
             api: {openSettings: async () => { calls.settings++; }, hidePopup: async () => { calls.hides++; }, webviewBlank: async (token) => { calls.blanks.push(token); }, entryHtml, listDictionaries: async () => dictionaries,
-                listWords: async () => words, deleteWord: async (id) => { calls.deleted = id; }, wordImage: async () => null},
-            entryUrl: () => '', escapeHtml: (value) => String(value).replace(/[&<>"']/g, (c) =>
+                listWords: async () => words, deleteWord: async (id) => { calls.deleted = id; }, wordImage: async () => null, dictionaryResource},
+            entryUrl: () => '', schemeBase: () => 'lkt://localhost', escapeHtml: (value) => String(value).replace(/[&<>"']/g, (c) =>
                 ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]),
             loadAllSettings: async () => ({settings, ai, anki: options}), renderMarkdown: (text) => String(text),
         },
@@ -78,7 +78,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
     };
     const context = createContext({document, window: {addEventListener() {}}, localStorage: {getItem: () => null, setItem() {}},
         AbortController, DOMException, crypto: {subtle: {digest: async (_algorithm, bytes) => createHash('sha256').update(bytes).digest()}},
-        TextEncoder, console, Intl, setTimeout, clearTimeout, requestAnimationFrame: (callback) => callback()});
+        TextEncoder, Blob, btoa, console, Intl, setTimeout, clearTimeout, requestAnimationFrame: (callback) => callback()});
     const modules = new Map();
     // The promise is kept at once, so a module imported twice at the same time (a diamond in the
     // import graph) is created and linked only once.
@@ -89,7 +89,7 @@ async function fixture({explain = async () => '', ready = true, connection = {},
                 return stub ? new SyntheticModule(Object.keys(stub), function () {
                     for (const [name, value] of Object.entries(stub)) { this.setExport(name, value); }
                 }, {context, identifier: id}) : new SourceTextModule(await readFile(id, 'utf8') + (id === entry ?
-                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries, refreshSavedCount, refreshAnkiNotes, openSavedCards, openAnkiNotes};\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
+                    '\nexport {runCard, runExplain, runContext, refreshAnkiButton, onAnkiClick, render, glossaries, refreshSavedCount, refreshAnkiNotes, openSavedCards, openAnkiNotes};\nexport function stateForTest() { return state; }\nexport function contextForTest(value) { state = value.lookup; ai = value.ai; anki = value.anki; settings = value.settings; }' : ''),
                 {context, identifier: id});
             })());
         }
@@ -1042,3 +1042,42 @@ test('a saved card opens whole in the pop-up, as the Palavras tab shows it', asy
     }
 });
 
+
+test('a picture dictionary shows the pictures strip in its own section, and checked pictures join {image} in dictionary order', async () => {
+    const reads = [];
+    const view = await fixture({
+        dictionaries: [
+            {id: 'pics', kind: 'mdict', name: 'PicDic', enabled: true},
+            {id: 'ai-images', kind: 'ai-images', name: 'Imagens', enabled: true},
+            {id: 'text', kind: 'mdict', name: 'Text', enabled: true},
+        ],
+        entryHtml: async (id) => (id === 'pics' ? '<img src="target 1.png" alt="alvo"><br>-<img src="\\img\\target2.jpg">' : '<p>a mark to aim at</p><img src="icon.png">'),
+        dictionaryResource: async (id, path) => { reads.push([id, path]); return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1]).buffer; },
+        images: {downloadImage: async (item) => ({data: `web:${item.src}`, extension: 'jpg'})},
+        connection: {addNote: async () => 1},
+    });
+    await view.popup.render({word: 'target', sentence: 'Hit the target.', entries: [
+        {dictId: 'pics', dictName: 'PicDic', entry: 1, headword: 'target'},
+        {dictId: 'text', dictName: 'Text', entry: 2, headword: 'target'},
+    ]});
+    for (let i = 0; i < 20; i++) { await flush(); }
+    const [pics, bing, text] = view.document.getElementById('sections').children;
+    const strip = pics.querySelector('.sec-body');
+    assert(strip.innerHTML.includes('img-strip dict'), 'the picture dictionary gets the strip, in its own section');
+    assert(strip.innerHTML.includes('lkt://localhost/d/pics/target%201.png') && strip.innerHTML.includes('lkt://localhost/d/pics/img/target2.jpg'));
+    assert(strip.innerHTML.includes('img-check'), 'each picture can be checked for Anki');
+    assert(bing.innerHTML.includes('Imagens'), 'the Bing pictures stay in their section');
+    assert(!text.querySelector('.sec-body').innerHTML.includes('img-strip'), 'a dictionary with text keeps its page');
+
+    const state = view.popup.stateForTest();
+    state.dictImages.get('pics').selected.add(1);
+    state.images = {key: 99, query: 'target', items: [{src: 'https://p.example/1.jpg', thumb: 'https://t.example/1'}], selected: new Set([0])};
+    view.options.enable = true;
+    view.document.getElementById('btn-anki').dataset.mode = 'add';
+    await view.popup.onAnkiClick();
+    const files = await view.calls.notes.at(-1).images();
+    assert.deepEqual(reads, [['pics', 'img/target2.jpg']]);
+    assert.deepEqual(Array.from(files, (f) => f.data), [Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]).toString('base64'), 'web:https://p.example/1.jpg'],
+        'PicDic\'s first, as the dictionaries are ordered, then Bing\'s');
+    assert.equal(files[0].extension, 'jpg', 'read from the dictionary, typed by its file name');
+});

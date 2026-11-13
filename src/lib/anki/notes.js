@@ -326,7 +326,7 @@ function cloze(sentence, word) {
  * @property {string} [sentenceTranslation] The translation of the word's sentence alone, cut from it.
  * @property {() => Promise<string|null>} [screenshot] Base64 PNG of the capture.
  * @property {() => Promise<{data: string, extension: string}[]>} [images] The pictures checked in the
- *   pop-up's "Imagens" section, as base64 files, for {image}.
+ *   pop-up's "Imagens" section and in its picture dictionaries (such as PicDic), as base64 files, for {image}.
  * @property {() => Promise<{data: string, extension: string}|null>} [audio] The word's audio from
  *   Configurações › Áudio (the recording last played, else the first found), for {audio}.
  * @property {() => Promise<{data: string, extension: string}|null>} [sentenceAudio] The sentence

@@ -172,7 +172,7 @@ function toBase64(bytes) {
     return btoa(binary);
 }
 
-const EXTENSIONS = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/bmp': 'bmp'};
+const EXTENSIONS = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/bmp': 'bmp', 'image/svg+xml': 'svg'};
 
 /** A picture no larger than ANKI_IMAGE_MAX_SIDE, as JPEG; GIFs and pictures the WebView cannot decode stay as they are. */
 async function shrink(blob, type) {
@@ -197,6 +197,20 @@ async function shrink(blob, type) {
 }
 
 /**
+ * A picture as an Anki media file: no larger than ANKI_IMAGE_MAX_SIDE, as JPEG, or as it is when
+ * the WebView cannot decode it (and it is a known picture type). Null when it cannot be stored.
+ * @param {Blob} blob
+ * @param {string} type
+ * @returns {Promise<{data: string, extension: string}|null>}
+ */
+export async function encodeImage(blob, type) {
+    const small = await shrink(blob, type);
+    if (small) { return {data: toBase64(small.bytes), extension: small.extension}; }
+    if (!EXTENSIONS[type]) { return null; }
+    return {data: toBase64(new Uint8Array(await blob.arrayBuffer())), extension: EXTENSIONS[type]};
+}
+
+/**
  * Downloads a picture for an Anki note: the full picture, or Bing's thumbnail when the site does
  * not serve it. Returns null when neither can be read.
  * @param {{src: string, thumb: string}} item
@@ -211,11 +225,8 @@ export async function downloadImage(item, {signal, fetch: request} = {}) {
             const response = await doFetch(url, {method: 'GET', signal: timeout.signal});
             const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
             if (!response.ok || !type.startsWith('image/')) { continue; }
-            const blob = new Blob([await response.arrayBuffer()], {type});
-            const small = await shrink(blob, type);
-            if (small) { return {data: toBase64(small.bytes), extension: small.extension}; }
-            if (!EXTENSIONS[type]) { continue; }
-            return {data: toBase64(new Uint8Array(await blob.arrayBuffer())), extension: EXTENSIONS[type]};
+            const file = await encodeImage(new Blob([await response.arrayBuffer()], {type}), type);
+            if (file) { return file; }
         } catch (e) {
             if (signal?.aborted) { throw e; }
         } finally {
