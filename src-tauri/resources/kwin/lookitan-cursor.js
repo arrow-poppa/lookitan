@@ -8,9 +8,9 @@
 // nine arguments): pointer, the screen under it, and the active window, which Lookitan uses for
 // per-app profiles. Lookitan's reply asks for the fast rate while a lookup is in progress.
 
-var SERVICE = "io.github.arrowpoppa.Lookitan";
+var SERVICE = "app.lookitan.Lookitan";
 var OBJECT = "/Cursor";
-var IFACE = "io.github.arrowpoppa.Lookitan.CursorSink";
+var IFACE = "app.lookitan.Lookitan.CursorSink";
 
 var IDLE_MS = 100;
 var ACTIVE_MS = 16;

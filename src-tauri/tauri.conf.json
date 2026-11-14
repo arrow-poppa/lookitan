@@ -3,7 +3,7 @@
   "productName": "Lookitan",
   "mainBinaryName": "lookitan",
   "version": "0.2.0",
-  "identifier": "io.github.arrowpoppa.lookitan",
+  "identifier": "app.lookitan",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

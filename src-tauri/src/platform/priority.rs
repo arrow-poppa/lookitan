@@ -221,9 +221,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn only_a_unit_made_for_lookitan_gets_its_weight_raised() {
-        let app = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-io.github.arrowpoppa.Lookitan@4f2c.service
+        let app = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-Lookitan@4f2c.service
 ";
-        assert_eq!(imp::own_unit(app).as_deref(), Some("app-io.github.arrowpoppa.Lookitan@4f2c.service"));
+        assert_eq!(imp::own_unit(app).as_deref(), Some("app-Lookitan@4f2c.service"));
         let scope = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-lookitan-81726.scope
 ";
         assert_eq!(imp::own_unit(scope).as_deref(), Some("app-lookitan-81726.scope"));

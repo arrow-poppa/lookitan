@@ -19,7 +19,7 @@ use zbus::zvariant::{Fd, OwnedValue, Value};
 
 use super::Capture;
 
-pub const BUS_NAME: &str = "io.github.arrowpoppa.Lookitan";
+pub const BUS_NAME: &str = "app.lookitan.Lookitan";
 const SCRIPT_NAME: &str = "lookitancursor";
 const SCRIPT: &str = include_str!("../../resources/kwin/lookitan-cursor.js");
 
@@ -46,7 +46,7 @@ static CONNECTION: OnceLock<zbus::blocking::Connection> = OnceLock::new();
 
 struct CursorSink;
 
-#[zbus::interface(name = "io.github.arrowpoppa.Lookitan.CursorSink")]
+#[zbus::interface(name = "app.lookitan.Lookitan.CursorSink")]
 impl CursorSink {
     /// Called by the KWin script with one JSON report. Returns whether to report fast.
     fn update(&self, report: String) -> bool {

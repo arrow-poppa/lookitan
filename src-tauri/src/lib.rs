@@ -6,6 +6,7 @@
 
 mod audio;
 mod edge_tts;
+mod identity;
 mod block;
 mod gamepad;
 mod cards;
@@ -2780,6 +2781,9 @@ pub fn run() {
         .register_uri_scheme_protocol("lkt", |ctx, request| protocol::handle(ctx.app_handle(), &request))
         .setup(move |app| {
             let handle = app.handle().clone();
+            // First of all: the folders of the old identifier move to the new one (identity.rs).
+            identity::migrate(&[app.path().app_config_dir()?, app.path().app_data_dir()?,
+                app.path().app_local_data_dir()?, app.path().app_cache_dir()?]);
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
             let dictionaries_dir = app.path().app_local_data_dir()?.join("dictionaries");
