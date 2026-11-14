@@ -390,6 +390,27 @@ fn remove_unused_copies(state: &AppState) {
     }
 }
 
+/// Deletes what dictionaries used in place left in the app's cache, their indexes (`indexes/`)
+/// and unpacked gzip/bzip2 copies (`unpacked/`), all named `<id>.…`, once no configured
+/// dictionary has that id. A file Windows still keeps open is deleted at a later start.
+fn remove_unused_cache(state: &AppState) {
+    let ids: Vec<String> = state.settings.read().dictionaries.iter().map(|d| d.id.clone()).collect();
+    for folder in ["indexes", "unpacked"] {
+        let Ok(entries) = std::fs::read_dir(state.dictionaries_dir.join(folder)) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // Dictionary ids have no dots (`Dictionary::open_cached` checks), so the owner is
+            // everything before the first one.
+            let owner = name.split('.').next().unwrap_or_default();
+            if ids.iter().any(|id| id == owner) || !entry.file_type().is_ok_and(|t| t.is_file()) { continue; }
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => log::info!("removed unused dictionary cache {}", entry.path().display()),
+                Err(e) => log::warn!("remove {}: {e}", entry.path().display()),
+            }
+        }
+    }
+}
+
 fn load_dictionaries(state: &AppState) {
     let _loading = state.dictionary_gate.lock();
     let configs: Vec<DictionaryConfig> = state.settings.read().dictionaries.clone();
@@ -2415,6 +2436,7 @@ async fn remove_dictionary(app: AppHandle, id: String) -> std::result::Result<Ve
             removed
         };
         state.dicts.write().retain(|d| d.id != id);
+        remove_unused_cache(&state);
         let content = content_dir(&state);
         for path in removed {
             if dictionaries::source::is_installed_copy(&path, &content) {
@@ -2842,6 +2864,8 @@ pub fn run() {
                 std::thread::spawn(move || {
                     let state = handle.state::<AppState>();
                     remove_unused_copies(&state);
+                    // Under the gate, so an import that is writing a new index is not swept.
+                    { let _gate = state.dictionary_gate.lock(); remove_unused_cache(&state); }
                     load_dictionaries(&state);
                     let _ = handle.emit("dictionaries-changed", ());
                     let language = state.settings.read().ocr_language.clone();

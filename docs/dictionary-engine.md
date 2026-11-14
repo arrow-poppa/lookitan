@@ -120,6 +120,10 @@ RAM a cada início. Agora (`mdict.rs`, `KeyBuilder`/`KeyTable`):
 - A construção usa até 1 GiB uma vez (`MAX_BUILD_BYTES`; ~250 MiB no ipa-dict); limite de 50
   milhões de chaves (`MAX_KEYS`, ordinais u32).
 - Só quando a pasta não aceita escrita a tabela fica na memória (limite de 128 MiB).
+- Remover um dicionário não deixa nada: a cópia em `content/<id>/` (com `.mdx`, `.mdd` e `.lkkeys`)
+  é apagada, e um dicionário usado no lugar perde o que deixou no cache, `indexes/<id>.…` e
+  `unpacked/<id>.…` (`remove_unused_cache` em lib.rs, também a cada início, sob o `dictionary_gate`,
+  para o que o Windows ainda mantinha aberto). O arquivo original escolhido pelo usuário nunca é apagado.
 - Os dicionários MDict já instalados ganham o `.lkkeys` na primeira abertura depois da atualização.
 - Busca: busca binária na ordem normalizada, como o `.lkidx` dos outros formatos (o hoshidicts usa
   hash perfeito sobre arquivos convertidos; aqui o `.mdx` não é convertido).
