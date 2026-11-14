@@ -223,15 +223,17 @@ fn validates_inflated_sizes_and_key_terminators() {
         assert!(decompress_block(&block, 20).is_err());
         assert!(decompress_block(&block, MAX_BLOCK_BYTES + 1).is_err());
     }
-    let mut keys = Vec::new();
-    let mut budget = 0;
+    let mut keys = KeyBuilder::new(MAX_INDEX_BYTES);
     let policy = KeyPolicy { case_sensitive: false, strip: false };
-    assert!(split_key_block(&[0; 7], true, Encoding::Utf8, policy, &mut keys, &mut budget).is_err());
+    assert!(split_key_block(&[0; 7], true, Encoding::Utf8, policy, &mut keys).is_err());
     let mut unterminated = 0u64.to_be_bytes().to_vec();
     unterminated.extend_from_slice(b"word");
-    assert!(split_key_block(&unterminated, true, Encoding::Utf8, policy, &mut keys, &mut budget).is_err());
+    assert!(split_key_block(&unterminated, true, Encoding::Utf8, policy, &mut keys).is_err());
     let mut full = MAX_INDEX_BYTES;
-    assert!(charge(&mut full, 1).is_err());
+    assert!(charge(&mut full, 1, MAX_INDEX_BYTES).is_err());
+    let mut small = KeyBuilder::new(KEY_OVERHEAD + 3);
+    assert!(small.push("ab", "a", 0).is_ok());
+    assert!(small.push("b", "b", 0).is_err(), "the byte budget bounds the keys");
 }
 
 #[test]
@@ -286,4 +288,95 @@ fn a_seven_zip_collection_installs_mdxs_and_their_resources_independently() {
     drop(reopened);
     std::fs::remove_dir_all(&paths[1]).unwrap();
     assert_eq!(std::fs::read_dir(&content).unwrap().count(), 0, "no staging or shared extraction remains");
+}
+
+struct TempDir(PathBuf);
+impl Drop for TempDir { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+
+fn temp_dir(name: &str) -> TempDir {
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("lkt-{name}-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    TempDir(dir)
+}
+
+#[test]
+fn large_dictionaries_fit_the_key_limit() {
+    // ipa-dict.mdx (all languages) declares 4,765,262 entries; 2,000,000 was the old limit.
+    assert!(MAX_KEYS >= 5_000_000);
+    let per_key = KEY_OVERHEAD + 2 * 12;
+    assert!(4_765_262 * per_key < MAX_BUILD_BYTES, "building its index fits the build budget");
+}
+
+#[test]
+fn a_mdx_keeps_its_keys_in_a_sidecar_index_built_once_and_rebuilt_when_the_mdx_changes() {
+    let dir = temp_dir("mdx-keys");
+    let mdx = dir.0.join("words.mdx");
+    let index = dir.0.join("words.mdx.lkkeys");
+    let keys = [("beta", 7), ("Alpha", 0), ("alias", 0), ("alpha", 12), ("Ça", 12)];
+    let data = fixture(true, Encoding::Utf8, "", &keys, &[b"abc", b"defgHI", b"JKLmnop"], 2);
+    std::fs::write(&mdx, &data.bytes).unwrap();
+    let memory = read(&data.bytes, false).unwrap();
+
+    let built = std::sync::atomic::AtomicUsize::new(0);
+    let dict = Mdict::open_indexed(&mdx, &index, &|n| built.store(n, std::sync::atomic::Ordering::SeqCst)).unwrap();
+    assert_eq!(built.load(std::sync::atomic::Ordering::SeqCst), keys.len(), "the first open reads the keys");
+    assert!(index.is_file(), "the key index sits beside the .mdx");
+    for d in [&memory, &dict] {
+        assert_eq!(d.len(), keys.len());
+        assert_eq!(d.headword(4), Some("Ça"));
+        assert_eq!(d.find("ALPHA"), vec![1, 3], "case-insensitive, physical order within duplicates");
+        assert_eq!(d.find("ça"), vec![4]);
+        assert!(d.find("gamma").is_empty() && d.find("").is_empty());
+        assert_eq!(d.record_bytes(0).unwrap(), b"HIJKL");
+        assert_eq!(d.record_bytes(2).unwrap(), b"abcdefg", "aliases share a record");
+        assert_eq!(d.record_bytes(3).unwrap(), b"mnop");
+        assert!(d.record_bytes(9).is_err());
+    }
+    drop(dict);
+
+    let warm = Mdict::open_indexed(&mdx, &index, &|_| panic!("a warm open re-read the keys")).unwrap();
+    assert_eq!(warm.find("beta"), vec![0]);
+    drop(warm);
+
+    // Another .mdx at the same path: the stale index is rebuilt, never used.
+    let changed = fixture(true, Encoding::Utf8, "", &[("gamma", 0)], &[b"new entry"], 2);
+    std::fs::write(&mdx, &changed.bytes).unwrap();
+    let rebuilt_keys = std::sync::atomic::AtomicUsize::new(0);
+    let rebuilt = Mdict::open_indexed(&mdx, &index, &|n| rebuilt_keys.store(n, std::sync::atomic::Ordering::SeqCst)).unwrap();
+    assert_eq!(rebuilt_keys.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(rebuilt.find("gamma"), vec![0]);
+    assert!(rebuilt.find("alpha").is_empty());
+    assert_eq!(rebuilt.record_bytes(0).unwrap(), b"new entry");
+    drop(rebuilt);
+
+    // A damaged index (cut short) is rebuilt instead of read.
+    let bytes = std::fs::read(&index).unwrap();
+    std::fs::write(&index, &bytes[..bytes.len() - 3]).unwrap();
+    let repaired = Mdict::open_indexed(&mdx, &index, &|_| {}).unwrap();
+    assert_eq!(repaired.find("gamma"), vec![0]);
+    assert_eq!(std::fs::read(&index).unwrap().len(), bytes.len());
+}
+
+#[test]
+fn a_damaged_key_table_reads_as_nothing_rather_than_crashing() {
+    let mut keys = KeyBuilder::new(MAX_INDEX_BYTES);
+    keys.push("word", "word", 0).unwrap();
+    keys.push("other", "other", 5).unwrap();
+    let mut body = Vec::new();
+    keys.write_body(&mut body).unwrap();
+    let table = KeyTable::new(Backing::Owned(body.clone()), 0).unwrap();
+    assert_eq!(table.find("word"), vec![0]);
+    assert_eq!(table.end_of(0, 9), 5);
+    assert_eq!(table.end_of(5, 9), 9);
+    // Text ends pointing past the text: lookups find nothing and headwords are None.
+    let ends = 32 + 2 * 8 + 2 * 8;
+    body[ends..ends + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    let broken = KeyTable::new(Backing::Owned(body.clone()), 0).unwrap();
+    assert_eq!(broken.text(0), None);
+    assert_eq!(broken.text(7), None);
+    // Sizes that do not match the data are refused.
+    body.push(0);
+    assert!(KeyTable::new(Backing::Owned(body), 0).is_err());
+    assert!(KeyTable::new(Backing::Owned(vec![0; 8]), 0).is_err());
 }

@@ -69,7 +69,10 @@ impl Dictionary {
         let mut warnings = Vec::new();
         let is_index_json = path.file_name().map(|n| n.eq_ignore_ascii_case("index.json")).unwrap_or(false);
         let (reader, name, format, description) = if path.extension().map(|e| e.eq_ignore_ascii_case("mdx")).unwrap_or(false) {
-            let mdx = Mdict::open(&path)?;
+            // The keys go to `<name>.mdx.lkkeys`: beside the .mdx in Lookitan's own copy, in the
+            // app's cache for a file used in place (mdict.rs, KeyTable).
+            let keys = index_path(installed, PathBuf::from(format!("{}.lkkeys", path.display())), cache, id)?;
+            let mdx = Mdict::open_indexed(&path, &keys, progress)?;
             let name = mdx.title.clone();
             for p in companion_mdds(&path)? {
                 match Mdict::open(&p) {

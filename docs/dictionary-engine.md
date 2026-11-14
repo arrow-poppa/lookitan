@@ -13,7 +13,7 @@ com uma implementação independente, e não afirma equivalência de todos os al
   **Storage follows Lookupper's model (user's decision, 2026-10-15): no database.** Importing a ZIP
   unpacks it into `<local data>/dictionaries/content/<id>/` (`source::install_batch`/`source::install`; ZIP, RAR, 7z, TAR or gz/bz2/xz, `dictionaries/archive.rs`), and the files are
   read from there unchanged; removing the dictionary deletes that copy. A main file chosen directly
-  is read in place. MDict reads its own key index on every open (no sidecar). Every other format
+  is read in place. MDict keeps its keys in `<name>.mdx.lkkeys` (since 2026-11-14; see "MDict keys" below). Every other format
   keeps a headword index beside its files, `<main>.lkidx` (`dictionaries/lkidx.rs`: Lookupper's
   HeadwordIndex layout plus each entry's offset/length in the source; in the app cache for a file
   used in place), and renders the entry from the source bytes at lookup time: Yomitan
@@ -98,8 +98,31 @@ frequência ou só de acento também podem ser adicionados.
   `dictionaries/content/<id>/` na pasta de dados local do app, e os arquivos são lidos de lá,
   sem conversão; remover o dicionário apaga essa cópia. Um arquivo escolhido diretamente é lido
   onde está.
-- MDict lê o próprio índice de chaves do `.mdx` a cada abertura, sem arquivo extra, e descomprime
-  só os blocos usados (cache de até 4 MiB por arquivo).
+- MDict guarda as chaves do `.mdx` em `<nome>.mdx.lkkeys` (ao lado do `.mdx` na cópia do
+  Lookitan; no cache do app para um arquivo usado no lugar), e descomprime só os blocos de
+  verbetes usados (cache de até 4 MiB por arquivo). Ver "Chaves do MDict" abaixo.
+
+### Chaves do MDict (2026-11-14, a pedido do usuário)
+
+Antes, cada abertura lia todas as chaves do `.mdx` para a memória, uma alocação por chave
+(~85 bytes cada), com limite de 2 milhões de chaves e 128 MiB. O ipa-dict (todas as línguas, 4.765.262
+chaves) era recusado ("entry count exceeds the reader limit") e, sem o limite, custaria ~400 MiB de
+RAM a cada início. Agora (`mdict.rs`, `KeyBuilder`/`KeyTable`):
+
+- As chaves formam uma tabela plana: offsets dos registros, inícios únicos, fins dos textos, ordem
+  por chave normalizada (estável entre duplicatas) e os textos em UTF-8. Não é banco de dados e o
+  conteúdo não é convertido: os verbetes continuam sendo lidos do `.mdx`.
+- Para um `.mdx` a tabela vai para `<nome>.mdx.lkkeys` (cabeçalho `LKMDXKEY` com tamanho e data do
+  `.mdx`, regras de chave e contagens), escrita uma vez (arquivo temporário + rename) e depois
+  mapeada na memória. Cabeçalho diferente, tamanho errado ou arquivo truncado: é reconstruída.
+  As leituras são todas verificadas, então um arquivo danificado dá respostas vazias, não falha.
+- A construção usa até 1 GiB uma vez (`MAX_BUILD_BYTES`; ~250 MiB no ipa-dict); limite de 50
+  milhões de chaves (`MAX_KEYS`, ordinais u32). Se a pasta não aceitar escrita, um dicionário que
+  caiba em 128 MiB fica na memória, como antes.
+- `.mdd` (recursos) continuam com as chaves na memória, na mesma tabela plana, limitadas a 128 MiB.
+- Os dicionários MDict já instalados ganham o `.lkkeys` na primeira abertura depois da atualização.
+- Busca: busca binária na ordem normalizada, como o `.lkidx` dos outros formatos (o hoshidicts usa
+  hash perfeito sobre arquivos convertidos; aqui o `.mdx` não é convertido).
 - Os outros formatos guardam ao lado dos arquivos um índice de palavras, `<arquivo>.lkidx`
   (`yomitan.lkidx` no Yomitan), no layout do HeadwordIndex do Lookupper: palavras normalizadas em
   ordem, offsets e ids, mais onde está cada verbete no arquivo original. O índice é mapeado na

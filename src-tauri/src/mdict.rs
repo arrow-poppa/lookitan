@@ -2,6 +2,11 @@
 // Format reference: https://github.com/zhansliu/writemdict/blob/master/fileformat.md
 // Compact styles are triples (id, opening HTML, closing HTML); `id` in a record
 // styles the text until the next numeric marker. No Lookupper code is used here.
+//
+// Keys live in one flat table (KeyTable): in memory for .mdd resources, and for a .mdx in a
+// sidecar file, `<name>.mdx.lkkeys`, built once and memory-mapped, so a dictionary with millions
+// of headwords (ipa-dict: 4.77 million) costs little RAM and is not re-read on every start.
+// Entries are still read from the .mdx itself, block by block.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -18,8 +23,12 @@ const MAX_HEADER_BYTES: usize = 2 * 1024 * 1024;
 const MAX_BLOCK_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PACKED_BLOCK_BYTES: usize = 40 * 1024 * 1024;
 const MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
+/// Keys kept on the heap (.mdd resources, or a .mdx whose sidecar cannot be written).
 const MAX_INDEX_BYTES: usize = 128 * 1024 * 1024;
-const MAX_KEYS: usize = 2_000_000;
+/// Memory used once, while a .mdx's sidecar key table is built; afterwards it is only mapped.
+const MAX_BUILD_BYTES: usize = 1024 * 1024 * 1024;
+/// Ordinals are u32; the byte budgets above are the real bound.
+const MAX_KEYS: usize = 50_000_000;
 const MAX_KEY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_BLOCKS: usize = 262_144;
 const CACHE_BYTES: usize = 4 * 1024 * 1024;
@@ -89,11 +98,240 @@ struct RecordBlock {
     decomp_size: u64,
 }
 
-struct Key {
-    text: Arc<str>,
-    // Share the allocation when the key is already normalized.
-    normalized: Arc<str>,
-    record_offset: u64,
+/// The keys as they are read from the key blocks, before they become a KeyTable.
+struct KeyBuilder {
+    record: Vec<u64>,
+    text: Vec<u8>,
+    text_ends: Vec<u32>,
+    norm: Vec<u8>,
+    norm_ends: Vec<u32>,
+    used: usize,
+    limit: usize,
+}
+
+/// Bytes per key besides its text: record offset, unique start, two ends and the sorted ordinal.
+const KEY_OVERHEAD: usize = 8 + 8 + 4 + 4 + 4;
+
+impl KeyBuilder {
+    fn new(limit: usize) -> Self {
+        Self { record: Vec::new(), text: Vec::new(), text_ends: Vec::new(), norm: Vec::new(), norm_ends: Vec::new(), used: 0, limit }
+    }
+
+    fn len(&self) -> usize { self.record.len() }
+
+    fn push(&mut self, text: &str, normalized: &str, record_offset: u64) -> Result<()> {
+        if self.record.len() >= MAX_KEYS { bail!("dictionary has too many keys (limit {MAX_KEYS})"); }
+        let amount = KEY_OVERHEAD.checked_add(text.len()).and_then(|n| n.checked_add(normalized.len()))
+            .ok_or_else(|| anyhow!("key size overflow"))?;
+        charge(&mut self.used, amount, self.limit)?;
+        self.record.try_reserve(1).context("allocate dictionary keys")?;
+        self.text_ends.try_reserve(1).context("allocate dictionary keys")?;
+        self.norm_ends.try_reserve(1).context("allocate dictionary keys")?;
+        self.text.try_reserve(text.len()).context("allocate dictionary keys")?;
+        self.norm.try_reserve(normalized.len()).context("allocate dictionary keys")?;
+        self.text.extend_from_slice(text.as_bytes());
+        self.norm.extend_from_slice(normalized.as_bytes());
+        self.text_ends.push(u32::try_from(self.text.len()).context("dictionary keys too large")?);
+        self.norm_ends.push(u32::try_from(self.norm.len()).context("dictionary keys too large")?);
+        self.record.push(record_offset);
+        Ok(())
+    }
+
+    fn norm(&self, i: usize) -> &[u8] {
+        let start = if i == 0 { 0 } else { self.norm_ends[i - 1] as usize };
+        &self.norm[start..self.norm_ends[i] as usize]
+    }
+
+    /// The table body (see KeyTable) written to `out`: ordinals sorted by normalized key (stable
+    /// within duplicates) and the unique record starts are computed here.
+    fn write_body(&self, out: &mut impl std::io::Write) -> Result<()> {
+        let n = self.len();
+        let mut sorted = Vec::new();
+        sorted.try_reserve_exact(n).context("allocate search index")?;
+        sorted.extend(0..n as u32);
+        sorted.sort_unstable_by(|a, b| self.norm(*a as usize).cmp(self.norm(*b as usize)).then(a.cmp(b)));
+        let mut starts = Vec::new();
+        starts.try_reserve_exact(n).context("allocate record offsets")?;
+        starts.extend_from_slice(&self.record);
+        starts.sort_unstable();
+        starts.dedup();
+        for value in [n as u64, starts.len() as u64, self.text.len() as u64, self.norm.len() as u64] {
+            out.write_all(&value.to_le_bytes())?;
+        }
+        for value in &self.record { out.write_all(&value.to_le_bytes())?; }
+        for value in &starts { out.write_all(&value.to_le_bytes())?; }
+        for value in self.text_ends.iter().chain(&self.norm_ends).chain(&sorted) { out.write_all(&value.to_le_bytes())?; }
+        out.write_all(&self.text)?;
+        out.write_all(&self.norm)?;
+        Ok(())
+    }
+
+    fn body_size(&self) -> usize {
+        32 + self.len() * KEY_OVERHEAD + self.text.len() + self.norm.len()
+    }
+}
+
+enum Backing { Owned(Vec<u8>), Mapped(Mmap) }
+
+impl std::ops::Deref for Backing {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] { match self { Self::Owned(v) => v.as_slice(), Self::Mapped(m) => &m[..] } }
+}
+
+/// The keys, flat (little-endian), from `base` in `data`:
+///   u64 key count N, u64 unique record starts M, u64 text bytes T, u64 normalized bytes U
+///   u64 record offset[N]        physical order, as in the key blocks
+///   u64 record start[M]         unique, ascending: an entry ends where the next start begins
+///   u32 text end[N], u32 normalized end[N]   (a key starts at the previous key's end)
+///   u32 sorted ordinal[N]       physical ordinals by normalized key, stable within duplicates
+///   text bytes[T], normalized bytes[U]       UTF-8
+/// Reads are bounds-checked, so a damaged mapped file gives wrong answers, never a crash.
+struct KeyTable {
+    data: Backing,
+    n: usize,
+    m: usize,
+    record: usize,
+    starts: usize,
+    text_ends: usize,
+    norm_ends: usize,
+    sorted: usize,
+    text: usize,
+    norm: usize,
+    end: usize,
+}
+
+/// The first index in 0..n for which `before` is false (`before` must be true, then false).
+fn partition(n: usize, before: impl Fn(usize) -> bool) -> usize {
+    let (mut lo, mut hi) = (0, n);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if before(mid) { lo = mid + 1; } else { hi = mid; }
+    }
+    lo
+}
+
+impl KeyTable {
+    fn owned(keys: &KeyBuilder) -> Result<Self> {
+        let mut body = Vec::new();
+        body.try_reserve_exact(keys.body_size()).context("allocate dictionary keys")?;
+        keys.write_body(&mut body)?;
+        Self::new(Backing::Owned(body), 0)
+    }
+
+    /// Lays the table out over `data` from `base`; None when the sizes do not fit the data.
+    fn new(data: Backing, base: usize) -> Result<Self> {
+        let header = data.get(base..base.checked_add(32).ok_or_else(|| anyhow!("key table overflow"))?)
+            .ok_or_else(|| anyhow!("key table too short"))?;
+        let field = |i: usize| usize::try_from(u64::from_le_bytes(header[i * 8..i * 8 + 8].try_into().unwrap())).ok();
+        let (n, m, t, u) = match (field(0), field(1), field(2), field(3)) {
+            (Some(n), Some(m), Some(t), Some(u)) if n <= MAX_KEYS && m <= n => (n, m, t, u),
+            _ => bail!("key table sizes out of range"),
+        };
+        let mut at = base + 32;
+        let mut section = |size: Option<usize>| -> Result<usize> {
+            let start = at;
+            at = size.and_then(|size| at.checked_add(size)).ok_or_else(|| anyhow!("key table overflow"))?;
+            Ok(start)
+        };
+        let record = section(n.checked_mul(8))?;
+        let starts = section(m.checked_mul(8))?;
+        let text_ends = section(n.checked_mul(4))?;
+        let norm_ends = section(n.checked_mul(4))?;
+        let sorted = section(n.checked_mul(4))?;
+        let text = section(Some(t))?;
+        let norm = section(Some(u))?;
+        if at != data.len() { bail!("key table size mismatch"); }
+        Ok(Self { data, n, m, record, starts, text_ends, norm_ends, sorted, text, norm, end: at })
+    }
+
+    fn u64_at(&self, offset: usize) -> Option<u64> {
+        self.data.get(offset..offset + 8).map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+    }
+
+    fn u32_at(&self, offset: usize) -> Option<u32> {
+        self.data.get(offset..offset + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    }
+
+    fn string(&self, ends: usize, from: usize, to: usize, i: usize) -> Option<&str> {
+        if i >= self.n { return None; }
+        let start = if i == 0 { 0 } else { self.u32_at(ends + (i - 1) * 4)? as usize };
+        let end = self.u32_at(ends + i * 4)? as usize;
+        let bytes = self.data.get(from.checked_add(start)?..from.checked_add(end)?)?;
+        if from + end > to { return None; }
+        std::str::from_utf8(bytes).ok()
+    }
+
+    fn text(&self, i: usize) -> Option<&str> { self.string(self.text_ends, self.text, self.norm, i) }
+    fn norm(&self, i: usize) -> Option<&str> { self.string(self.norm_ends, self.norm, self.end, i) }
+    fn record(&self, i: usize) -> Option<u64> { if i < self.n { self.u64_at(self.record + i * 8) } else { None } }
+    fn start(&self, j: usize) -> Option<u64> { if j < self.m { self.u64_at(self.starts + j * 8) } else { None } }
+    fn sorted(&self, j: usize) -> Option<u32> { if j < self.n { self.u32_at(self.sorted + j * 4) } else { None } }
+
+    fn sorted_norm(&self, j: usize) -> &str {
+        self.sorted(j).and_then(|i| self.norm(i as usize)).unwrap_or("")
+    }
+
+    fn find(&self, key: &str) -> Vec<u32> {
+        let first = partition(self.n, |j| self.sorted_norm(j) < key);
+        (first..self.n).take_while(|&j| self.sorted_norm(j) == key).filter_map(|j| self.sorted(j)).collect()
+    }
+
+    /// Where the entry starting at `start` ends: the next unique start, else `record_size`.
+    fn end_of(&self, start: u64, record_size: u64) -> u64 {
+        let next = partition(self.m, |j| self.start(j).is_some_and(|s| s <= start));
+        self.start(next).unwrap_or(record_size)
+    }
+}
+
+/// The sidecar key table of a .mdx: a header that ties it to the .mdx it was built from, then the
+/// KeyTable body. Any mismatch (another file, a changed file, other key rules) rebuilds it.
+const SIDECAR_MAGIC: &[u8; 8] = b"LKMDXKEY";
+const SIDECAR_VERSION: u32 = 1;
+const SIDECAR_HEADER: usize = 48;
+
+fn sidecar_header(stamp: (u64, u64), policy: KeyPolicy, entry_count: usize, record_size: u64) -> [u8; SIDECAR_HEADER] {
+    let mut header = [0u8; SIDECAR_HEADER];
+    header[..8].copy_from_slice(SIDECAR_MAGIC);
+    header[8..12].copy_from_slice(&SIDECAR_VERSION.to_le_bytes());
+    let flags = u32::from(policy.case_sensitive) | (u32::from(policy.strip) << 1);
+    header[12..16].copy_from_slice(&flags.to_le_bytes());
+    header[16..24].copy_from_slice(&stamp.0.to_le_bytes());
+    header[24..32].copy_from_slice(&stamp.1.to_le_bytes());
+    header[32..40].copy_from_slice(&(entry_count as u64).to_le_bytes());
+    header[40..48].copy_from_slice(&record_size.to_le_bytes());
+    header
+}
+
+/// Size and modification time (ns) of the source file.
+fn file_stamp(path: &Path) -> Result<(u64, u64)> {
+    let meta = std::fs::metadata(path).with_context(|| format!("read {}", path.display()))?;
+    let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as u64).unwrap_or(0);
+    Ok((meta.len(), modified))
+}
+
+fn open_sidecar(index: &Path, header: &[u8; SIDECAR_HEADER], entry_count: usize) -> Option<KeyTable> {
+    let file = File::open(index).ok()?;
+    // SAFETY: Lookitan's own file, replaced only by rename; read-only while in use.
+    let mmap = unsafe { Mmap::map(&file) }.ok()?;
+    if mmap.get(..SIDECAR_HEADER)? != &header[..] { return None; }
+    let table = KeyTable::new(Backing::Mapped(mmap), SIDECAR_HEADER).ok()?;
+    (table.n == entry_count).then_some(table)
+}
+
+fn write_sidecar(index: &Path, header: &[u8; SIDECAR_HEADER], keys: &KeyBuilder) -> Result<()> {
+    use std::io::Write;
+    if let Some(parent) = index.parent() { std::fs::create_dir_all(parent)?; }
+    let temporary = index.with_extension(format!("tmp{}", std::process::id()));
+    let result = (|| -> Result<()> {
+        let mut out = std::io::BufWriter::new(File::create(&temporary).with_context(|| format!("create {}", temporary.display()))?);
+        out.write_all(header)?;
+        keys.write_body(&mut out)?;
+        out.into_inner().map_err(|e| e.into_error())?.sync_all()?;
+        std::fs::rename(&temporary, index).with_context(|| format!("publish {}", index.display()))
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&temporary); }
+    result
 }
 
 #[derive(Default)]
@@ -131,11 +369,7 @@ pub struct Mdict {
     mmap: Mmap,
     encoding: Encoding,
     policy: KeyPolicy,
-    keys: Vec<Key>,
-    /// Physical ordinals sorted by normalized key, stable within duplicate keys.
-    index: Vec<u32>,
-    /// Unique record starts; non-adjacent aliases may share a start.
-    record_offsets: Vec<u64>,
+    keys: KeyTable,
     record_blocks: Vec<RecordBlock>,
     record_size: u64,
     styles: HashMap<String, (String, String)>,
@@ -152,9 +386,9 @@ fn bounded(value: u64, limit: usize, label: &str) -> Result<usize> {
     Ok(size)
 }
 
-fn charge(used: &mut usize, amount: usize) -> Result<()> {
+fn charge(used: &mut usize, amount: usize, limit: usize) -> Result<()> {
     *used = used.checked_add(amount).ok_or_else(|| anyhow!("index size overflow"))?;
-    if *used > MAX_INDEX_BYTES { bail!("dictionary key index exceeds the {MAX_INDEX_BYTES}-byte memory limit"); }
+    if *used > limit { bail!("dictionary key index exceeds the {limit}-byte memory limit"); }
     Ok(())
 }
 
@@ -277,17 +511,32 @@ fn decrypt_key_block_index(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 impl Mdict {
+    /// Opens a file with its keys in memory (.mdd resources).
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with(path, None, &|_| {})
+    }
+
+    /// Opens a .mdx with its keys in the sidecar `index`, built the first time (and whenever the
+    /// .mdx changes) and then memory-mapped; `progress` gets the keys read while building it.
+    pub fn open_indexed(path: &Path, index: &Path, progress: &dyn Fn(usize)) -> Result<Self> {
+        Self::open_with(path, Some(index), progress)
+    }
+
+    fn open_with(path: &Path, index: Option<&Path>, progress: &dyn Fn(usize)) -> Result<Self> {
         let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
         // SAFETY: opened read-only; users must not modify an installed file while in use.
         let mmap = unsafe { Mmap::map(&file)? };
         let is_mdd = path.extension().map(|e| e.eq_ignore_ascii_case("mdd")).unwrap_or(false);
-        Self::parse(path.to_path_buf(), mmap, is_mdd)
+        let sidecar = match index { Some(index) => Some((index, file_stamp(path)?)), None => None };
+        Self::parse_with(path.to_path_buf(), mmap, is_mdd, sidecar, progress)
     }
 
-    /// Reads the key index out of the file itself on every open, as Lookupper does: an MDict has no
-    /// sidecar index.
+    #[cfg(test)]
     fn parse(path: PathBuf, mmap: Mmap, is_mdd: bool) -> Result<Self> {
+        Self::parse_with(path, mmap, is_mdd, None, &|_| {})
+    }
+
+    fn parse_with(path: PathBuf, mmap: Mmap, is_mdd: bool, sidecar: Option<(&Path, (u64, u64))>, progress: &dyn Fn(usize)) -> Result<Self> {
         let mut cursor = Cursor { data: &mmap, pos: 0 };
         let header_size = bounded(cursor.u32()? as u64, MAX_HEADER_BYTES, "header")?;
         let header_bytes = cursor.take(header_size)?;
@@ -346,33 +595,46 @@ impl Mdict {
             record_size = record_size.checked_add(unpacked).ok_or_else(|| anyhow!("record offset overflow"))?;
         }
         if file_offset != cursor.pos { bail!("record blocks size mismatch"); }
-        let (keys, index, record_offsets) = {
-            let keys = read_keys(wide, encrypted, encoding, policy, key_block_count, entry_count, key_index_unpacked, key_index_bytes, key_blocks_bytes)?;
-            if keys.iter().any(|key| key.record_offset > record_size) { bail!("key record offset out of range"); }
-            let mut index = Vec::new();
-            index.try_reserve_exact(keys.len()).context("allocate search index")?;
-            index.extend(0..keys.len() as u32);
-            index.sort_unstable_by(|a, b| keys[*a as usize].normalized.cmp(&keys[*b as usize].normalized).then(a.cmp(b)));
-            let mut record_offsets = Vec::new();
-            record_offsets.try_reserve_exact(keys.len()).context("allocate record offsets")?;
-            record_offsets.extend(keys.iter().map(|key| key.record_offset));
-            record_offsets.sort_unstable();
-            record_offsets.dedup();
-            (keys, index, record_offsets)
+        let read = |limit: usize| -> Result<KeyBuilder> {
+            let keys = read_keys(wide, encrypted, encoding, policy, key_block_count, entry_count, key_index_unpacked,
+                key_index_bytes, key_blocks_bytes, limit, progress)?;
+            if keys.record.iter().any(|&offset| offset > record_size) { bail!("key record offset out of range"); }
+            Ok(keys)
         };
-        log::info!("loaded {} ({} keys, {} record blocks)", path.display(), keys.len(), record_blocks.len());
-        Ok(Self { path, title, is_mdd, metadata, mmap, encoding, policy, keys, index, record_offsets,
+        let (keys, from) = match sidecar {
+            None => (KeyTable::owned(&read(MAX_INDEX_BYTES)?)?, "memory"),
+            Some((index, stamp)) => {
+                let header = sidecar_header(stamp, policy, entry_count, record_size);
+                if let Some(table) = open_sidecar(index, &header, entry_count) {
+                    (table, "index")
+                } else {
+                    let built = read(MAX_BUILD_BYTES)?;
+                    match write_sidecar(index, &header, &built).and_then(|()| {
+                        open_sidecar(index, &header, entry_count).ok_or_else(|| anyhow!("the index just written does not read back"))
+                    }) {
+                        Ok(table) => (table, "new index"),
+                        // A folder Lookitan cannot write to: small dictionaries still work from memory.
+                        Err(e) if built.used <= MAX_INDEX_BYTES => {
+                            log::warn!("{}: {e:#}; keeping the keys in memory", index.display());
+                            (KeyTable::owned(&built)?, "memory")
+                        }
+                        Err(e) => return Err(e.context(format!("write the key index {}", index.display()))),
+                    }
+                }
+            }
+        };
+        log::info!("loaded {} ({} keys from {from}, {} record blocks)", path.display(), keys.n, record_blocks.len());
+        Ok(Self { path, title, is_mdd, metadata, mmap, encoding, policy, keys,
             record_blocks, record_size, styles, cache: Mutex::new(BlockCache::default()) })
     }
 
-    pub fn len(&self) -> usize { self.keys.len() }
-    pub fn headword(&self, index: u32) -> Option<&str> { self.keys.get(index as usize).map(|key| key.text.as_ref()) }
+    pub fn len(&self) -> usize { self.keys.n }
+    pub fn headword(&self, index: u32) -> Option<&str> { self.keys.text(index as usize) }
 
     pub fn find(&self, word: &str) -> Vec<u32> {
         let key = self.policy.normalize(word);
         if key.is_empty() { return Vec::new(); }
-        let start = self.index.partition_point(|index| self.keys[*index as usize].normalized.as_ref() < key.as_str());
-        self.index[start..].iter().copied().take_while(|index| self.keys[*index as usize].normalized.as_ref() == key).collect()
+        self.keys.find(&key)
     }
 
     fn block_data(&self, index: usize) -> Result<Arc<Vec<u8>>> {
@@ -389,11 +651,10 @@ impl Mdict {
     }
 
     pub fn record_bytes(&self, index: u32) -> Result<Vec<u8>> {
-        let start = self.keys.get(index as usize).ok_or_else(|| anyhow!("no entry {index}"))?.record_offset;
+        let start = self.keys.record(index as usize).ok_or_else(|| anyhow!("no entry {index}"))?;
         // Skip repeated starts: aliases own the same record, including aliases not
         // adjacent in alphabetical key order.
-        let next = self.record_offsets.partition_point(|&offset| offset <= start);
-        let end = self.record_offsets.get(next).copied().unwrap_or(self.record_size);
+        let end = self.keys.end_of(start, self.record_size);
         let length = end.checked_sub(start).ok_or_else(|| anyhow!("invalid record range"))?;
         let length = bounded(length, MAX_RECORD_BYTES, "entry/resource")?;
         let mut out = Vec::new();
@@ -428,7 +689,7 @@ impl Mdict {
 
 #[allow(clippy::too_many_arguments)]
 fn read_keys(wide: bool, encrypted: u32, encoding: Encoding, policy: KeyPolicy, block_count: usize, entry_count: usize,
-    index_unpacked: usize, index_bytes: &[u8], blocks: &[u8]) -> Result<Vec<Key>> {
+    index_unpacked: usize, index_bytes: &[u8], blocks: &[u8], limit: usize, progress: &dyn Fn(usize)) -> Result<KeyBuilder> {
     let key_index;
     let index_bytes = if wide {
         if index_bytes.get(..4) != Some(&[2, 0, 0, 0][..]) { bail!("unexpected key block index compression"); }
@@ -442,8 +703,7 @@ fn read_keys(wide: bool, encrypted: u32, encoding: Encoding, policy: KeyPolicy, 
     } else { index_bytes };
     let mut info = Cursor { data: index_bytes, pos: 0 };
     let mut data = Cursor { data: blocks, pos: 0 };
-    let mut keys = Vec::new();
-    let mut budget = 0usize;
+    let mut keys = KeyBuilder::new(limit);
     let unit = if encoding == Encoding::Utf16 { 2 } else { 1 };
     for _ in 0..block_count {
         let block_entries = bounded(info.num(wide)?, MAX_KEYS, "key block entry count")?;
@@ -455,14 +715,15 @@ fn read_keys(wide: bool, encrypted: u32, encoding: Encoding, policy: KeyPolicy, 
         let unpacked = bounded(info.num(wide)?, MAX_BLOCK_BYTES, "key block")?;
         let block = decompress_block(data.take(packed)?, unpacked)?;
         let before = keys.len();
-        split_key_block(&block, wide, encoding, policy, &mut keys, &mut budget)?;
+        split_key_block(&block, wide, encoding, policy, &mut keys)?;
         if keys.len() - before != block_entries { bail!("key block entry count mismatch"); }
+        progress(keys.len());
     }
     if info.pos != index_bytes.len() || data.pos != blocks.len() || keys.len() != entry_count { bail!("key section size/count mismatch"); }
     Ok(keys)
 }
 
-fn split_key_block(raw: &[u8], wide: bool, encoding: Encoding, policy: KeyPolicy, keys: &mut Vec<Key>, budget: &mut usize) -> Result<()> {
+fn split_key_block(raw: &[u8], wide: bool, encoding: Encoding, policy: KeyPolicy, keys: &mut KeyBuilder) -> Result<()> {
     let mut cursor = Cursor { data: raw, pos: 0 };
     let unit = if encoding == Encoding::Utf16 { 2 } else { 1 };
     while cursor.pos < raw.len() {
@@ -473,16 +734,7 @@ fn split_key_block(raw: &[u8], wide: bool, encoding: Encoding, policy: KeyPolicy
         let text = encoding.decode(&raw[start..cursor.pos - unit]);
         bounded(text.len() as u64, MAX_KEY_BYTES, "decoded dictionary key")?;
         let normalized = policy.normalize(&text);
-        if keys.len() >= MAX_KEYS { bail!("dictionary has too many keys (limit {MAX_KEYS})"); }
-        // Arc control blocks, physical keys, search ordinals and record starts.
-        let mut allocation = std::mem::size_of::<Key>() + std::mem::size_of::<u32>() + std::mem::size_of::<u64>() + 16;
-        allocation = allocation.checked_add(text.len()).ok_or_else(|| anyhow!("key size overflow"))?;
-        if normalized != text { allocation = allocation.checked_add(normalized.len() + 16).ok_or_else(|| anyhow!("key size overflow"))?; }
-        charge(budget, allocation)?;
-        let text: Arc<str> = Arc::from(text);
-        let normalized = if normalized.as_str() == text.as_ref() { text.clone() } else { Arc::from(normalized) };
-        keys.try_reserve(1).context("allocate dictionary keys")?;
-        keys.push(Key { text, normalized, record_offset });
+        keys.push(&text, &normalized, record_offset)?;
     }
     Ok(())
 }

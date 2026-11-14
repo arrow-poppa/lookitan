@@ -53,7 +53,7 @@ src/lib/anki/  AnkiConnect client and note building (ported from Yomitan)
 src-tauri/src/
   lib.rs         AppState, run_scan (capture → OCR → pick → overlay and pop-up), Tauri commands, setup
   settings.rs    Settings (camelCase JSON), built-in AI dictionaries, migrate()
-  mdict.rs       MDict .mdx/.mdd reader; mdict_index.rs persists keys; dict.rs coordinates readers/resources
+  mdict.rs       MDict .mdx/.mdd reader; a .mdx's keys in a memory-mapped `.lkkeys` sidecar; dict.rs coordinates readers/resources
   dictionaries/ format readers read in place with .lkidx headword indexes, archive install/resource paths, morphology
   ocr/paddle.rs  PP-OCRv6 det+rec through ONNX Runtime (DirectML on Windows, WebGPU on Linux, CPU fallback)
   ocr/lens.rs    optional Google Lens cloud OCR (protobuf to lensfrontend-pa.googleapis.com/v1/crupload)
