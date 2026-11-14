@@ -1,0 +1,106 @@
+/*
+ * The page every dictionary entry is shown in (protocol.rs). Both looks sit on the pop-up's own
+ * background: `lkt-themed` for the formats Lookitan lays out itself, `lkt-own` for MDict and Slob,
+ * whose own stylesheets keep their design and only have their colours rewritten for the theme
+ * (dictionaries/colors.rs). The layout classes (entry, headword, tag, definition-list, gloss-list,
+ * gloss-sc-*) and their rules are adapted from Yomitan's display.css and structured-content.css,
+ * Copyright (C) 2023-2026 Yomitan Authors, (C) 2021-2022 Yomichan Authors, GPL-3.0-or-later.
+ */
+html {
+    color-scheme: light dark;
+    --text: #1b1b1b; --muted: #5f6066; --faint: #8a8b90; --accent: #0a74c9; --line: rgba(0, 0, 0, 0.18);
+    --table-head: rgba(0, 0, 0, 0.05);
+    --tag-text: #ffffff;
+    --tag-default: #8a8a91; --tag-name: #b6327a; --tag-expression: #f0ad4e; --tag-popular: #0275d8;
+    --tag-frequent: #5bc0de; --tag-archaism: #d9534f; --tag-dictionary: #aa66cc; --tag-frequency: #5cb85c;
+    --tag-part-of-speech: #565656; --tag-search: #8a8a91; --tag-pronunciation: #6640be;
+}
+@media (prefers-color-scheme: dark) {
+    html {
+        --text: #f1f1f1; --muted: #a9abb1; --faint: #7c7f86; --accent: #8fd3ff; --line: rgba(255, 255, 255, 0.2);
+        --table-head: rgba(255, 255, 255, 0.06);
+        --tag-text: #f1f1f1;
+        --tag-default: #69696e; --tag-name: #992a67; --tag-expression: #b07f39; --tag-popular: #025caa;
+        --tag-frequent: #4490a7; --tag-archaism: #b04340; --tag-dictionary: #9057ad; --tag-frequency: #489148;
+        --tag-part-of-speech: #565656; --tag-search: #69696e; --tag-pronunciation: #6640be;
+    }
+}
+html, body { margin: 0; padding: 0; background: transparent; }
+body.lkt-entry { overflow: hidden; word-wrap: break-word; color: var(--text); }
+.lkt-own body { padding: 4px 2px 6px; font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.lkt-themed body { padding: 2px 0 6px; font: 15px/1.5 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Noto Sans', sans-serif; }
+a { color: var(--accent); }
+img { max-width: 100%; height: auto; }
+table { max-width: 100%; }
+pre { white-space: pre-wrap; }
+
+/* Entry and headword (display.css: Headwords) */
+.entry + .entry { margin-top: 10px; }
+.headword { margin: 0 0 4px; line-height: 1.35; }
+.headword-term { font-size: 17px; font-weight: 600; }
+.headword-reading { margin-left: 8px; font-size: 15px; color: var(--muted); }
+.headword-list-tag-list { margin-left: 8px; }
+.definition-tag-list { margin: 0 0 2px; }
+
+/* Tags (display.css: Tags), one label coloured by category */
+.tag {
+    --tag-color: var(--tag-default);
+    display: inline-flex; align-items: center; vertical-align: 1px;
+    margin: 1px 6px 1px 0; padding: 1px 6px; border-radius: 4px;
+    background: var(--tag-color); color: var(--tag-text);
+    font-size: 11px; font-weight: 700; line-height: 16px; white-space: nowrap; cursor: help;
+}
+.tag:not([title]), .tag[title=''] { cursor: default; }
+.tag[data-category=name] { --tag-color: var(--tag-name); }
+.tag[data-category=expression] { --tag-color: var(--tag-expression); }
+.tag[data-category=popular] { --tag-color: var(--tag-popular); }
+.tag[data-category=frequent] { --tag-color: var(--tag-frequent); }
+.tag[data-category=archaism] { --tag-color: var(--tag-archaism); }
+.tag[data-category=dictionary] { --tag-color: var(--tag-dictionary); }
+.tag[data-category=frequency] { --tag-color: var(--tag-frequency); }
+.tag[data-category=partOfSpeech] { --tag-color: var(--tag-part-of-speech); }
+.tag[data-category=search] { --tag-color: var(--tag-search); }
+.tag[data-category=pronunciation-dictionary] { --tag-color: var(--tag-pronunciation); }
+
+/* Definitions and glosses (display.css: Definitions) */
+.definition-list { margin: 0; padding: 0 0 0 1.4em; list-style-type: decimal; }
+.gloss-list { margin: 0; padding: 0 0 0 1.4em; list-style-type: circle; }
+.kanji-gloss-list { margin: 0; padding: 0 0 0 1.4em; list-style-type: decimal; }
+.definition-list[data-count='0'], .definition-list[data-count='1'],
+.gloss-list[data-count='0'], .gloss-list[data-count='1'],
+.kanji-gloss-list[data-count='0'], .kanji-gloss-list[data-count='1'] { padding-left: 0; list-style-type: none; }
+.definition-item + .definition-item { margin-top: 6px; }
+.definition-item::marker, .gloss-item::marker, .kanji-gloss-item::marker { color: var(--faint); }
+.gloss-content { display: block; }
+.kanji-readings, .kanji-stats { margin: 2px 0; color: var(--muted); font-size: 13.5px; }
+.meta-row { margin: 2px 0 0; }
+
+/* Lookitan's parts for the other formats: examples, their translations, notes, cross-references */
+.lk-example { color: var(--muted); font-style: italic; }
+.lk-example-translation { color: var(--muted); }
+.lk-note { color: var(--muted); font-size: 13.5px; }
+.lk-xref { color: var(--muted); }
+.lk-level { display: block; }
+.lk-level[data-level='1'] { padding-left: 1em; }
+.lk-level[data-level='2'] { padding-left: 2em; }
+.lk-level[data-level='3'] { padding-left: 3em; }
+.lk-level[data-level='4'] { padding-left: 4em; }
+
+/* Structured content (structured-content.css) */
+.gloss-sc-table-container { display: block; overflow-x: auto; }
+.gloss-sc-table { table-layout: auto; border-collapse: collapse; }
+.gloss-sc-thead, .gloss-sc-tfoot, .gloss-sc-th { font-weight: bold; background-color: var(--table-head); }
+.gloss-sc-th, .gloss-sc-td { border: 1px solid var(--line); padding: 0.25em; vertical-align: top; }
+.gloss-sc-ol, .gloss-sc-ul { padding-left: 1.4em; margin: 0; }
+.gloss-sc-details { padding-left: 1.4em; }
+.gloss-sc-summary { list-style-position: outside; cursor: pointer; }
+.gloss-image-details > summary { cursor: pointer; color: var(--muted); }
+.pitch-reading { letter-spacing: 0.02em; }
+
+/* Formats with markup of their own */
+dl { margin: .5em 0; } dd { margin-left: 1em; }
+.reading, .pronunciation { color: var(--muted); }
+.tags { font-size: .85em; opacity: .7; }
+.dsl-example { font-style: italic; }
+.dsl-translation { color: light-dark(#3f7a42, #8fc992); }
+details { margin: .4em 0; }

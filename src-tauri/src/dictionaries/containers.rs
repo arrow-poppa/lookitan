@@ -804,9 +804,14 @@ pub(super) fn yomitan_banks(dir: &Path, prefix: &str) -> Result<Vec<PathBuf>> {
     banks(dir, prefix)
 }
 
-pub(super) fn yomitan_tag_notes(dir: &Path, index: &Value) -> Result<HashMap<String, String>> {
+pub(super) fn yomitan_tag_notes(dir: &Path, index: &Value) -> Result<HashMap<String, TagMeta>> {
     yomitan_tags(dir, index)
 }
+
+/// A Yomitan tag's category (`partOfSpeech`, `popular`, ...), which colours it as in Yomitan, and
+/// its notes, shown on hover.
+#[derive(Clone, Debug, Default)]
+pub struct TagMeta { pub category: String, pub notes: String }
 
 /// The word and reading of a term row, without rendering it (for indexing).
 pub(super) fn yomitan_term_keys(row: &[Value]) -> Result<(String, String)> {
@@ -816,51 +821,60 @@ pub(super) fn yomitan_term_keys(row: &[Value]) -> Result<(String, String)> {
     Ok((word.to_string(), reading.to_string()))
 }
 
-/// The headword line of an article: the word, its reading when it differs, and its tags, laid out
-/// as Lookupper lays them out.
-fn yomitan_headword(word: &str, reading: &str, tags: &str) -> String {
-    let mut html = format!("<div class=\"yomitan-headword\">{}", escape_html(word));
-    if !reading.is_empty() && reading != word { html.push_str(&format!("<span class=\"yomitan-reading\">{}</span>", escape_html(reading))); }
-    html.push_str(tags);
+/// The headword line of an article: the word, its reading when it differs, and its tags, with the
+/// class names of Yomitan's display (display.css), which the entry style lays out.
+pub(super) fn headword_html(word: &str, reading: &str, tags: &str) -> String {
+    let mut html = format!("<div class=\"headword\"><span class=\"headword-term\">{}</span>", escape_html(word));
+    if !reading.is_empty() && reading != word { html.push_str(&format!("<span class=\"headword-reading\">{}</span>", escape_html(reading))); }
+    if !tags.is_empty() { html.push_str(&format!("<span class=\"headword-list-tag-list\">{tags}</span>")); }
     html.push_str("</div>");
     html
 }
 
+/// A tag as Yomitan draws it: a small coloured label (`category` picks the colour), `title` on hover.
+pub(super) fn tag_pill(name: &str, category: &str, title: &str) -> String {
+    let category = if category.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { category } else { "" };
+    format!("<span class=\"tag\" data-category=\"{category}\" title=\"{}\">{}</span>", escape_html(title), escape_html(name))
+}
+
 /// One term row as HTML. The deinflection rules (row[3]) are for lookups, not for reading, so
 /// they are not shown, as in Lookupper.
-pub(super) fn yomitan_term_html(row: &[Value], version: u64, tags: &HashMap<String, String>) -> Result<String> {
+/// As Yomitan's display lays a term out: the headword with the term's tags (row[7]), the
+/// definition's tags (row[2]) above its glosses, and the glosses as a list (no marker for one).
+pub(super) fn yomitan_term_html(row: &[Value], version: u64, tags: &HashMap<String, TagMeta>) -> Result<String> {
     ensure!(row.len() >= if version == 1 { 5 } else { 8 }, "Termo Yomitan incompleto");
     let (word, reading) = yomitan_term_keys(row)?;
     for i in [2, 3, 7] { ensure!(value_str(row.get(i)).unwrap_or("").len() <= MAX_HEADWORD, "Tags Yomitan excedem 16 KiB"); }
-    let mut tag_list = tag_html(value_str(row.get(2)).unwrap_or(""), tags);
-    if version > 1 { tag_list.push_str(&tag_html(value_str(row.get(7)).unwrap_or(""), tags)); }
-    let mut html = format!("<div class=\"yomitan-entry\">{}", yomitan_headword(&word, &reading, &tag_list));
-    html.push_str("<ol class=\"yomitan-senses\">");
+    let term_tags = if version > 1 { tag_html(value_str(row.get(7)).unwrap_or(""), tags) } else { String::new() };
+    let mut html = format!("<div class=\"entry\" data-type=\"term\">{}", headword_html(&word, &reading, &term_tags));
+    let definition_tags = tag_html(value_str(row.get(2)).unwrap_or(""), tags);
+    if !definition_tags.is_empty() { html.push_str(&format!("<div class=\"definition-tag-list\">{definition_tags}</div>")); }
     let glosses = if version == 1 { &row[5..] } else { row[5].as_array().ok_or_else(|| anyhow!("Glossário Yomitan inválido"))?.as_slice() };
+    html.push_str(&format!("<ul class=\"gloss-list\" data-count=\"{}\">", glosses.len()));
     for gloss in glosses {
-        html.push_str("<li>");
-        render_yomitan(gloss, &mut html, 0)?;
-        html.push_str("</li>");
+        html.push_str("<li class=\"gloss-item\"><div class=\"gloss-content\">");
+        if let Value::String(text) = gloss { append_lines(&mut html, text.trim_end())?; } else { render_yomitan(gloss, &mut html, 0)?; }
+        html.push_str("</div></li>");
         ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
     }
-    html.push_str("</ol></div>");
+    html.push_str("</ul></div>");
     Ok(html)
 }
 
 /// One kanji row as HTML.
-pub(super) fn yomitan_kanji_html(row: &[Value], version: u64, tags: &HashMap<String, String>) -> Result<String> {
+pub(super) fn yomitan_kanji_html(row: &[Value], version: u64, tags: &HashMap<String, TagMeta>) -> Result<String> {
     ensure!(row.len() >= if version == 1 { 4 } else { 6 }, "Kanji Yomitan incompleto");
     let word = value_str(row.first()).ok_or_else(|| anyhow!("Kanji Yomitan sem caractere"))?;
     ensure!(word.len() <= MAX_HEADWORD, "Kanji Yomitan muito longo");
     for i in 1..=3 { ensure!(value_str(row.get(i)).unwrap_or("").len() <= MAX_HEADWORD, "Leitura/tag kanji muito longa"); }
-    let mut html = format!("<div class=\"yomitan-kanji\">{}", yomitan_headword(word, "", &tag_html(value_str(row.get(3)).unwrap_or(""), tags)));
+    let mut html = format!("<div class=\"entry\" data-type=\"kanji\">{}", headword_html(word, "", &tag_html(value_str(row.get(3)).unwrap_or(""), tags)));
     let readings: Vec<String> = [(1, "On"), (2, "Kun")].into_iter()
         .filter_map(|(i, label)| value_str(row.get(i)).filter(|s| !s.is_empty()).map(|r| format!("{label}: {}", escape_html(r))))
         .collect();
-    if !readings.is_empty() { html.push_str(&format!("<div class=\"yomitan-readings\">{}</div>", readings.join(" · "))); }
-    html.push_str("<ol class=\"yomitan-senses\">");
+    if !readings.is_empty() { html.push_str(&format!("<div class=\"kanji-readings\">{}</div>", readings.join(" · "))); }
     let meanings = if version == 1 { &row[4..] } else { row[4].as_array().ok_or_else(|| anyhow!("Significados kanji inválidos"))?.as_slice() };
-    for meaning in meanings { html.push_str("<li>"); render_yomitan(meaning, &mut html, 0)?; html.push_str("</li>"); }
+    html.push_str(&format!("<ol class=\"kanji-gloss-list\" data-count=\"{}\">", meanings.len()));
+    for meaning in meanings { html.push_str("<li class=\"kanji-gloss-item\">"); render_yomitan(meaning, &mut html, 0)?; html.push_str("</li>"); }
     html.push_str("</ol>");
     if version > 1 {
         if let Some(stats) = row[5].as_object() {
@@ -868,7 +882,7 @@ pub(super) fn yomitan_kanji_html(row: &[Value], version: u64, tags: &HashMap<Str
                 let value = v.as_str().map(str::to_string).unwrap_or_else(|| if v.is_number() { v.to_string() } else { String::new() });
                 format!("{}: {}", escape_html(k), escape_html(&value))
             }).collect();
-            if !facts.is_empty() { html.push_str(&format!("<div class=\"yomitan-facts\">{}</div>", facts.join(" · "))); }
+            if !facts.is_empty() { html.push_str(&format!("<div class=\"kanji-stats\">{}</div>", facts.join(" · "))); }
         }
     }
     html.push_str("</div>");
@@ -884,7 +898,7 @@ pub(super) fn yomitan_meta_html(row: &[Value], kanji: bool) -> Result<Option<(St
     };
     ensure!(word.len() <= MAX_HEADWORD, "Palavra Yomitan excede 16 KiB");
     let Some((reading, body)) = yomitan_meta(mode, data, kanji) else { return Ok(None) };
-    let mut html = format!("<div class=\"yomitan-meta\">{}", yomitan_headword(word, &reading, ""));
+    let mut html = format!("<div class=\"entry\" data-type=\"meta\">{}", headword_html(word, &reading, ""));
     html.push_str(&body);
     html.push_str("</div>");
     ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
@@ -897,15 +911,15 @@ fn yomitan_meta(mode: &str, data: &Value, kanji: bool) -> Option<(String, String
     let html = match mode {
         "freq" => {
             let value = if kanji || data.get("reading").is_none() { data } else { data.get("frequency")? };
-            format!("<div class=\"yomitan-frequency\"><span class=\"yomitan-tag\">Frequência</span> {}</div>", escape_html(&frequency_text(value)?))
+            format!("<div class=\"meta-row\">{} {}</div>", tag_pill("Frequência", "frequency", ""), escape_html(&frequency_text(value)?))
         }
         "pitch" if !kanji => {
             let mut html = String::new();
             for pitch in data.get("pitches")?.as_array()?.iter().take(MAX_VARIANTS) {
                 let accent = pitch_html(reading, pitch.get("position")?)?;
-                html.push_str(&format!("<div class=\"yomitan-pitch\"><span class=\"yomitan-tag\">Acento</span> {accent}"));
+                html.push_str(&format!("<div class=\"meta-row\">{} {accent}", tag_pill("Acento", "pronunciation-dictionary", "")));
                 if let Some(tags) = pitch.get("tags").and_then(Value::as_array) {
-                    for tag in tags.iter().filter_map(Value::as_str) { html.push_str(&format!(" <span class=\"yomitan-tag\">{}</span>", escape_html(tag))); }
+                    for tag in tags.iter().filter_map(Value::as_str) { html.push_str(&format!(" {}", tag_pill(tag, "", ""))); }
                 }
                 html.push_str("</div>");
             }
@@ -915,7 +929,7 @@ fn yomitan_meta(mode: &str, data: &Value, kanji: bool) -> Option<(String, String
             let mut html = String::new();
             for item in data.get("transcriptions")?.as_array()?.iter().take(MAX_VARIANTS) {
                 let ipa = item.get("ipa").and_then(Value::as_str)?;
-                html.push_str(&format!("<div class=\"yomitan-ipa\"><span class=\"yomitan-tag\">IPA</span> {}</div>", escape_html(ipa)));
+                html.push_str(&format!("<div class=\"meta-row\">{} {}</div>", tag_pill("IPA", "pronunciation-dictionary", ""), escape_html(ipa)));
             }
             html
         }
@@ -958,7 +972,7 @@ fn pitch_html(reading: &str, position: &Value) -> Option<String> {
     } else {
         position.as_str()?.chars().take(morae.len()).map(|c| c == 'H' || c == 'h').collect()
     };
-    let mut html = String::from("<span class=\"yomitan-pitch-reading\">");
+    let mut html = String::from("<span class=\"pitch-reading\">");
     for (i, mora) in morae.iter().enumerate() {
         let up = high.get(i).copied().unwrap_or(false);
         let drop = up && !high.get(i + 1).copied().unwrap_or(position.as_u64() == Some(0));
@@ -975,20 +989,24 @@ fn pitch_html(reading: &str, position: &Value) -> Option<String> {
 
 fn value_str(value: Option<&Value>) -> Option<&str> { value.and_then(Value::as_str) }
 
-fn yomitan_tags(dir: &Path, index: &Value) -> Result<HashMap<String, String>> {
+fn yomitan_tags(dir: &Path, index: &Value) -> Result<HashMap<String, TagMeta>> {
     let mut tags = HashMap::new();
     let mut memory = 0;
     if let Some(meta) = index.get("tagMeta").and_then(Value::as_object) {
-        for (name, data) in meta { tags.insert(name.clone(), data.get("notes").and_then(Value::as_str).unwrap_or("").to_string()); }
+        for (name, data) in meta {
+            let text = |key: &str| data.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+            tags.insert(name.clone(), TagMeta { category: text("category"), notes: text("notes") });
+        }
     }
     for path in banks(dir, "tag_bank_")? {
         json_rows(&path, |row| {
             if let Some(row) = row.as_array() {
                 if let Some(name) = value_str(row.first()) {
+                    let category = value_str(row.get(1)).unwrap_or("");
                     let notes = value_str(row.get(3)).unwrap_or("");
-                    memory += name.len() + notes.len() + 96;
+                    memory += name.len() + category.len() + notes.len() + 128;
                     ensure!(memory <= MAX_ALIAS_MEMORY, "Tags Yomitan excedem o limite de 32 MiB");
-                    tags.insert(name.to_string(), notes.to_string());
+                    tags.insert(name.to_string(), TagMeta { category: category.to_string(), notes: notes.to_string() });
                 }
             }
             Ok(())
@@ -997,22 +1015,24 @@ fn yomitan_tags(dir: &Path, index: &Value) -> Result<HashMap<String, String>> {
     Ok(tags)
 }
 
-fn tag_html(names: &str, tags: &HashMap<String, String>) -> String {
-    names.split_whitespace().map(|name| format!("<span class=\"yomitan-tag\" title=\"{}\">{}</span>", escape_html(tags.get(name).map(String::as_str).unwrap_or("")), escape_html(name))).collect::<String>()
+fn tag_html(names: &str, tags: &HashMap<String, TagMeta>) -> String {
+    names.split_whitespace().map(|name| {
+        let meta = tags.get(name).cloned().unwrap_or_default();
+        tag_pill(name, &meta.category, &meta.notes)
+    }).collect::<String>()
 }
 
-/// Glossary text as Lookupper shows it: its line breaks run together, so a definition reads as
-/// one paragraph (the " · " a dictionary puts before its examples stays as the separator).
-fn append_inline(output: &mut String, source: &str) -> Result<()> {
-    let mut last_space = false;
+/// Glossary text as Yomitan shows it (`white-space: pre-line` in its display.css): each line break
+/// is kept, as `<br>`, so a dictionary that structures its definitions with lines (MacMillan +
+/// IPA-v3: the pronunciation, the part of speech, numbered senses, examples) keeps that structure,
+/// in the pop-up and in Anki alike. Until 2026-11-14 the lines ran together, as Lookupper does.
+pub(super) fn append_lines(output: &mut String, source: &str) -> Result<()> {
     for c in source.chars() {
-        if c == '\n' || c == '\r' {
-            if !last_space { output.push(' '); }
-            last_space = true;
-            continue;
+        match c {
+            '\r' => {}
+            '\n' => output.push_str("<br>"),
+            c => push_escaped_char(output, c),
         }
-        last_space = c == ' ';
-        push_escaped_char(output, c);
         ensure!(output.len() <= MAX_ARTICLE, "HTML do verbete excede 16 MiB");
     }
     Ok(())
@@ -1022,7 +1042,7 @@ fn render_yomitan(value: &Value, html: &mut String, depth: usize) -> Result<()> 
     ensure!(depth <= MAX_DEPTH, "Conteúdo Yomitan aninhado além de 64 níveis");
     ensure!(html.len() <= MAX_ARTICLE, "Verbete Yomitan excede 16 MiB");
     match value {
-        Value::String(s) => append_inline(html, s)?,
+        Value::String(s) => append_lines(html, s)?,
         Value::Array(a) => for v in a { render_yomitan(v, html, depth + 1)?; },
         Value::Object(obj) => {
             let kind = obj.get("type").and_then(Value::as_str).unwrap_or("");
@@ -1031,7 +1051,10 @@ fn render_yomitan(value: &Value, html: &mut String, depth: usize) -> Result<()> 
             let tag = if kind == "image" { "img" } else { obj.get("tag").and_then(Value::as_str).unwrap_or("span") };
             if tag == "img" { html.push_str(&yomitan_image(value)); return Ok(()); }
             let tag = match tag { "br" | "ruby" | "rt" | "rp" | "table" | "thead" | "tbody" | "tfoot" | "tr" | "td" | "th" | "span" | "div" | "ol" | "ul" | "li" | "details" | "summary" | "a" => tag, _ => "span" };
+            if tag == "table" { html.push_str("<div class=\"gloss-sc-table-container\">"); }
             html.push('<'); html.push_str(tag);
+            // As Yomitan's structured-content generator: each element is classed by its tag.
+            html.push_str(&format!(" class=\"gloss-sc-{tag}\""));
             for key in ["title", "lang"] {
                 if let Some(v) = obj.get(key).and_then(Value::as_str).filter(|s| s.len() <= MAX_HEADWORD) { html.push_str(&format!(" {key}=\"{}\"", escape_html(v))); }
             }
@@ -1065,6 +1088,7 @@ fn render_yomitan(value: &Value, html: &mut String, depth: usize) -> Result<()> 
             html.push('>');
             if let Some(content) = obj.get("content") { render_yomitan(content, html, depth + 1)?; }
             if tag != "br" { html.push_str("</"); html.push_str(tag); html.push('>'); }
+            if tag == "table" { html.push_str("</div>"); }
         }
         Value::Null => {}
         _ => html.push_str(&escape_html(&value.to_string())),
@@ -1137,7 +1161,7 @@ fn yomitan_image(value: &Value) -> String {
     if let Some(description) = value.get("description").and_then(Value::as_str).filter(|s| s.len() <= MAX_HEADWORD) { html = format!("<figure>{html}<figcaption>{}</figcaption></figure>", escape_html(description)); }
     if value.get("collapsible").and_then(Value::as_bool) == Some(true) || value.get("collapsed").and_then(Value::as_bool) == Some(true) {
         let open = if value.get("collapsed").and_then(Value::as_bool) == Some(true) { "" } else { " open" };
-        html = format!("<details class=\"yomitan-image\"{open}><summary>▧</summary>{html}</details>");
+        html = format!("<details class=\"gloss-image-details\"{open}><summary>▧</summary>{html}</details>");
     }
     html
 }

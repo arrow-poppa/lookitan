@@ -10,7 +10,7 @@ use anyhow::{anyhow, ensure, Context, Result};
 use serde_json::value::RawValue;
 use serde_json::Value;
 
-use super::containers::{yomitan_banks, yomitan_index, yomitan_kanji_html, yomitan_meta_html, yomitan_tag_notes,
+use super::containers::{yomitan_banks, yomitan_index, yomitan_kanji_html, yomitan_meta_html, yomitan_tag_notes, TagMeta,
     yomitan_term_html, yomitan_term_keys};
 use super::lkidx::{self, Builder, Index, Location, Stamp};
 
@@ -35,7 +35,7 @@ pub struct Yomitan {
     index: Index,
     kinds: Vec<u16>,
     version: u64,
-    tags: HashMap<String, String>,
+    tags: HashMap<String, TagMeta>,
 }
 
 impl Yomitan {
@@ -185,7 +185,9 @@ mod tests {
         let term = &found[0];
         assert!(term.contains("cat &lt;unsafe&gt;"));
         assert!(term.contains("data-sc-content=\"glossary\""));
-        assert!(term.contains("<ruby>猫<rt>ねこ</rt></ruby>"));
+        assert!(term.contains("<ruby class=\"gloss-sc-ruby\">猫<rt class=\"gloss-sc-rt\">ねこ</rt></ruby>"), "{term}");
+        assert!(term.contains("<div class=\"gloss-sc-div\" data-sc-content=\"glossary\">"), "classed as Yomitan's generator classes it: {term}");
+        assert!(term.contains("<span class=\"tag\" data-category=\"partOfSpeech\" title=\"noun\">n</span>"), "the tag bank's category colours the tag: {term}");
         assert!(term.contains(&entry_link("犬")));
         assert!(term.contains("src=\"images/cat.png\""));
         assert!(term.contains("width:2em"));
@@ -223,16 +225,18 @@ mod tests {
     }
 
     #[test]
-    fn glossary_line_breaks_run_together_and_tags_sit_on_the_headword_line() {
-        // As the MacMillan + IPA-v3 dictionary writes its definitions.
+    fn glossary_lines_are_kept_as_yomitan_keeps_them_and_tags_sit_above_the_glosses() {
+        // As the MacMillan + IPA-v3 dictionary writes its definitions: one text whose lines are
+        // its structure. Until 2026-11-14 they ran together into one paragraph.
         let dir = TestDir::new();
         fs::write(dir.0.join("index.json"), r#"{"title":"MacMillan + IPA-v3","format":3,"revision":"2024.01.08"}"#).unwrap();
         fs::write(dir.0.join("term_bank_1.json"), r#"[["download","download","mondo","noun",0,["US /ˈdaʊnˌloʊd/\nVERB INTRANSITIVE/TRANSITIVE COMPUTING\n1. to move information to your computer\n· You can download this software for free.\n\n"],0,""]]"#).unwrap();
         let d = dir.open();
         let html = &html(&d, "download")[0];
-        assert!(html.contains("<div class=\"yomitan-headword\">download<span class=\"yomitan-tag\" title=\"\">mondo</span></div>"), "{html}");
-        assert!(html.contains("US /ˈdaʊnˌloʊd/ VERB INTRANSITIVE/TRANSITIVE COMPUTING 1. to move information to your computer · You can download this software for free."), "{html}");
-        assert!(!html.contains("<br>") && !html.contains(">noun<"), "{html}");
+        assert!(html.contains("<div class=\"headword\"><span class=\"headword-term\">download</span></div>"), "{html}");
+        assert!(html.contains("<div class=\"definition-tag-list\"><span class=\"tag\" data-category=\"\" title=\"\">mondo</span></div>"), "{html}");
+        assert!(html.contains("<ul class=\"gloss-list\" data-count=\"1\"><li class=\"gloss-item\"><div class=\"gloss-content\">US /ˈdaʊnˌloʊd/<br>VERB INTRANSITIVE/TRANSITIVE COMPUTING<br>1. to move information to your computer<br>· You can download this software for free.</div></li></ul>"), "lines kept, trailing ones dropped: {html}");
+        assert!(!html.contains(">noun<"), "deinflection rules are not shown: {html}");
     }
 
     #[test]
@@ -241,7 +245,8 @@ mod tests {
         fs::write(dir.0.join("index.json"), r#"{"title":"Old format","version":1,"revision":"1"}"#).unwrap();
         fs::write(dir.0.join("term_bank_1.json"), "\u{feff}[[\"word\",\"\",\"\",\"\",0,\"one\",\"two\"]]").unwrap();
         let d = dir.open();
-        assert!(html(&d, "word")[0].contains("<li>one</li><li>two</li>"), "a BOM does not shift the offsets");
+        let word = &html(&d, "word")[0];
+        assert!(word.contains("data-count=\"2\"><li class=\"gloss-item\"><div class=\"gloss-content\">one</div></li><li class=\"gloss-item\"><div class=\"gloss-content\">two</div></li>"), "a BOM does not shift the offsets: {word}");
         drop(d);
         fs::write(dir.0.join("term_bank_1.json"), r#"[["other","","","",0,"three"]]"#).unwrap();
         let d = dir.open();

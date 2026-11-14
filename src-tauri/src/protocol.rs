@@ -10,31 +10,12 @@ use crate::AppState;
 
 const ENTRY_SCRIPT: &str = include_str!("../../src/lib/dictionaries/article.js");
 
-// Two looks. `lkt-themed`: the formats Lookitan lays out itself (Yomitan, DSL, StarDict, ...) are
-// shown like the AI card, in the pop-up's font and colours on its own background, as Lookupper
-// shows them. `lkt-own`: MDict and Slob articles bring stylesheets written for a white page, so
-// they keep that page, inverted in the dark theme.
-const ENTRY_STYLE: &str = "html,body{margin:0;padding:0;background:transparent;}\
-html.lkt-own{color-scheme:light;background:#fff}\
-@media (prefers-color-scheme:dark){html.lkt-own{filter:invert(.9) hue-rotate(180deg)}}\
-html.lkt-themed{color-scheme:light dark;--text:#1b1b1b;--muted:#5f6066;--accent:#0a74c9}\
-@media (prefers-color-scheme:dark){html.lkt-themed{--text:#f1f1f1;--muted:#a9abb1;--accent:#8fd3ff}}\
-body.lkt-entry{overflow:hidden;word-wrap:break-word;}\
-.lkt-own body{padding:6px 10px;font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif}\
-.lkt-themed body{padding:2px 0 6px;color:var(--text);\
-font:15px/1.5 'Segoe UI Variable','Segoe UI',system-ui,-apple-system,'Noto Sans',sans-serif}\
-.lkt-themed a{color:var(--accent)}\
-img{max-width:100%;height:auto;}\
-.reading,.pronunciation{color:var(--muted,#888)} .tags{font-size:.85em;opacity:.7}\
-dl{margin:.5em 0}dd{margin-left:1em}table{max-width:100%}pre{white-space:pre-wrap}\
-.dsl-example{font-style:italic}.dsl-translation{color:#629d65}details{margin:.4em 0}\
-.yomitan-headword{margin:0 0 4px;font-size:17px;font-weight:600;line-height:1.35}\
-.yomitan-reading,.yomitan-tag{margin-left:6px;font-weight:400;color:var(--muted)}\
-.yomitan-tag{word-break:keep-all;cursor:help}\
-.yomitan-meta .yomitan-tag,.yomitan-frequency .yomitan-tag,.yomitan-pitch .yomitan-tag,.yomitan-ipa .yomitan-tag{margin:0 6px 0 0}\
-.yomitan-senses{margin:0;padding:0;list-style-position:inside}.yomitan-senses>li{margin:0 0 4px}\
-.yomitan-senses>li::marker{color:var(--muted)}\
-.yomitan-readings,.yomitan-frequency,.yomitan-pitch,.yomitan-ipa{margin:2px 0 0}.yomitan-facts{margin-top:2px;font-size:13.5px;color:var(--muted)}";
+// The entry page's style (src/lib/dictionaries/entry.css). Two looks, both on the pop-up's own
+// background since 2026-11-14: `lkt-themed` for the formats Lookitan lays out itself, in the
+// pop-up's font and colours with Yomitan's layout; `lkt-own` for MDict and Slob, which keep their
+// own stylesheets, with every colour rewritten for the theme (dictionaries/colors.rs) instead of
+// the white page inverted in the dark theme that came before.
+const ENTRY_STYLE: &str = include_str!("../../src/lib/dictionaries/entry.css");
 
 /// The page an entry is served as: its HTML with the entry style and script, in the look its
 /// dictionary calls for (see ENTRY_STYLE).
@@ -155,7 +136,7 @@ pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> 
                 Ok(html) => {
                     let styles = dict.stylesheets().into_iter().map(|name| format!("<link rel=\"stylesheet\" href=\"{}\">",
                         crate::dictionaries::escape_html(&name))).collect::<String>();
-                    let html = normalize_resource_urls(&html, dict_id);
+                    let html = crate::dictionaries::colors::rewrite_html(&normalize_resource_urls(&html, dict_id));
                     let doc = entry_document(dict_id, &html, &styles, dict.own_look());
                     respond(200, "text/html; charset=utf-8", doc.into_bytes())
                 }
@@ -163,6 +144,11 @@ pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> 
             }
         }
         "d" => match dict.resource(rest) {
+            // A dictionary's stylesheet gets its colours rewritten for the theme, as its entries do.
+            Some(bytes) if mime(rest).starts_with("text/css") => {
+                let css = crate::dictionaries::colors::rewrite_css(&String::from_utf8_lossy(&bytes));
+                respond(200, mime(rest), css.into_bytes())
+            }
             Some(bytes) => respond(200, mime(rest), bytes),
             None => not_found(),
         },
@@ -191,5 +177,8 @@ mod tests {
         let own = entry_document("d1", "<p>x</p>", "<link rel=\"stylesheet\" href=\"a.css\">", true);
         assert!(own.starts_with("<!doctype html><html class=\"lkt-own\">"), "{own}");
         assert!(own.contains("</style><link rel=\"stylesheet\" href=\"a.css\"><script>"));
+        // Since 2026-11-14 no look paints a page of its own or inverts it: colours are rewritten.
+        assert!(!ENTRY_STYLE.contains("invert(") && !ENTRY_STYLE.contains("background:#fff"));
+        assert!(ENTRY_STYLE.contains("color-scheme: light dark"));
     }
 }

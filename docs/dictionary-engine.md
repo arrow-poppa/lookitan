@@ -165,6 +165,30 @@ Isso não reproduz os packs Sudachi/coreano/chinês do Lookupper. A seleção de
 CJK da camada OCR é mantida; não há promessa de equivalência com sua segmentação lexical.
 Os dados GPL do Yomitan e a licença WordNet estão em `src-tauri/src/dictionaries/data/`.
 
+## Aparência dos verbetes (2026-11-14, a pedido do usuário)
+
+Todo verbete fica sobre o fundo do próprio pop-up, em qualquer formato e tema (o usuário pediu que os
+dicionários "se misturassem" ao pop-up como no Yomitan).
+
+- **Estilo da página:** `src/lib/dictionaries/entry.css` (incluído por `protocol.rs`). Duas aparências: `lkt-themed` (formatos que o
+  Lookitan monta) e `lkt-own` (MDict e Slob, que trazem CSS próprio). Nenhuma pinta página nem
+  inverte cores: o filtro `invert` antigo sobre a página branca do MDict/Slob foi removido.
+- **Cores reescritas** (`dictionaries/colors.rs`), ao servir o verbete e cada `.css` do dicionário:
+  - cada cor vira `light-dark(original, escura)`, e a declaração original fica antes, para WebViews sem `light-dark()`;
+  - texto escuro ganha a mesma matiz clara (luminosidade HSL entre 0,62 e 0,92), e fundos quase brancos (≥ 0,85) ficam transparentes;
+  - fundos claros coloridos viram um tom escuro da mesma matiz;
+  - imagens não são tocadas;
+  - vale para `<style>`, `style=`, `color=`, `bgcolor=`, e não toca seletores, `url()`, `var()`, textos e comentários.
+  A exportação para o Anki usa o HTML original (`entry_html`), sem a reescrita.
+- **Layout comum:** classes e regras do Yomitan (`display.css`, `structured-content.css`; crédito em `NOTICE.md`):
+  `entry`, `headword`/`headword-term`/`headword-reading`, `tag` com `data-category` (cores das categorias do Yomitan),
+  `definition-list`/`definition-item`, `gloss-list`/`gloss-item`/`gloss-content` (sem marcador quando há um só), e
+  `gloss-sc-<tag>` em cada elemento do conteúdo estruturado (tabela dentro de `gloss-sc-table-container`).
+  Partes próprias do Lookitan para os outros formatos: `lk-example`, `lk-example-translation`, `lk-note`, `lk-xref`, `lk-level`.
+- **Yomitan:** as quebras de linha do glossário viram `<br>`, como o Yomitan as mostra (`white-space: pre-line`).
+  O MacMillan + IPA-v3 estrutura cada verbete só com linhas. Até 2026-11-14 elas eram unidas num parágrafo, como faz o Lookupper.
+  As tags do `tag_bank` guardam a categoria (`TagMeta`).
+
 ## Limites de compatibilidade
 
 - MDict v3 e dicionários que exigem registro (`Encrypted=1`) são rejeitados explicitamente.
