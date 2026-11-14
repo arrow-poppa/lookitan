@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use super::lkidx::{Builder, Location, HIDDEN};
 use super::{entry_link, escape_html};
+use super::containers::{definition_list, headword_html, note_html, tag_pill, xref_html};
 
 pub const JMDICT: &str = "jmdict-simplified-json";
 pub const KANJIDIC: &str = "kanjidic2-json";
@@ -114,8 +115,9 @@ fn label(tag: &str, tags: &HashMap<String, String>) -> String {
     tags.get(tag).cloned().unwrap_or_else(|| tag.to_string())
 }
 
-fn small(labels: &[String]) -> String {
-    if labels.is_empty() { String::new() } else { format!("<small>{}</small> ", escape_html(&labels.join("; "))) }
+/// Labels as tags of the common layout; parts of speech take their colour.
+fn pills(labels: &[String], category: &str) -> String {
+    labels.iter().map(|l| tag_pill(l, category, "")).collect()
 }
 
 /// One JMdict or JMnedict word as HTML.
@@ -124,21 +126,23 @@ pub fn word_html(bytes: &[u8], tags: &HashMap<String, String>) -> Result<String>
     let kanji = texts(word.get("kanji"));
     let kana = texts(word.get("kana"));
     let title = kanji.first().or(kana.first()).cloned().unwrap_or_default();
-    let mut html = format!("<div class=\"jmdict-entry\"><h2>{}</h2>", escape_html(&title));
-    if !kana.is_empty() && !kanji.is_empty() { html.push_str(&format!("<p class=\"reading\">{}</p>", escape_html(&kana.join("・")))); }
-    if kanji.len() > 1 { html.push_str(&format!("<p>{}</p>", escape_html(&kanji[1..].join("・")))); }
-    html.push_str("<ol>");
+    // As Yomitan shows JMdict: the word with its readings, other spellings, then the senses.
+    let reading = if kanji.is_empty() { String::new() } else { kana.join("・") };
+    let mut html = format!("<div class=\"entry jmdict-entry\">{}", headword_html(&title, &reading, ""));
+    if kanji.len() > 1 { html.push_str(&note_html(&escape_html(&kanji[1..].join("・")))); }
+    let mut senses = Vec::new();
     // A sense with no part of speech has its predecessor's.
     let mut part_of_speech: Vec<String> = Vec::new();
     for sense in word.get("sense").and_then(Value::as_array).into_iter().flatten() {
         let pos = strings(sense.get("partOfSpeech"));
         if !pos.is_empty() { part_of_speech = pos; }
-        let mut labels: Vec<String> = part_of_speech.iter().map(|t| label(t, tags)).collect();
+        let pos_labels: Vec<String> = part_of_speech.iter().map(|t| label(t, tags)).collect();
+        let mut labels = Vec::new();
         for field in ["field", "misc", "dialect"] {
             labels.extend(strings(sense.get(field)).iter().map(|t| label(t, tags)));
         }
-        html.push_str("<li>");
-        html.push_str(&small(&labels));
+        let mut html = pills(&pos_labels, "partOfSpeech");
+        html.push_str(&pills(&labels, ""));
         let glosses: Vec<String> = sense.get("gloss").and_then(Value::as_array).into_iter().flatten().filter_map(|g| {
             let text = g.get("text").and_then(Value::as_str)?;
             let lang = g.get("lang").and_then(Value::as_str).unwrap_or("eng");
@@ -147,25 +151,26 @@ pub fn word_html(bytes: &[u8], tags: &HashMap<String, String>) -> Result<String>
         html.push_str(&escape_html(&glosses.join("; ")));
         for (key, name) in [("appliesToKanji", "só"), ("appliesToKana", "só")] {
             let only: Vec<String> = strings(sense.get(key)).into_iter().filter(|s| s != "*").collect();
-            if !only.is_empty() { html.push_str(&format!(" <small>({name} {})</small>", escape_html(&only.join(", ")))); }
+            if !only.is_empty() { html.push_str(&format!(" <span class=\"lk-note\">({name} {})</span>", escape_html(&only.join(", ")))); }
         }
-        for info in strings(sense.get("info")) { html.push_str(&format!("<p>{}</p>", escape_html(&info))); }
+        for info in strings(sense.get("info")) { html.push_str(&note_html(&escape_html(&info))); }
         for (key, name) in [("related", "Veja também"), ("antonym", "Antônimo")] {
             for target in sense.get(key).and_then(Value::as_array).into_iter().flatten() {
                 let Some(first) = target.as_array().and_then(|t| t.first()).and_then(Value::as_str) else { continue };
-                html.push_str(&format!("<p>{name}: <a href=\"{}\">{}</a></p>", entry_link(first), escape_html(first)));
+                html.push_str(&xref_html(&format!("{name}: <a href=\"{}\">{}</a>", entry_link(first), escape_html(first))));
             }
         }
-        html.push_str("</li>");
+        senses.push(html);
     }
     // JMnedict names carry their translations instead of senses.
     for translation in word.get("translation").and_then(Value::as_array).into_iter().flatten() {
         let kinds: Vec<String> = strings(translation.get("type")).iter().map(|t| label(t, tags)).collect();
         let texts: Vec<String> = translation.get("translation").and_then(Value::as_array).into_iter().flatten()
             .filter_map(|t| t.get("text").and_then(Value::as_str)).map(str::to_string).collect();
-        html.push_str(&format!("<li>{}{}</li>", small(&kinds), escape_html(&texts.join("; "))));
+        senses.push(format!("{}{}", pills(&kinds, "name"), escape_html(&texts.join("; "))));
     }
-    html.push_str("</ol></div>");
+    html.push_str(&definition_list(&senses));
+    html.push_str("</div>");
     Ok(html)
 }
 
@@ -173,7 +178,7 @@ pub fn word_html(bytes: &[u8], tags: &HashMap<String, String>) -> Result<String>
 pub fn character_html(bytes: &[u8]) -> Result<String> {
     let c: Value = serde_json::from_slice(bytes).context("caractere kanjidic2")?;
     let literal = c.get("literal").and_then(Value::as_str).unwrap_or("");
-    let mut html = format!("<div class=\"kanjidic-entry\"><h2>{}</h2>", escape_html(literal));
+    let mut html = format!("<div class=\"entry kanjidic-entry\" data-type=\"kanji\">{}", headword_html(literal, "", ""));
     let mut readings: Vec<(String, Vec<String>)> = Vec::new();
     let mut meanings = Vec::new();
     let rm = c.get("readingMeaning");
@@ -193,13 +198,13 @@ pub fn character_html(bytes: &[u8]) -> Result<String> {
     }
     for (kind, label) in [("ja_on", "On"), ("ja_kun", "Kun")] {
         if let Some((_, values)) = readings.iter().find(|(k, _)| k == kind) {
-            html.push_str(&format!("<p class=\"reading\">{label}: {}</p>", escape_html(&values.join("、"))));
+            html.push_str(&format!("<div class=\"kanji-readings\">{label}: {}</div>", escape_html(&values.join("、"))));
         }
     }
     let nanori = strings(rm.and_then(|r| r.get("nanori")));
-    if !nanori.is_empty() { html.push_str(&format!("<p class=\"reading\">Nanori: {}</p>", escape_html(&nanori.join("、")))); }
-    html.push_str("<ol>");
-    for m in &meanings { html.push_str(&format!("<li>{}</li>", escape_html(m))); }
+    if !nanori.is_empty() { html.push_str(&format!("<div class=\"kanji-readings\">Nanori: {}</div>", escape_html(&nanori.join("、")))); }
+    html.push_str(&format!("<ol class=\"kanji-gloss-list\" data-count=\"{}\">", meanings.len()));
+    for m in &meanings { html.push_str(&format!("<li class=\"kanji-gloss-item\">{}</li>", escape_html(m))); }
     html.push_str("</ol>");
     let misc = c.get("misc");
     let mut facts = Vec::new();
@@ -210,7 +215,7 @@ pub fn character_html(bytes: &[u8]) -> Result<String> {
     for (kind, values) in &readings {
         if !matches!(kind.as_str(), "ja_on" | "ja_kun") { facts.push(format!("{kind}: {}", values.join(", "))); }
     }
-    if !facts.is_empty() { html.push_str(&format!("<p class=\"tags\">{}</p>", escape_html(&facts.join(" · ")))); }
+    if !facts.is_empty() { html.push_str(&format!("<div class=\"kanji-stats\">{}</div>", escape_html(&facts.join(" · ")))); }
     html.push_str("</div>");
     Ok(html)
 }
@@ -258,8 +263,8 @@ mod tests {
         let buy = index.find("かう", 4);
         assert_eq!(buy, index.find("買う", 4), "kana and kanji find the same word");
         let html = word_html(&lkidx::read(&d, &index.stamp, index.location(buy[0]).unwrap(), 1 << 20).unwrap(), &tags).unwrap();
-        assert!(html.contains("<h2>買う</h2>") && html.contains("かう") && html.contains("to buy"), "{html}");
-        assert!(html.contains("Godan verb with &#39;u&#39; ending; transitive verb"), "{html}");
+        assert!(html.contains("<span class=\"headword-term\">買う</span><span class=\"headword-reading\">かう</span>") && html.contains("to buy"), "{html}");
+        assert!(html.contains("data-category=\"partOfSpeech\" title=\"\">Godan verb with &#39;u&#39; ending</span><span class=\"tag\" data-category=\"partOfSpeech\" title=\"\">transitive verb</span>"), "each part of speech is a tag: {html}");
         assert!(html.contains("abbreviation") && html.matches("transitive verb").count() == 2, "the second sense keeps its part of speech");
         assert!(html.contains(&entry_link("売る")));
         assert_eq!(index.find("ｔシャツ", 4).len(), 1, "full-width forms are folded");
@@ -277,7 +282,7 @@ mod tests {
         assert_eq!((builder.len(), title.as_str()), (1, "KANJIDIC2 (2026-10-12)"));
         let html = character_html(KANJIDIC_SAMPLE[KANJIDIC_SAMPLE.find("{\"literal\"").unwrap()..KANJIDIC_SAMPLE.len() - 2].as_bytes()).unwrap();
         assert!(html.contains("On: ア") && html.contains("Kun: つ.ぐ") && html.contains("Nanori: や"), "{html}");
-        assert!(html.contains("<li>Asia</li>") && html.contains("Traços: 7") && html.contains("JLPT: N1") && html.contains("pinyin: ya4"));
+        assert!(html.contains("<li class=\"kanji-gloss-item\">Asia</li>") && html.contains("Traços: 7") && html.contains("JLPT: N1") && html.contains("pinyin: ya4"));
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

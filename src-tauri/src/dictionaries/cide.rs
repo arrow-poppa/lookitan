@@ -102,14 +102,18 @@ fn tag(name: &str) -> Option<(&'static str, &'static str)> {
         "p" => ("<p>", "</p>"),
         "hw" => ("<b class=\"gcide-hw\">", "</b>"),
         "pr" => ("<span class=\"pronunciation\">", "</span>"),
-        "pos" | "fld" | "sd" | "ets" | "xex" | "qex" | "ex" | "it" | "i" | "grk" | "spn" | "altname" | "contr" | "plw" | "conjf" | "wf" => ("<i>", "</i>"),
+        // The common layout's parts (entry.css): part of speech and field as tags, examples.
+        "pos" => ("<span class=\"tag\" data-category=\"partOfSpeech\">", "</span>"),
+        "fld" => ("<span class=\"tag\">", "</span>"),
+        "xex" | "qex" | "ex" => ("<span class=\"lk-example\">", "</span>"),
+        "sd" | "ets" | "it" | "i" | "grk" | "spn" | "altname" | "contr" | "plw" | "conjf" | "wf" => ("<i>", "</i>"),
         "def" | "def2" | "cd" => ("<span class=\"gcide-def\">", "</span>"),
         "sn" | "b" | "col" | "mcol" | "mhw" => ("<b>", "</b>"),
-        "ety" => ("<span class=\"gcide-ety\">", "</span>"),
-        "q" => ("<span class=\"gcide-q\">", "</span>"),
-        "au" | "qau" => ("<span class=\"gcide-au\">", "</span>"),
+        "ety" => ("<span class=\"lk-note gcide-ety\">", "</span>"),
+        "q" => ("<span class=\"lk-example gcide-q\">", "</span>"),
+        "au" | "qau" => ("<span class=\"lk-note gcide-au\">", "</span>"),
         "rj" => (" <span class=\"gcide-rj\">", "</span>"),
-        "mark" | "usage" => ("<small>", "</small>"),
+        "mark" | "usage" => ("<span class=\"tag\">", "</span>"),
         "cs" | "syn" | "note" | "centered" => ("<div>", "</div>"),
         "sc" => ("<span style=\"font-variant:small-caps\">", "</span>"),
         _ => ("", ""),
@@ -258,7 +262,7 @@ pub fn build(files: &[PathBuf], progress: &dyn Fn(usize)) -> Result<(Builder, St
 pub fn article_html(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
     let title = headwords(&text).into_iter().next().unwrap_or_default();
-    format!("<div class=\"gcide-entry\"><h2>{}</h2>{}</div>", escape_html(&title), convert(&text, false))
+    format!("<div class=\"entry gcide-entry\">{}{}</div>", super::containers::headword_html(&title, "", ""), convert(&text, false))
 }
 
 #[cfg(test)]
@@ -287,7 +291,7 @@ mod tests {
         assert_eq!(index.len(), 3);
         let read = |id: u32| lkidx::read(&d, &index.stamp, index.location(id).unwrap(), 1 << 20).unwrap();
         let aback = article_html(&read(index.find("aback", 1)[0]));
-        assert!(aback.contains("<h2>Aback</h2>") && aback.contains("A·back″") && aback.contains("Behind; in the rear."), "{aback}");
+        assert!(aback.contains("<span class=\"headword-term\">Aback</span>") && aback.contains("A·back″") && aback.contains("Behind; in the rear."), "{aback}");
         assert!(aback.contains("ȧ") && aback.contains("ă") && aback.contains("bæc") && aback.contains("“Therewith"), "{aback}");
         assert!(aback.contains(&entry_link("Back")) && !aback.contains("1913 Webster") && !aback.contains("<ent>"), "{aback}");
         let cafe = article_html(&read(index.find("Café", 1)[0]));

@@ -25,7 +25,7 @@ use std::time::UNIX_EPOCH;
 
 use anyhow::{anyhow, ensure, Context, Result};
 
-use super::containers::{default_name, dsl_entries, stardict_article, stardict_files, stardict_index, stardict_info, DslLines};
+use super::containers::{default_name, dsl_entries, stardict_entry, stardict_files, stardict_index, stardict_info, DslLines};
 use super::dictzip;
 use super::lexicons::{self, dictionary_name, filename, gcide_parts, import_cedict, import_kaikki, import_xml, wordnet_exceptions,
     wordnet_files, wordnet_line, GCIDE_END};
@@ -488,7 +488,7 @@ impl InPlace {
         }
         let mut html = Html::default();
         match &self.kind {
-            Kind::StarDict { sequence } => return stardict_article(&bytes, sequence),
+            Kind::StarDict { sequence } => return stardict_entry(self.index.title(id).unwrap_or(""), &bytes, sequence),
             Kind::Slob { .. } | Kind::JmdictJson { .. } | Kind::KanjidicJson | Kind::WnLmf | Kind::WebsterText | Kind::Cide => unreachable!("read above"),
             Kind::Dsl { decoding } => { dsl_entries(DslLines::over(bytes, *decoding), String::new(), &mut html)?; }
             Kind::Cedict => import_cedict(reader(bytes), &mut html)?,

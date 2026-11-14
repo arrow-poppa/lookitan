@@ -59,7 +59,7 @@ fn article_html(reference: &Reference, mime: &str, bin: &Bin) -> Result<String> 
     let content = bin.item(reference.item)?;
     let text = decode(content, content_encoding(mime)?)?;
     Ok(if basic == "text/plain" {
-        format!("<h2>{}</h2><pre>{}</pre>", escape_html(&reference.key), escape_html(&text))
+        format!("<div class=\"entry\">{}<pre>{}</pre></div>", super::containers::headword_html(&reference.key, "", ""), escape_html(&text))
     } else { text })
 }
 

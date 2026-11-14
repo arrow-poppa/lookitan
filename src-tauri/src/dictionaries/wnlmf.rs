@@ -12,6 +12,7 @@ use quick_xml::Reader;
 
 use super::lkidx::{Builder, Location, HIDDEN};
 use super::{entry_link, escape_html};
+use super::containers::{definition_list, example_html, headword_html, tag_pill, xref_html};
 
 pub const FORMAT: &str = "wordnet-lmf-xml";
 pub const SYNSET: u16 = 1;
@@ -191,24 +192,24 @@ fn pos_name(pos: &str) -> &str {
 
 /// An entry as HTML; `synset` reads a synset by id, `member` names a member entry.
 pub fn entry_html(entry: &Entry, synset: impl Fn(&str) -> Option<Synset>, member: impl Fn(&str) -> Option<String>) -> String {
-    let mut html = format!("<div class=\"wordnet-entry\"><h2>{}</h2><p class=\"tags\">{}</p>", escape_html(&entry.lemma), escape_html(pos_name(&entry.pos)));
-    if !entry.pronunciations.is_empty() {
-        html.push_str(&format!("<p class=\"pronunciation\">/{}/</p>", escape_html(&entry.pronunciations.join("/, /"))));
-    }
-    html.push_str("<ol>");
+    // The lemma with its pronunciation and part of speech, then one numbered sense per synset.
+    let pronunciation = if entry.pronunciations.is_empty() { String::new() } else { format!("/{}/", entry.pronunciations.join("/, /")) };
+    let mut html = format!("<div class=\"entry wordnet-entry\">{}",
+        headword_html(&entry.lemma, &pronunciation, &tag_pill(pos_name(&entry.pos), "partOfSpeech", "")));
+    let mut senses = Vec::new();
     for id in &entry.synsets {
         let Some(s) = synset(id) else { continue };
-        html.push_str("<li>");
-        html.push_str(&escape_html(&s.definitions.join("; ")));
+        let mut sense = escape_html(&s.definitions.join("; "));
+        for example in &s.examples { sense.push_str(&example_html(&escape_html(example), None)); }
         let synonyms: Vec<String> = s.members.iter().filter_map(|m| member(m)).filter(|m| *m != entry.lemma).collect();
         if !synonyms.is_empty() {
             let links: Vec<String> = synonyms.iter().map(|w| format!("<a href=\"{}\">{}</a>", entry_link(w), escape_html(w))).collect();
-            html.push_str(&format!(" <small>({})</small>", links.join(", ")));
+            sense.push_str(&xref_html(&format!("Sinônimos: {}", links.join(", "))));
         }
-        for example in &s.examples { html.push_str(&format!("<blockquote>{}</blockquote>", escape_html(example))); }
-        html.push_str("</li>");
+        senses.push(sense);
     }
-    html.push_str("</ol></div>");
+    html.push_str(&definition_list(&senses));
+    html.push_str("</div>");
     html
 }
 
@@ -257,7 +258,7 @@ mod tests {
         let html = entry_html(&entry,
             |id| index.find(&synset_key(id), 1).first().map(|&s| parse_synset(&read(s)).unwrap()),
             |id| index.find(&entry_key(id), 1).first().and_then(|&e| index.title(e).map(str::to_string)));
-        assert!(html.contains("<h2>cat</h2>") && html.contains("noun") && html.contains("feline mammal"), "{html}");
+        assert!(html.contains("<span class=\"headword-term\">cat</span>") && html.contains("noun") && html.contains("feline mammal"), "{html}");
         assert!(html.contains(&entry_link("true cat")), "synonyms come from the synset's members: {html}");
         assert!(html.contains("Don&#39;t pull the cat&#39;s tail"), "{html}");
         drop(index);

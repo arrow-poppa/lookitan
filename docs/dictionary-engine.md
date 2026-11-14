@@ -188,6 +188,18 @@ dicionários "se misturassem" ao pop-up como no Yomitan).
 - **Yomitan:** as quebras de linha do glossário viram `<br>`, como o Yomitan as mostra (`white-space: pre-line`).
   O MacMillan + IPA-v3 estrutura cada verbete só com linhas. Até 2026-11-14 elas eram unidas num parágrafo, como faz o Lookupper.
   As tags do `tag_bank` guardam a categoria (`TagMeta`).
+- **Os outros formatos no layout comum** (etapa 2): cada leitor monta o verbete com as peças de `containers.rs`
+  (`headword_html`, `tag_pill`, `definition_list`, `gloss_list`, `example_html`, `note_html`, `xref_html`), até onde os dados permitem:
+  - CC-CEDICT: pinyin como leitura, forma tradicional como nota, glosas em lista;
+  - Kaikki: IPA como leitura, classe e língua como tags, etimologia como nota, sentidos numerados com exemplos e traduções;
+  - JMdict/JMnedict (XML e JSON): leituras ao lado, outras grafias como nota, classes como tags coloridas, cada uma separada;
+  - KANJIDIC: leituras, significados e estatísticas como no kanji do Yomitan;
+  - WordNet (texto e LMF): classe como tag, um sentido por synset, exemplos, sinônimos como referência;
+  - DSL: a palavra no topo (o corpo DSL não a repete), `[p]` como tags, `[ex]` exemplos, `[com]` notas, `[m1]`–`[m9]` como `lk-level`;
+  - StarDict: a palavra no topo, a não ser que o artigo já comece com ela; no XDXF, `<ex>`, `<co>` e `<abr>` viram exemplo, nota e tag;
+  - GCIDE: `<pos>`/`<fld>`/`<mark>` como tags, exemplos e citações como `lk-example`, etimologia e autores como notas;
+  - Webster (texto): `Note:` como nota, `Syn.` como referência;
+  - MDict e Slob mantêm o próprio HTML (só as cores mudam); o Slob em texto puro ganha a palavra no topo.
 
 ## Limites de compatibilidade
 

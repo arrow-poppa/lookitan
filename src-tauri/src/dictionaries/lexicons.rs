@@ -2,6 +2,7 @@
 //! No network access, external entity loading, or executable dictionary markup is used.
 
 use super::{entry_link, escape_html, ImportSink};
+use super::containers::{definition_list, example_html, gloss_list, headword_html, note_html, tag_pill, xref_html};
 use anyhow::{ensure, Context, Result};
 use quick_xml::{events::Event, Reader};
 use serde_json::Value;
@@ -116,14 +117,14 @@ fn unique(values: impl IntoIterator<Item = String>) -> Vec<String> {
     result
 }
 
-fn heading(word: &str) -> String { format!("<h2>{}</h2>", escape_html(word)) }
+// The common entry layout (entry.css; containers.rs has the parts).
+fn heading(word: &str) -> String { headword_html(word, "", "") }
 fn paragraph(text: &str) -> String { format!("<p>{}</p>", escape_html(text)) }
 fn link(word: &str) -> String { format!("<a href=\"{}\">{}</a>", entry_link(word), escape_html(word)) }
-fn list(values: &[String]) -> String {
-    let mut html = String::from("<ol>");
-    for value in values { html.push_str(&format!("<li>{}</li>", escape_html(value))); }
-    html.push_str("</ol>");
-    html
+fn escaped(values: &[String]) -> Vec<String> { values.iter().map(|v| escape_html(v)).collect() }
+/// Labels (part of speech, field, register) as tags; `pos` ones take the part-of-speech colour.
+fn label_tags(labels: &[String], pos: bool) -> String {
+    labels.iter().map(|l| tag_pill(l, if pos { "partOfSpeech" } else { "" }, "")).collect()
 }
 
 pub(super) fn import_cedict(mut reader: Box<dyn BufRead>, sink: &mut dyn ImportSink) -> Result<()> {
@@ -151,10 +152,11 @@ pub(super) fn import_cedict(mut reader: Box<dyn BufRead>, sink: &mut dyn ImportS
         ensure!(!definitions.is_empty(), "Linha {row}: definição CC-CEDICT vazia");
         let simplified = words[1];
         let aliases = unique([words[0].to_owned()]);
-        let mut html = heading(simplified);
-        if words[0] != simplified { html.push_str(&paragraph(words[0])); }
-        html.push_str(&paragraph(pinyin));
-        html.push_str(&list(&definitions));
+        let mut html = String::from("<div class=\"entry\">");
+        html.push_str(&headword_html(simplified, pinyin, ""));
+        if words[0] != simplified { html.push_str(&note_html(&format!("Tradicional: {}", escape_html(words[0])))); }
+        html.push_str(&gloss_list(&escaped(&definitions)));
+        html.push_str("</div>");
         sink.add(simplified, &html, &aliases)?;
         count += 1;
     }
@@ -185,29 +187,27 @@ pub(super) fn import_kaikki(mut reader: Box<dyn BufRead>, sink: &mut dyn ImportS
         let entry: Value = serde_json::from_str(text).with_context(|| format!("JSONL inválido na linha {row}"))?;
         let word = entry.get("word").and_then(Value::as_str).filter(|w| !w.trim().is_empty())
             .with_context(|| format!("Linha {row}: não é uma entrada Kaikki (campo word ausente)"))?;
-        let mut html = heading(word);
-        let subtitle = [entry.get("lang").and_then(Value::as_str), entry.get("pos").and_then(Value::as_str)]
-            .into_iter().flatten().collect::<Vec<_>>().join(" · ");
-        if !subtitle.is_empty() { html.push_str(&paragraph(&subtitle)); }
-        if let Some(etymology) = entry.get("etymology_text").and_then(Value::as_str) { html.push_str(&paragraph(etymology)); }
-        if let Some(sounds) = entry.get("sounds").and_then(Value::as_array) {
-            let pronunciations = unique(sounds.iter().filter_map(|s| s.get("ipa").and_then(Value::as_str)).map(str::to_owned));
-            if !pronunciations.is_empty() { html.push_str(&paragraph(&pronunciations.join(" · "))); }
-        }
-        html.push_str("<ol>");
+        // Pronunciation beside the word, part of speech and language as tags, then the senses.
+        let mut tags = String::new();
+        if let Some(pos) = entry.get("pos").and_then(Value::as_str) { tags.push_str(&tag_pill(pos, "partOfSpeech", "")); }
+        if let Some(lang) = entry.get("lang").and_then(Value::as_str) { tags.push_str(&tag_pill(lang, "", "")); }
+        let pronunciations = entry.get("sounds").and_then(Value::as_array).map(|sounds| unique(sounds.iter()
+            .filter_map(|s| s.get("ipa").and_then(Value::as_str)).map(str::to_owned))).unwrap_or_default();
+        let mut html = String::from("<div class=\"entry\">");
+        html.push_str(&headword_html(word, &pronunciations.join(" · "), &tags));
+        if let Some(etymology) = entry.get("etymology_text").and_then(Value::as_str) { html.push_str(&note_html(&escape_html(etymology))); }
+        let mut senses_html = Vec::new();
         if let Some(senses) = entry.get("senses").and_then(Value::as_array) {
             for sense in senses {
                 let mut glosses = strings(sense.get("glosses"));
                 if glosses.is_empty() { glosses = strings(sense.get("raw_glosses")); }
-                html.push_str("<li>");
-                let tags = strings(sense.get("tags"));
-                if !tags.is_empty() { html.push_str(&format!("<small>{}</small> ", escape_html(&tags.join(", ")))); }
-                html.push_str(&escape_html(&glosses.join("; ")));
+                let mut item = label_tags(&strings(sense.get("tags")), false);
+                item.push_str(&escape_html(&glosses.join("; ")));
                 for field in ["form_of", "alt_of"] {
                     if let Some(forms) = sense.get(field).and_then(Value::as_array) {
                         for form in forms {
                             if let Some(base) = form.get("word").and_then(Value::as_str) {
-                                html.push_str(&format!("<p>→ {}</p>", link(base)));
+                                item.push_str(&xref_html(&format!("→ {}", link(base))));
                             }
                         }
                     }
@@ -215,18 +215,16 @@ pub(super) fn import_kaikki(mut reader: Box<dyn BufRead>, sink: &mut dyn ImportS
                 if let Some(examples) = sense.get("examples").and_then(Value::as_array) {
                     for example in examples {
                         if let Some(text) = example.get("text").and_then(Value::as_str) {
-                            html.push_str(&format!("<blockquote>{}", escape_html(text)));
-                            if let Some(translation) = example.get("translation").and_then(Value::as_str) {
-                                html.push_str(&paragraph(translation));
-                            }
-                            html.push_str("</blockquote>");
+                            let translation = example.get("translation").and_then(Value::as_str).map(escape_html);
+                            item.push_str(&example_html(&escape_html(text), translation.as_deref()));
                         }
                     }
                 }
-                html.push_str("</li>");
+                senses_html.push(item);
             }
         }
-        html.push_str("</ol>");
+        html.push_str(&definition_list(&senses_html));
+        html.push_str("</div>");
         let aliases = unique(entry.get("forms").and_then(Value::as_array).into_iter().flatten()
             .filter(|f| !strings(f.get("tags")).iter().any(|t| matches!(t.as_str(), "romanization" | "transliteration")))
             .filter_map(|f| f.get("form").and_then(Value::as_str)).map(str::to_owned));
@@ -474,43 +472,45 @@ fn render_japanese(node: &Node, sink: &mut dyn ImportSink) -> Result<()> {
     node.all("reb", &mut readings);
     let aliases = unique(words.iter().chain(readings.iter()).cloned());
     let word = aliases.first().context("Entrada JMdict/JMnedict sem keb/reb")?;
-    let mut html = heading(word);
-    if !readings.is_empty() { html.push_str(&paragraph(&readings.join(" · "))); }
-    if words.len() > 1 { html.push_str(&paragraph(&words[1..].join(" · "))); }
-    html.push_str("<ol>");
+    // The first spelling with its readings beside it, as Yomitan shows JMdict.
+    let reading = if words.is_empty() { readings[1..].join(" · ") } else { readings.join(" · ") };
+    let mut html = String::from("<div class=\"entry\">");
+    html.push_str(&headword_html(word, &reading, ""));
+    if words.len() > 1 { html.push_str(&note_html(&escape_html(&words[1..].join(" · ")))); }
+    let mut senses_html = Vec::new();
     let mut inherited_pos = Vec::new();
     for sense in node.children().filter(|n| n.name == "sense" || n.name == "trans") {
-        html.push_str("<li>");
-        let mut labels: Vec<_> = sense.children().filter(|n| matches!(n.name.as_str(), "pos" | "name_type" | "field" | "misc" | "dial"))
+        let others: Vec<_> = sense.children().filter(|n| matches!(n.name.as_str(), "name_type" | "field" | "misc" | "dial"))
             .map(Node::text).collect();
         let pos: Vec<_> = sense.named("pos").map(Node::text).collect();
-        if !pos.is_empty() { inherited_pos = pos; }
-        else { labels.extend(inherited_pos.iter().cloned()); }
-        if !labels.is_empty() { html.push_str(&format!("<small>{}</small> ", escape_html(&labels.join("; ")))); }
+        if !pos.is_empty() { inherited_pos = pos.clone(); }
+        let mut item = label_tags(if pos.is_empty() { &inherited_pos } else { &pos }, true);
+        item.push_str(&label_tags(&others, false));
         let mut glosses = Vec::new();
         for gloss in sense.children().filter(|n| n.name == "gloss" || n.name == "trans_det") {
             let text = gloss.text();
             let language = gloss.attrs.get("xml:lang").map(String::as_str).unwrap_or("eng");
             glosses.push(if language == "eng" { text } else { format!("[{language}] {text}") });
         }
-        html.push_str(&escape_html(&glosses.join("; ")));
+        item.push_str(&escape_html(&glosses.join("; ")));
         for info in sense.children().filter(|n| matches!(n.name.as_str(), "s_inf" | "stagk" | "stagr" | "xref" | "ant" | "trans_det")) {
             if info.name == "xref" || info.name == "ant" {
                 let text = info.text();
                 let target = text.split('・').next().unwrap_or(&text);
-                html.push_str(&format!("<p>{}: {}</p>", escape_html(&info.name), link(target)));
-            } else if info.name != "trans_det" { html.push_str(&paragraph(&format!("{}: {}", info.name, info.text()))); }
+                item.push_str(&xref_html(&format!("{}: {}", escape_html(&info.name), link(target))));
+            } else if info.name != "trans_det" { item.push_str(&note_html(&escape_html(&format!("{}: {}", info.name, info.text())))); }
         }
-        html.push_str("</li>");
+        senses_html.push(item);
     }
-    html.push_str("</ol>");
+    html.push_str(&definition_list(&senses_html));
+    html.push_str("</div>");
     sink.add(word, &html, &aliases)
 }
 
 fn render_kanji(node: &Node, sink: &mut dyn ImportSink) -> Result<()> {
     let word = node.first("literal");
     ensure!(!word.is_empty(), "Caractere KANJIDIC2 sem literal");
-    let mut html = heading(&word);
+    let mut html = format!("<div class=\"entry\" data-type=\"kanji\">{}", heading(&word));
     let mut readings = Vec::new();
     let mut meanings = Vec::new();
     fn visit(node: &Node, readings: &mut Vec<String>, meanings: &mut Vec<String>) {
@@ -528,11 +528,14 @@ fn render_kanji(node: &Node, sink: &mut dyn ImportSink) -> Result<()> {
         }
     }
     visit(node, &mut readings, &mut meanings);
-    html.push_str(&paragraph(&readings.join(" · ")));
-    html.push_str(&list(&meanings));
+    html.push_str(&format!("<div class=\"kanji-readings\">{}</div>", escape_html(&readings.join(" · "))));
+    html.push_str(&format!("<ol class=\"kanji-gloss-list\" data-count=\"{}\">", meanings.len()));
+    for meaning in &meanings { html.push_str(&format!("<li class=\"kanji-gloss-item\">{}</li>", escape_html(meaning))); }
+    html.push_str("</ol>");
     let mut strokes = Vec::new();
     node.all("stroke_count", &mut strokes);
-    if !strokes.is_empty() { html.push_str(&paragraph(&format!("Traços: {}", strokes.join(", ")))); }
+    if !strokes.is_empty() { html.push_str(&format!("<div class=\"kanji-stats\">Traços: {}</div>", escape_html(&strokes.join(", ")))); }
+    html.push_str("</div>");
     // Kana readings are displayed but not indexed as kanji aliases: this would produce
     // thousands of unrelated character results when looking up a common syllable.
     sink.add(&word, &html, &[])
@@ -620,9 +623,11 @@ pub(super) fn wordnet_line(text: &str, pos: &str, exceptions: &HashMap<String, V
     ensure!(fields.next().is_none(), "WordNet: campos inesperados no synset");
     let mut aliases = unique(aliases);
     let word = aliases.first().context("WordNet: synset sem lema")?;
-    let mut html = heading(word);
-    html.push_str(&format!("<p>{pos} · {}</p>", aliases.iter().map(|w| link(w)).collect::<Vec<_>>().join(", ")));
-    html.push_str(&paragraph(gloss.trim()));
+    let mut html = String::from("<div class=\"entry\">");
+    html.push_str(&headword_html(word, "", &tag_pill(pos, "partOfSpeech", "")));
+    html.push_str(&gloss_list(&[escape_html(gloss.trim())]));
+    if aliases.len() > 1 { html.push_str(&xref_html(&aliases.iter().map(|w| link(w)).collect::<Vec<_>>().join(", "))); }
+    html.push_str("</div>");
     let irregular = aliases.iter().filter_map(|lemma| exceptions.get(lemma)).flatten().cloned().collect::<Vec<_>>();
     aliases.extend(irregular);
     let aliases = unique(aliases);

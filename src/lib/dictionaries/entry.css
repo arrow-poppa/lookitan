@@ -101,6 +101,9 @@ pre { white-space: pre-wrap; }
 dl { margin: .5em 0; } dd { margin-left: 1em; }
 .reading, .pronunciation { color: var(--muted); }
 .tags { font-size: .85em; opacity: .7; }
-.dsl-example { font-style: italic; }
-.dsl-translation { color: light-dark(#3f7a42, #8fc992); }
+/* DSL's [c] without a colour is green, as in ABBYY Lingvo and GoldenDict. */
+.dsl-color:not([style]) { color: light-dark(#2e7d32, #8fc992); }
+.dsl-optional > summary { color: var(--muted); cursor: pointer; }
+.gcide-hw { font-weight: 600; }
+.gcide-rj { display: block; text-align: right; color: var(--muted); font-size: 13px; }
 details { margin: .4em 0; }

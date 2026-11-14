@@ -305,7 +305,8 @@ pub(super) fn dsl_entries(mut lines: DslLines, mut name: String, sink: &mut dyn 
 
 fn emit_dsl(sink: &mut dyn ImportSink, headings: &[String], body: &str) -> Result<()> {
     let Some(first) = headings.first() else { return Ok(()) };
-    let html = format!("<div class=\"dsl-entry\">{}</div>", render_dsl(body, first)?);
+    // DSL bodies do not repeat the headword, so it heads the entry, as in the common layout.
+    let html = format!("<div class=\"entry dsl-entry\">{}{}</div>", headword_html(first, "", ""), render_dsl(body, first)?);
     add_entry(sink, first, &html, &headings[1..])?;
     let mut subheads: Vec<String> = Vec::new();
     let mut subbody = String::new();
@@ -315,7 +316,7 @@ fn emit_dsl(sink: &mut dyn ImportSink, headings: &[String], body: &str) -> Resul
             if !subbody.is_empty() && !subheads.is_empty() {
                 count += 1;
                 ensure!(count <= 1024, "Muitos subverbetes DSL");
-                let html = render_dsl(&subbody, &subheads[0])?;
+                let html = format!("<div class=\"entry dsl-entry\">{}{}</div>", headword_html(&subheads[0], "", ""), render_dsl(&subbody, &subheads[0])?);
                 add_entry(sink, &subheads[0], &html, &subheads[1..])?;
                 subheads.clear();
                 subbody.clear();
@@ -404,8 +405,12 @@ fn render_dsl(source: &str, headword: &str) -> Result<String> {
                             let css = if color.chars().all(|c| c.is_ascii_alphanumeric() || c == '#') && !color.is_empty() { format!(" style=\"color:{}\"", escape_html(color)) } else { String::new() };
                             ("c", format!("<span class=\"dsl-color\"{css}>"), "</span>")
                         }
-                        "ex" | "com" | "p" | "trn" | "t" | "!trs" | "lang" => (key, format!("<span class=\"dsl-{}\">", escape_html(key.trim_start_matches('!'))), "</span>"),
-                        _ if key.starts_with('m') && key.len() == 2 && key.as_bytes()[1].is_ascii_digit() => ("m", format!("<div class=\"dsl-indent\" style=\"margin-left:{}em\">", key.as_bytes()[1] - b'0'), "</div>"),
+                        // The common layout's parts (entry.css): labels as tags, examples, comments.
+                        "p" => ("p", "<span class=\"tag dsl-p\">".to_string(), "</span>"),
+                        "ex" => ("ex", "<span class=\"lk-example dsl-ex\">".to_string(), "</span>"),
+                        "com" => ("com", "<span class=\"lk-note dsl-com\">".to_string(), "</span>"),
+                        "trn" | "t" | "!trs" | "lang" => (key, format!("<span class=\"dsl-{}\">", escape_html(key.trim_start_matches('!'))), "</span>"),
+                        _ if key.starts_with('m') && key.len() == 2 && key.as_bytes()[1].is_ascii_digit() => ("m", format!("<div class=\"lk-level\" data-level=\"{}\">", key.as_bytes()[1] - b'0'), "</div>"),
                         _ => ("", String::new(), ""),
                     };
                     if let Some(closing) = key.strip_prefix('/') {
@@ -423,6 +428,8 @@ fn render_dsl(source: &str, headword: &str) -> Result<String> {
             }
             match c {
                 '~' => out.push_str(&escape_html(headword)),
+                // A line that ends with an indented block ([m1]...[/m]) already ends there.
+                '\n' if out.is_empty() || out.ends_with("</div>") => {}
                 '\n' => out.push_str("<br>"),
                 _ => push_escaped_char(&mut out, c),
             }
@@ -562,6 +569,31 @@ pub(super) fn stardict_index(path: &Path, info: &StarDictInfo, data_len: u64,
     Ok(())
 }
 
+/// A StarDict article in the common layout: its headword first, unless the article already starts
+/// with it (many dictionaries write it themselves), then its fields.
+pub(super) fn stardict_entry(headword: &str, bytes: &[u8], sequence: &str) -> Result<String> {
+    let body = stardict_article(bytes, sequence)?;
+    let head = if starts_with_word(&body, headword) { String::new() } else { headword_html(headword, "", "") };
+    Ok(format!("<div class=\"entry\">{head}{body}</div>"))
+}
+
+/// Whether the text of `html` (its tags left out) starts with `word`, ignoring case.
+fn starts_with_word(html: &str, word: &str) -> bool {
+    let mut text = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => text.push(c),
+            _ => {}
+        }
+        if text.len() > word.len() + 64 { break; }
+    }
+    let word = word.trim().to_lowercase();
+    !word.is_empty() && text.trim_start().to_lowercase().starts_with(&word)
+}
+
 pub(super) fn stardict_article(bytes: &[u8], sequence: &str) -> Result<String> {
     let mut html = String::new();
     let mut p = 0usize;
@@ -648,13 +680,17 @@ fn safe_markup_kind(source: &str, xdxf: bool) -> Result<String> {
                     }
                     break;
                 }
-                let mapped = match tag.as_str() { "k" => "b", "tr" if xdxf => "span", "dtrn" | "def" | "ex" | "co" | "abr" | "c" => "span", _ => tag.as_str() };
+                let mapped = match tag.as_str() { "k" => "b", "tr" if xdxf => "span", "def" if xdxf => "div", "dtrn" | "def" | "ex" | "co" | "abr" | "c" => "span", _ => tag.as_str() };
+                // XDXF's examples, comments and abbreviations take the common layout's parts.
+                let class = match tag.as_str() { "ex" if xdxf => Some("lk-example"), "co" if xdxf => Some("lk-note"), "abr" if xdxf => Some("tag"), _ => None };
                 if matches!(mapped, "a" | "abbr" | "b" | "strong" | "i" | "em" | "u" | "s" | "sub" | "sup" | "small" | "span" | "div" | "p" | "br" | "hr" | "ol" | "ul" | "li" | "dl" | "dt" | "dd" | "table" | "thead" | "tbody" | "tr" | "td" | "th" | "ruby" | "rt" | "rp" | "img" | "audio" | "video" | "source" | "details" | "summary" | "blockquote") {
                     out.push('<');
                     if closing { out.push('/'); }
                     out.push_str(mapped);
                     if !closing {
+                        if let Some(class) = class { out.push_str(&format!(" class=\"{class}\"")); }
                         for (key, value) in html_attributes(&content[tag.len()..]) {
+                            if key == "class" && class.is_some() { continue; }
                             let value = match key.as_str() {
                                 "href" => {
                                     if let Some(target) = value.strip_prefix("bword://") { Some(entry_link(&percent_decode_url(target, false))) }
@@ -830,6 +866,37 @@ pub(super) fn headword_html(word: &str, reading: &str, tags: &str) -> String {
     html.push_str("</div>");
     html
 }
+
+/// Senses in the common layout (entry.css): a numbered `definition-list`; one sense gets no number.
+/// Items are HTML.
+pub(super) fn definition_list(items: &[String]) -> String {
+    let mut html = format!("<ol class=\"definition-list\" data-count=\"{}\">", items.len());
+    for item in items { html.push_str(&format!("<li class=\"definition-item\">{item}</li>")); }
+    html.push_str("</ol>");
+    html
+}
+
+/// Glosses of one sense in the common layout: a bulleted `gloss-list`; one gloss gets no bullet.
+/// Items are HTML.
+pub(super) fn gloss_list(items: &[String]) -> String {
+    let mut html = format!("<ul class=\"gloss-list\" data-count=\"{}\">", items.len());
+    for item in items { html.push_str(&format!("<li class=\"gloss-item\"><div class=\"gloss-content\">{item}</div></li>")); }
+    html.push_str("</ul>");
+    html
+}
+
+/// An example sentence (HTML), and its translation when there is one.
+pub(super) fn example_html(text: &str, translation: Option<&str>) -> String {
+    let mut html = format!("<div class=\"lk-example\">{text}</div>");
+    if let Some(t) = translation.filter(|t| !t.is_empty()) { html.push_str(&format!("<div class=\"lk-example-translation\">{t}</div>")); }
+    html
+}
+
+/// A note (etymology, usage, other spellings): HTML, shown smaller and muted.
+pub(super) fn note_html(html: &str) -> String { format!("<div class=\"lk-note\">{html}</div>") }
+
+/// A cross-reference line (see also, synonyms, form of): HTML with its links.
+pub(super) fn xref_html(html: &str) -> String { format!("<div class=\"lk-xref\">{html}</div>") }
 
 /// A tag as Yomitan draws it: a small coloured label (`category` picks the colour), `title` on hover.
 pub(super) fn tag_pill(name: &str, category: &str, title: &str) -> String {

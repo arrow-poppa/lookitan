@@ -94,7 +94,7 @@ pub fn article_html(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
     let mut lines = text.lines();
     let head = lines.next().unwrap_or("").trim();
-    let mut html = format!("<div class=\"webster-entry\"><h2>{}</h2>", escape_html(variants(head).join("; ").as_str()));
+    let mut html = format!("<div class=\"entry webster-entry\">{}", super::containers::headword_html(&variants(head).join("; "), "", ""));
     let rest: Vec<&str> = lines.collect();
     let body = rest.join("\n");
     for (i, paragraph) in body.split("\n\n").map(str::trim).filter(|p| !p.is_empty()).enumerate() {
@@ -103,7 +103,10 @@ pub fn article_html(bytes: &[u8]) -> String {
         for label in ["Defn:", "Etym:", "Syn.", "Note:"] {
             p = p.replace(label, &format!("<b>{label}</b>"));
         }
-        if i == 0 { html.push_str(&format!("<p class=\"pronunciation\">{p}</p>")); } else { html.push_str(&format!("<p>{p}</p>")); }
+        // The common layout's parts (entry.css): notes and synonyms set apart from the senses.
+        let class = if i == 0 { " class=\"pronunciation\"" } else if joined.starts_with("Note:") { " class=\"lk-note\"" }
+            else if joined.starts_with("Syn.") { " class=\"lk-xref\"" } else { "" };
+        html.push_str(&format!("<p{class}>{p}</p>"));
     }
     html.push_str("</div>");
     html
@@ -130,7 +133,7 @@ mod tests {
         assert_eq!(index.len(), 2);
         let read = |id: u32| lkidx::read(&d, &index.stamp, index.location(id).unwrap(), 1 << 20).unwrap();
         let aback = article_html(&read(index.find("aback", 1)[0]));
-        assert!(aback.contains("<h2>Aback</h2>") && aback.contains("Toward the back or rear") && aback.contains("<b>Etym:</b>"), "{aback}");
+        assert!(aback.contains("<span class=\"headword-term\">Aback</span>") && aback.contains("Toward the back or rear") && aback.contains("<b>Etym:</b>"), "{aback}");
         assert!(!aback.contains("ABATIS"), "an article stops at the next headword");
         let abattis = index.find("abattis", 1);
         assert_eq!(abattis, index.find("abatis", 1), "variants share the article");
