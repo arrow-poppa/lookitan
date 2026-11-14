@@ -3,10 +3,11 @@
 // Compact styles are triples (id, opening HTML, closing HTML); `id` in a record
 // styles the text until the next numeric marker. No Lookupper code is used here.
 //
-// Keys live in one flat table (KeyTable): in memory for .mdd resources, and for a .mdx in a
-// sidecar file, `<name>.mdx.lkkeys`, built once and memory-mapped, so a dictionary with millions
-// of headwords (ipa-dict: 4.77 million) costs little RAM and is not re-read on every start.
-// Entries are still read from the .mdx itself, block by block.
+// Keys live in one flat table (KeyTable), kept on disk in a sidecar file, `<file>.lkkeys` (for a
+// .mdx and each .mdd), built once and memory-mapped, so a dictionary with millions of headwords
+// (ipa-dict: 4.77 million) costs little RAM and is not re-read on every start. Entries and
+// resources are still read from the MDict files themselves, block by block. Only tests, and a
+// folder that cannot be written to, keep a table in memory.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -23,7 +24,7 @@ const MAX_HEADER_BYTES: usize = 2 * 1024 * 1024;
 const MAX_BLOCK_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PACKED_BLOCK_BYTES: usize = 40 * 1024 * 1024;
 const MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
-/// Keys kept on the heap (.mdd resources, or a .mdx whose sidecar cannot be written).
+/// Keys kept on the heap, only when the sidecar cannot be written.
 const MAX_INDEX_BYTES: usize = 128 * 1024 * 1024;
 /// Memory used once, while a .mdx's sidecar key table is built; afterwards it is only mapped.
 const MAX_BUILD_BYTES: usize = 1024 * 1024 * 1024;
@@ -511,24 +512,15 @@ fn decrypt_key_block_index(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 impl Mdict {
-    /// Opens a file with its keys in memory (.mdd resources).
-    pub fn open(path: &Path) -> Result<Self> {
-        Self::open_with(path, None, &|_| {})
-    }
-
-    /// Opens a .mdx with its keys in the sidecar `index`, built the first time (and whenever the
-    /// .mdx changes) and then memory-mapped; `progress` gets the keys read while building it.
+    /// Opens a .mdx or .mdd with its keys in the sidecar `index`, built the first time (and
+    /// whenever the file changes) and then memory-mapped; `progress` gets the keys read while
+    /// building it.
     pub fn open_indexed(path: &Path, index: &Path, progress: &dyn Fn(usize)) -> Result<Self> {
-        Self::open_with(path, Some(index), progress)
-    }
-
-    fn open_with(path: &Path, index: Option<&Path>, progress: &dyn Fn(usize)) -> Result<Self> {
         let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
         // SAFETY: opened read-only; users must not modify an installed file while in use.
         let mmap = unsafe { Mmap::map(&file)? };
         let is_mdd = path.extension().map(|e| e.eq_ignore_ascii_case("mdd")).unwrap_or(false);
-        let sidecar = match index { Some(index) => Some((index, file_stamp(path)?)), None => None };
-        Self::parse_with(path.to_path_buf(), mmap, is_mdd, sidecar, progress)
+        Self::parse_with(path.to_path_buf(), mmap, is_mdd, Some((index, file_stamp(path)?)), progress)
     }
 
     #[cfg(test)]

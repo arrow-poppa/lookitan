@@ -69,13 +69,13 @@ impl Dictionary {
         let mut warnings = Vec::new();
         let is_index_json = path.file_name().map(|n| n.eq_ignore_ascii_case("index.json")).unwrap_or(false);
         let (reader, name, format, description) = if path.extension().map(|e| e.eq_ignore_ascii_case("mdx")).unwrap_or(false) {
-            // The keys go to `<name>.mdx.lkkeys`: beside the .mdx in Lookitan's own copy, in the
-            // app's cache for a file used in place (mdict.rs, KeyTable).
-            let keys = index_path(installed, PathBuf::from(format!("{}.lkkeys", path.display())), cache, id)?;
-            let mdx = Mdict::open_indexed(&path, &keys, progress)?;
+            // Every MDict file keeps its keys on disk, in `<file>.lkkeys` (mdict.rs, KeyTable): beside
+            // it in Lookitan's own copy, in the app's cache for a file used in place.
+            let keys = |file: &Path| index_path(installed, PathBuf::from(format!("{}.lkkeys", file.display())), cache, id);
+            let mdx = Mdict::open_indexed(&path, &keys(path.as_path())?, progress)?;
             let name = mdx.title.clone();
             for p in companion_mdds(&path)? {
-                match Mdict::open(&p) {
+                match keys(p.as_path()).and_then(|index| Mdict::open_indexed(&p, &index, &|_| {})) {
                     Ok(m) => mdds.push(m),
                     Err(e) => warnings.push(format!("{}: {e:#}", p.display())),
                 }

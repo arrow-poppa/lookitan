@@ -271,6 +271,9 @@ fn a_seven_zip_collection_installs_mdxs_and_their_resources_independently() {
     assert_eq!(first.resource("images/cat.png"), Some(b"first image".to_vec()));
     assert_eq!(second.resource("images/cat.png"), Some(b"second image".to_vec()));
     assert_eq!(second.resource("extra.png"), Some(b"extra image".to_vec()));
+    for file in ["PicDic.mdx", "PicDic.mdd", "PicDic.2.mdd"] {
+        assert!(batch.paths[1].join(format!("{file}.lkkeys")).is_file(), "{file} keeps its keys on disk");
+    }
     assert!(!batch.paths[0].join("PicDic.mdx").exists());
     assert!(!batch.paths[0].join("PicDic.mdd").exists());
     assert!(!batch.paths[0].join("PicDic.2.mdd").exists());
