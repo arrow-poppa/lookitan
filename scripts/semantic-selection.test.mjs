@@ -245,3 +245,17 @@ test('the cloze range is the unit when it is one piece, else the word where the 
     assert.equal(rangeWithin(para, 'Then rest.', [12, 16]), null, 'a sentence without it');
     assert.equal(rangeWithin(para, 'Go home.', null), null);
 });
+
+test('the headword of an expression is found where the text writes it, over the word, and only once', async () => {
+    const {headwordRanges, unitText} = await import('../src/lib/ai/selection.js');
+    const text = 'it feels shitty so Catch 22 ig';
+    const at = [...text].indexOf('2');
+    assert.deepEqual(headwordRanges(text, at, '22', 'Catch-22'), [[19, 27]]);
+    assert.equal(unitText(text, [[19, 27]]), 'Catch 22');
+    assert.equal(unitText('She turned the light off.', [[4, 10], [21, 24]]), 'turned … off');
+    assert.equal(headwordRanges('rock and roll music', 5, 'and', "rock 'n' roll"), null, 'other letters are no match');
+    assert.equal(headwordRanges('the catch was 22 metres', 14, '22', 'Catch-22'), null, 'words between are no joiners');
+    assert.equal(headwordRanges('Catch 22 ig', 6, '22', '22'), null, 'not longer than the word');
+    assert.equal(headwordRanges('Catch 22x', 6, '22x', 'Catch-22'), null, 'the word must be inside it');
+    assert.deepEqual(headwordRanges('Catch 22 then Catch 22', 6, '22', 'Catch-22'), [[0, 8]], 'only the place over the word counts');
+});

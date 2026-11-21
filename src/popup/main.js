@@ -11,7 +11,7 @@ import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, markSentence, parseCard, parseCardProgress, promptText, sameWord, splitContextTranslation, validDisplayHeadword, validDisplaySurface} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup, savedDisplayHeadword, savedDisplaySurface} from '../lib/cards.js';
-import {clozeRange, locateSelection, selectedSpan} from '../lib/ai/selection.js';
+import {clozeRange, headwordRanges, locateSelection, selectedSpan, unitText} from '../lib/ai/selection.js';
 import {invoke} from '@tauri-apps/api/core';
 import {audioFile, audioQuery, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile, wordAudio} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
@@ -108,7 +108,12 @@ function markRanges(text, ranges) {
  * null to mark the word itself. The card's `selection` is only what the AI proposed; these ranges,
  * kept as `lookup.contextMarks`, are what was found, and only they place anything. */
 function selectionRanges(p, card) {
-    return card?.selection ? locateSelection(p.context || p.sentence || '', p.context ? p.contextAt : null, p.word, card.selection) : null;
+    const text = p.context || p.sentence || '';
+    const at = p.context ? p.contextAt : null;
+    const found = card?.selection ? locateSelection(text, at, p.word, card.selection) : null;
+    // A unit the AI named without a usable "selection" ("Catch-22" for the "22" of "Catch 22"):
+    // its headword, where the text writes it over the word.
+    return found || (card?.headword ? headwordRanges(text, at, p.word, card.headword) : null);
 }
 
 /** The paragraph around the word, the word marked where the OCR found it (else at its first match),
@@ -316,12 +321,15 @@ function cardExtrasHtml(card, components) {
 
 function renderCard(body, card, pending = false) {
     const p = state.payload;
-    // The title is the word as the OCR read it (with its stress marked when the card gave a valid
-    // display form of it), not a dictionary form; the headword, as a learner's dictionary shows it,
-    // goes below it when it differs. Lookups, audio and Anki's {expression} never use these.
-    const headword = validDisplaySurface(card, p.word, settings.ocrLanguage) || p.word || card.headword;
+    // The title is what the text says: the whole unit as written when the card describes one
+    // (a phrasal verb, idiom, expression: "Catch 22", "turned … off"), else the word as the OCR
+    // read it (with its stress marked when the card gave a valid display form of it). The headword,
+    // the lemma as a learner's dictionary shows it, goes below it when it differs. Lookups, audio
+    // and Anki's {expression} never use the title.
+    const unit = pending ? '' : unitText(p.context || p.sentence || '', state.contextMarks);
+    const headword = unit || validDisplaySurface(card, p.word, settings.ocrLanguage) || p.word || card.headword;
     const lemma = validDisplayHeadword(card, settings.ocrLanguage) || card.headword;
-    const lemmaLine = lemma && !sameWord(lemma, p.word, settings.ocrLanguage) ? `<div class="muted saved-form">Forma de dicionário: <bdi>${escapeHtml(lemma)}</bdi></div>` : '';
+    const lemmaLine = lemma && !sameWord(lemma, headword, settings.ocrLanguage) ? `<div class="muted saved-form">Forma de dicionário: <bdi>${escapeHtml(lemma)}</bdi></div>` : '';
     const chips = [];
     if (card.ocrFix) { chips.push(ocrFixHtml(card.ocrFix)); }
     if (card.cefr && /^[ABC][12]$/.test(card.cefr)) { chips.push(`<span class="cefr ${card.cefr.toLowerCase()}">${card.cefr}</span>`); }
@@ -1216,11 +1224,14 @@ function savedCardHtml(c, current) {
         current ? '<span class="chip">esta consulta</span>' : '',
     ].join('');
     const text = c.context && c.context.includes(c.sentence || '') ? c.context : c.sentence;
+    // As the pop-up's card: the unit as written when the card described one, else the word.
+    const unit = c.context && validMarks(c.contextMarks, c.context) ? unitText(c.context, c.contextMarks) : '';
+    const title = unit || savedDisplaySurface(c) || c.word || c.dictionaryForm;
     const glossaries = (c.glossaries || []).filter((g) => g?.html).map((g) => `
         <details class="saved-gloss"><summary>${escapeHtml(g.name || 'Dicionário')}</summary><div class="gloss">${cleanGlossaryHtml(g.html)}</div></details>`).join('');
     return `
-        <div class="saved-head" dir="${headDir(c.word || c.dictionaryForm)}"><span class="word" dir="auto">${escapeHtml(savedDisplaySurface(c) || c.word || c.dictionaryForm)}</span>${chips}</div>
-        ${c.dictionaryForm && c.word && !sameWord(c.dictionaryForm, c.word, c.language) ? `<div class="muted saved-form">Forma de dicionário: <bdi>${escapeHtml(savedHeadword(c))}</bdi></div>` : ''}
+        <div class="saved-head" dir="${headDir(c.word || c.dictionaryForm)}"><span class="word" dir="auto">${escapeHtml(title)}</span>${chips}</div>
+        ${c.dictionaryForm && title && !sameWord(c.dictionaryForm, title, c.language) ? `<div class="muted saved-form">Forma de dicionário: <bdi>${escapeHtml(savedHeadword(c))}</bdi></div>` : ''}
         ${c.translation ? `<div class="tr">${escapeHtml(c.translation)}</div>` : ''}
         ${c.definition ? `<p class="def">${escapeHtml(c.definition)}</p>` : ''}
         ${cardExtrasHtml(c, true)}

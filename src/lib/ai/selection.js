@@ -262,3 +262,61 @@ export function rangeWithin(outer, inner, range) {
 export function selectedSpan(text, ranges) {
     return ranges?.length === 1 ? [...text].slice(ranges[0][0], ranges[0][1]).join('') : '';
 }
+
+/**
+ * The unit as it is written in the text, from its ranges: its pieces with " … " where other words
+ * come between them ("Catch 22", "turned … off"); '' when there are no ranges. The card's title
+ * shows it, so a phrasal verb, idiom or other expression is named whole, as the text has it, and
+ * "Forma de dicionário" gives its lemma (2026-11-21, at the user's request).
+ * @param {string} text
+ * @param {[number, number][]|null|undefined} ranges from locateSelection or headwordRanges
+ */
+export function unitText(text, ranges) {
+    if (!text || !Array.isArray(ranges) || !ranges.length) { return ''; }
+    const chars = [...text];
+    return ranges.map(([s, e]) => chars.slice(s, e).join('')).join(' … ');
+}
+
+/** Characters that may join the pieces of a written expression and its dictionary form: spaces,
+ * hyphens and apostrophes ("Catch 22" / "Catch-22", "rock 'n' roll"). */
+const JOINER = /^[\s\-‐‑–'’]*$/u;
+
+/**
+ * Where the card's headword is written in the text around the word, when the AI named a longer unit
+ * but gave no usable "selection" ("Catch-22" for the "22" of "Catch 22 ig"): the letters and digits
+ * of the headword, in order and case ignored, with only spaces, hyphens or apostrophes between
+ * them in the text, over the word on screen and longer than it, not cutting a word of a spaced
+ * script. One range, or null (also when it could be placed in more than one way).
+ * @param {string} text
+ * @param {number|null|undefined} at
+ * @param {string} word
+ * @param {string} headword
+ * @returns {[number, number][]|null}
+ */
+export function headwordRanges(text, at, word, headword) {
+    if (!text || !word || !headword) { return null; }
+    const chars = [...text];
+    const anchor = anchorOf(chars, at, word);
+    if (!anchor) { return null; }
+    const target = [...headword].filter((c) => WORD_CHAR.test(c)).map(lower);
+    const own = [...word].filter((c) => WORD_CHAR.test(c));
+    if (target.length <= own.length || target.length > MAX_PART) { return null; }
+    // The text's letters and digits, with where each one is.
+    const at_ = [];
+    for (let i = 0; i < chars.length; i++) { if (WORD_CHAR.test(chars[i])) { at_.push(i); } }
+    const found = [];
+    for (let k = 0; k + target.length <= at_.length && found.length < 2; k++) {
+        let ok = true;
+        for (let t = 0; t < target.length && ok; t++) {
+            const i = at_[k + t];
+            if (lower(chars[i]) !== target[t]) { ok = false; break; }
+            if (t > 0) { ok = JOINER.test(chars.slice(at_[k + t - 1] + 1, i).join('')) && i - at_[k + t - 1] <= 4; }
+        }
+        if (!ok) { continue; }
+        const start = at_[k];
+        const end = at_[k + target.length - 1] + 1;
+        if (start > anchor[0] || end < anchor[1] || cutsWord(chars, start, end, [-1, -1])) { continue; }
+        found.push([start, end]);
+    }
+    return found.length === 1 ? [found[0]] : null;
+}

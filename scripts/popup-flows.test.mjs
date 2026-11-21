@@ -208,7 +208,7 @@ test('the card marks each piece of the longer unit it describes, safely, and the
     const body = new Element();
     await view.popup.runCard(body);
     assert.equal(calls, 1, 'one request');
-    assert(body.innerHTML.includes('<span class="word" dir="auto">turned</span>'), 'the title is the word the OCR read');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">turned … off</span>'), 'the title is the whole unit as the text writes it');
     assert(body.innerHTML.includes('Forma de dicionário: <bdi>turn off</bdi>'), 'the unit\'s headword under it, matching the definition');
     assert(body.innerHTML.includes('She <mark>turned</mark> the light <mark>off</mark>.'), 'both pieces are marked');
     assert.deepEqual(view.lookup.payload.word, 'turned', 'the word as read is kept');
@@ -223,6 +223,15 @@ test('the card marks each piece of the longer unit it describes, safely, and the
     const missing = new Element();
     await view.popup.runCard(missing);
     assert(missing.innerHTML.includes('the <mark>Socrates</mark> Awards.'), 'a unit not in the text leaves the word marked');
+    assert(missing.innerHTML.includes('<span class="word" dir="auto">Socrates</span>'), 'and the word stays the title');
+    // The AI named the expression but gave no selection: its headword is found where the text writes it.
+    answer = '{"headword":"Catch-22","definition":"a dilemma with no way out"}';
+    view.lookup.payload = lookupOf('it feels shitty so Catch 22 ig', '22');
+    const catch22 = new Element();
+    await view.popup.runCard(catch22);
+    assert(catch22.innerHTML.includes('<span class="word" dir="auto">Catch 22</span>'), 'the expression is the title: ' + catch22.innerHTML);
+    assert(catch22.innerHTML.includes('Forma de dicionário: <bdi>Catch-22</bdi>'), 'its lemma below it');
+    assert(catch22.innerHTML.includes('so <mark>Catch 22</mark> ig'), 'and the expression is marked');
 });
 
 test('turning the word translation off drops it from the prompt and from the card', async () => {
