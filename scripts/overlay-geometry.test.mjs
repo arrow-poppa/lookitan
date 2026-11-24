@@ -67,6 +67,17 @@ test('the controller moves between words from the one looked up, and Confirm loo
     assert(view.root.children[0].classList.contains('seen'));
 });
 
+test('Confirm with nothing outlined outlines the first word first, so it never looks up by surprise', async () => {
+    const view = await fixture();
+    const words = [0, 1].map((i) => ({text: `w${i}`, x: 10 + i * 60, y: 20, w: 50, h: 18}));
+    view.emit({id: 1, words, viewportWidth: 1920, viewportHeight: 1080});
+    view.gamepad({action: 'confirm'});
+    assert(view.root.children[0].classList.contains('gp'), 'the first word is outlined');
+    assert(!view.requests.some((r) => r.command === 'overlay_pick'), 'nothing is looked up yet');
+    view.gamepad({action: 'confirm'});
+    assert.equal(view.requests.at(-1).command, 'overlay_pick');
+});
+
 test('the pieces of a word broken across columns are selected, seen and hovered together, each in its own box', async () => {
     const view = await fixture();
     // 進 at the foot of the right column, めて at the head of the left one, 表記 below めて.

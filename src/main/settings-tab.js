@@ -288,7 +288,7 @@ function linuxMouseRows(s) {
 
 // Controller buttons by their Xbox names, as gamepad.rs reads them.
 const GAMEPAD_ACTIONS = [
-    ['confirm', 'Confirmar', 'Clica no botão marcado no pop-up, ou consulta a palavra marcada na tela.'],
+    ['confirm', 'Confirmar', 'Clica no botão marcado no pop-up, abre a imagem marcada (nela, o botão de marcar para o Anki), ou consulta a palavra marcada na tela.'],
     ['close', 'Fechar', 'Fecha o pop-up e deixa as palavras na tela; de novo, fecha a consulta.'],
     ['save', 'Salvar palavra', 'Salva no próprio Lookitan (Palavras).'],
     ['anki', 'Enviar ao Anki', 'O botão do Anki no pop-up.'],
@@ -409,7 +409,9 @@ function gamepadSection() {
     const legend = ['Selecionar: direcional ou analógico esquerdo', 'Rolar: analógico direito',
         ...GAMEPAD_ACTIONS.filter(([key]) => g[key].length).map(([key, label]) => `${label}: ${gamepadLabel(g[key])}`)].join(' · ');
     const body = [cardRow({icon: 'gamepad', title: 'Navegação pelo gamepad',
-        desc: `${legend}. Com o pop-up aberto, anda pelos botões dele; fechado, pelas palavras na tela. Desligue se o seu controle já move o cursor do mouse (Steam Input).`,
+        desc: g.navigation
+            ? `${legend}. Com o pop-up aberto, anda pelos botões dele e os botões agem só nele (a combinação de consulta não lê a tela de novo) até ele ser fechado; fechado, pelas palavras na tela. Desligue se o seu controle já move o cursor do mouse (Steam Input).`
+            : 'Desligada: os botões do controle não andam nem agem no Lookitan; só a combinação de consulta funciona. Ligue para andar pelo pop-up e confirmar com o controle.',
         control: toggle(g.navigation, (v) => { g.navigation = v; save(); rerender(); })})];
     if (g.navigation) {
         for (const [key, label, desc] of GAMEPAD_ACTIONS) {

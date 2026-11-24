@@ -619,7 +619,7 @@ let galleryCount = 0;
  */
 function stripHtml(gallery, extraClass = '') {
     return `<div class="img-strip${extraClass}" role="list" data-gallery="${gallery.key}">${gallery.items.map((item, i) => `
-        <div class="img-tile${gallery.selected.has(i) ? ' sel' : ''}" role="listitem" data-i="${i}">
+        <div class="img-tile${gallery.selected.has(i) ? ' sel' : ''}" role="listitem" tabindex="0" data-i="${i}" aria-label="Abrir imagem: ${escapeHtml(item.title || gallery.query)}">
             <img src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || gallery.query)}" draggable="false" referrerpolicy="no-referrer">
             ${checkButton(gallery.selected.has(i))}
         </div>`).join('')}</div>`;
@@ -655,6 +655,13 @@ function bindStrip(body, gallery, lookup, onEmpty) {
                 return;
             }
             openViewer(lookup, gallery, i);
+        });
+        // The controller marks the tile itself (gamepadControls), and Enter or Space opens it as a click.
+        tile.addEventListener('keydown', (ev) => {
+            // The check mark inside is a button of its own: Space or Enter on it must not also open.
+            if (ev.target !== tile || (ev.key !== 'Enter' && ev.key !== ' ')) { return; }
+            ev.preventDefault?.();
+            tile.click();
         });
     }
 }
@@ -782,6 +789,7 @@ function drawViewer(from = '') {
     box.querySelector('.img-nav.next')?.addEventListener('click', (ev) => { ev.stopPropagation(); stepViewer(1); });
     box.querySelector('.img-close')?.addEventListener('click', (ev) => { ev.stopPropagation(); closeViewer(); });
     box.querySelector('.img-page')?.addEventListener('click', (ev) => { ev.stopPropagation(); void api.openExternal(item.page); });
+    gamepadRefresh();
 }
 
 const ZOOM_STEP = 1.25;
@@ -1194,6 +1202,7 @@ ${savedCardHtml(c, c.id === lookup.savedId)}
             }, () => {});
         }
     });
+    gamepadRefresh();
 }
 
 /** Whether a saved card's marks fit its context (cards are edited in the Palavras tab). */
@@ -1432,6 +1441,7 @@ async function render(payload) {
     stopAudio();
     $('sections').replaceChildren();
     $('sections').scrollTop = 0;
+    gamepadReset();
     $('query').value = payload.word || '';
     $('notice').hidden = !payload.notice;
     $('notice').textContent = payload.notice || '';
@@ -1493,6 +1503,7 @@ async function render(payload) {
     if (normalizeAudioOptions(settings.audio).autoPlay && payload.word) {
         void playWord(state);
     }
+    gamepadRefresh();
 }
 
 async function lookup(text, fragment = '') {
@@ -1585,6 +1596,7 @@ void listen('popup-blank', (event) => {
     closeSavedCards();
     closeAudioMenu();
     stopAudio();
+    gamepadReset();
     if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
     const card = $('card');
     card.classList.remove('tip-open', 'tip-close');
@@ -1598,46 +1610,125 @@ void listen('popup-blank', (event) => {
 void listen('popup-open', (event) => {
     // A new lookup during the close animation keeps the popup open.
     if (closeTimer !== null) { clearTimeout(closeTimer); closeTimer = null; }
-    gamepadMark(null);
+    gamepadReset();
     animateOpen(event.payload);
 });
 
 // ------------------------------------------------------------------ controller (gamepad.rs)
 
-// The control the controller is on, outlined like Lookupper's gamepad focus.
+// The control the controller is on, outlined like Lookupper's gamepad focus. The pop-up redraws
+// its sections and opens views over them; the outline is dropped on every redraw and on every new
+// layer (an enlarged picture or the saved cards), and the next press starts on a control that is
+// really on screen. Before 2026-11-24 a redraw left it on a removed button, so Confirm clicked
+// nothing (the user's "não é possível confirmar a seleção").
 let gamepadFocus = null;
+/** "card" (the pop-up's own controls), "pictures" or "saved": where the controller is now. */
+let gamepadLayer = null;
+/** The control a view was opened from, to go back to when it closes. */
+let gamepadReturn = null;
+
+function gamepadLayerNow() {
+    return viewer ? 'pictures' : savedView ? 'saved' : 'card';
+}
+
+/** The layer's visible controls, in DOM order: buttons and the pictures themselves. */
+function gamepadControls() {
+    const layer = viewer?.box || savedView?.box || $('card');
+    const selector = 'button, a[href], summary, select, input, .img-tile, [tabindex]:not([tabindex="-1"])';
+    return [...layer.querySelectorAll(selector)].filter((el) => !el.disabled && el.getClientRects().length > 0
+        && getComputedStyle(el).visibility !== 'hidden');
+}
+
+/** Where the controller starts on a layer: the picture's Anki mark, the saved cards' close, or the pop-up's first control. */
+function gamepadStart(layer, controls) {
+    const preferred = layer === 'pictures' ? viewer?.box.querySelector('.img-pick') || viewer?.box.querySelector('.img-close')
+        : layer === 'saved' ? savedView?.box.querySelector('.saved-close') : controls[0];
+    return preferred && controls.includes(preferred) ? preferred : controls[0];
+}
 
 function gamepadMark(el) {
     gamepadFocus?.classList.remove('gp-focus');
-    gamepadFocus = el;
-    if (el) {
-        el.classList.add('gp-focus');
-        el.scrollIntoView?.({block: 'nearest', inline: 'nearest'});
-    }
+    gamepadFocus = el || null;
+    if (!gamepadFocus) { return; }
+    gamepadFocus.classList.add('gp-focus');
+    gamepadFocus.scrollIntoView?.({block: 'nearest', inline: 'nearest'});
 }
 
-/** The pop-up's visible controls, the enlarged picture or the saved cards' first when open. */
-function gamepadControls() {
-    const layer = document.querySelector('.img-viewer:not([hidden]), .saved-view:not([hidden])') || $('card');
-    const selector = 'button, a[href], summary, select, input, [tabindex]:not([tabindex="-1"])';
-    return [...layer.querySelectorAll(selector)].filter((el) => !el.disabled && el.getClientRects().length > 0
-        && getComputedStyle(el).visibility !== 'hidden');
+/** Starts the controller over: a new lookup, a redrawn pop-up, or a view closed by the mouse. */
+function gamepadReset() {
+    gamepadMark(null);
+    gamepadLayer = null;
+    gamepadReturn = null;
+}
+
+/** Puts the outline on the view just opened (the saved list draws after this). */
+function gamepadRestart() {
+    gamepadLayer = gamepadLayerNow();
+    gamepadMark(null);
+    const controls = gamepadControls();
+    if (controls.length) { gamepadMark(gamepadStart(gamepadLayer, controls)); }
+}
+
+/** After a redraw: the outline moves to the layer's start when its control is gone. */
+function gamepadRefresh() {
+    if (gamepadLayer !== gamepadLayerNow()) { return; }
+    const controls = gamepadControls();
+    if (gamepadFocus && controls.includes(gamepadFocus)) { return; }
+    gamepadMark(controls.length ? gamepadStart(gamepadLayer, controls) : null);
+}
+
+/** The controls of the layer that is up; a control that vanished from a redraw is let go. */
+function gamepadEnsure() {
+    const layer = gamepadLayerNow();
+    const controls = gamepadControls();
+    if (layer !== gamepadLayer) {
+        gamepadLayer = layer;
+        gamepadMark(null);
+    }
+    if (gamepadFocus && !controls.includes(gamepadFocus)) { gamepadMark(null); }
+    return controls;
+}
+
+/** Back to the control a view was opened from, when it is still on screen. */
+function gamepadBack() {
+    const back = gamepadReturn?.isConnected ? gamepadReturn : null;
+    gamepadReset();
+    gamepadLayer = gamepadLayerNow();
+    if (back) { gamepadMark(back); return; }
+    const controls = gamepadControls();
+    if (controls.length) { gamepadMark(gamepadStart(gamepadLayer, controls)); }
 }
 
 void listen('gamepad', ({payload}) => {
     const p = payload || {};
     if (p.action === 'move') {
-        const controls = gamepadControls();
+        const controls = gamepadEnsure();
         if (controls.length === 0) { return; }
-        if (!gamepadFocus || !controls.includes(gamepadFocus)) { gamepadMark(controls[0]); return; }
+        if (!gamepadFocus) { gamepadMark(gamepadStart(gamepadLayer, controls)); return; }
         const r = gamepadFocus.getBoundingClientRect();
         const rects = controls.map((el) => { const b = el.getBoundingClientRect(); return {x: b.left, y: b.top, w: b.width, h: b.height}; });
         const next = nearest({x: r.left + r.width / 2, y: r.top + r.height / 2}, rects, p.dir);
         if (next >= 0) { gamepadMark(controls[next]); }
     } else if (p.action === 'confirm') {
-        gamepadFocus?.click();
+        const controls = gamepadEnsure();
+        if (controls.length === 0) { return; }
+        if (!gamepadFocus) { gamepadMark(gamepadStart(gamepadLayer, controls)); return; }
+        const before = gamepadLayerNow();
+        const from = gamepadFocus;
+        from.click();
+        if (gamepadLayerNow() !== before) {
+            // A view opened (the enlarged picture, the saved cards): its own controls from now on.
+            gamepadReturn = from;
+            gamepadRestart();
+        } else {
+            gamepadRefresh();
+        }
     } else if (p.action === 'close') {
-        if (!closeViewer() && !closeSavedCards()) { closePopup(true); }
+        if (closeViewer() || closeSavedCards()) {
+            gamepadBack();
+        } else {
+            closePopup(true);
+        }
     } else if (p.action === 'save') {
         $('btn-save').click();
     } else if (p.action === 'anki') {
@@ -1658,7 +1749,9 @@ void listen('gamepad', ({payload}) => {
     } else if (p.action === 'pronounce') {
         document.querySelector('#sections .speak')?.click();
     } else if (p.action === 'scroll') {
-        $('sections').scrollBy({top: Number(p.dy) || 0});
+        // The list that is up: the saved cards' own, else the pop-up's sections.
+        const target = viewer ? null : savedView?.box.querySelector('.saved-list') || $('sections');
+        target?.scrollBy({top: Number(p.dy) || 0});
     }
 });
 
@@ -1726,6 +1819,7 @@ void listen('popup-hidden', () => {
     closeSavedCards();
     closeAudioMenu();
     stopAudio();
+    gamepadReset();
     if (ai && Object.keys(KIND_DICTIONARY).some(cancels)) { responses.cancelPendingExcept(keepRunning(new Set())); }
 });
 void listen('settings-changed', async () => {

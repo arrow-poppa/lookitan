@@ -259,21 +259,32 @@ document.addEventListener('keydown', (ev) => {
 });
 
 // The controller (gamepad.rs) with the pop-up closed: the D-pad moves between the words, starting
-// from the word looked up, and Confirm looks the outlined word up.
+// from the word looked up, and Confirm looks the outlined word up. With nothing outlined (no
+// D-pad yet), Confirm outlines the word looked up, as in the pop-up, so the first press never
+// looks a word up by surprise.
 void listen('gamepad', ({payload}) => {
     const words = current?.words || [];
     if (words.length === 0) { return; }
     const centre = (r) => ({x: r.x + r.w / 2, y: r.y + r.h / 2});
+    const fromLookedUp = () => {
+        const from = selected ? words.findIndex((w) => containsCenter(w, selected)) : -1;
+        return from >= 0 ? from : 0;
+    };
     if (payload?.action === 'move') {
         if (gamepadWord === null || !words[gamepadWord]) {
             const from = selected ? words.findIndex((w) => containsCenter(w, selected)) : -1;
-            gamepadWord = from >= 0 ? from : 0;
-            if (from < 0) { render(); return; }
+            if (from < 0) { gamepadWord = 0; render(); return; }
+            gamepadWord = from;
         }
         const next = nearest(centre(words[gamepadWord]), words, payload.dir);
         if (next >= 0) { gamepadWord = next; }
         render();
-    } else if (payload?.action === 'confirm' && gamepadWord !== null && words[gamepadWord]) {
+    } else if (payload?.action === 'confirm') {
+        if (gamepadWord === null || !words[gamepadWord]) {
+            gamepadWord = fromLookedUp();
+            render();
+            return;
+        }
         const w = words[gamepadWord];
         const el = root.children[gamepadWord];
         const c = centre(w);

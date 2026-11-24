@@ -7,6 +7,10 @@
 //! on Linux, by the standard codes when gilrs has no mapping for the pad. Unlike Lookupper, each
 //! action takes any button or combination, and two more act: Explicar and sending to Anki.
 //!
+//! While the pop-up is up with navigation on, its buttons are the pop-up's alone: the look-up
+//! combination does not start a new scan, even when it shares a button with an action, until the
+//! pop-up is closed (the user's "foco exclusivo no pop-up", 2026-11-24).
+//!
 //! `Machine` turns the buttons held at each tick into `Signal`s and knows nothing of gilrs, so it
 //! is tested without a controller.
 
@@ -95,7 +99,10 @@ impl Machine {
     }
 
     /// `navigate` is false when nothing is on screen to navigate, so buttons pass through.
-    pub fn step(&mut self, input: &Input, config: &GamepadSettings, navigate: bool, now: Instant) -> Vec<Signal> {
+    /// `popup` is true while the pop-up is up; with navigation on it owns every button until it
+    /// closes, so the look-up combination does not start a new scan (it may share a button with
+    /// Confirm, which then has to act on the pop-up, as the user asked).
+    pub fn step(&mut self, input: &Input, config: &GamepadSettings, navigate: bool, popup: bool, now: Instant) -> Vec<Signal> {
         let mut out = Vec::new();
         let pressed = &input.buttons;
         if let Some((seen, started)) = &mut self.capture {
@@ -121,7 +128,10 @@ impl Machine {
 
         let combo = names(&config.hotkey);
         let holds_combo = !combo.is_empty() && combo.iter().all(|b| pressed.contains(*b));
-        if holds_combo && !self.hotkey_held {
+        // The pop-up keeps the buttons to itself while navigation is on: a combination that is
+        // also an action confirms, closes or saves instead of scanning the screen again.
+        let exclusive = popup && config.navigation;
+        if holds_combo && !self.hotkey_held && !exclusive {
             out.push(Signal::Hotkey);
             self.wait_release = true;
             // An action waiting for its buttons' release was the start of this combination.
@@ -139,7 +149,8 @@ impl Machine {
             let actions = bindings(config);
             let holds = |set: &BTreeSet<&'static str>, combo: &[&'static str]| !combo.is_empty() && combo.iter().all(|b| set.contains(*b));
             // A shorter binding inside a longer one (the look-up combination counts) waits for release.
-            let longer: Vec<Vec<&'static str>> = actions.iter().map(|(c, _)| c.clone()).chain(std::iter::once(names(&config.hotkey))).collect();
+            let look_up = if exclusive { Vec::new() } else { names(&config.hotkey) };
+            let longer: Vec<Vec<&'static str>> = actions.iter().map(|(c, _)| c.clone()).chain(std::iter::once(look_up)).collect();
             let inside = |combo: &[&'static str]| longer.iter().any(|l| l.len() > combo.len() && combo.iter().all(|b| l.contains(b)));
             if let Some((action, combo, spoiled)) = &mut self.pending {
                 if pressed.iter().any(|b| !combo.contains(b)) { *spoiled = true; }
@@ -241,8 +252,9 @@ pub fn connected() -> Option<String> {
 }
 
 /// Reads the controllers on a thread of its own. `navigate()` says whether a pop-up or an overlay
-/// is on screen; `signal` receives what the buttons mean.
-pub fn start(navigate: impl Fn() -> bool + Send + 'static, signal: impl Fn(Signal) + Send + 'static) {
+/// is on screen, `popup()` whether what is up is the pop-up; `signal` receives what the buttons
+/// mean.
+pub fn start(navigate: impl Fn() -> bool + Send + 'static, popup: impl Fn() -> bool + Send + 'static, signal: impl Fn(Signal) + Send + 'static) {
     #[cfg(windows)]
     std::thread::spawn(playstation::run);
     std::thread::spawn(move || {
@@ -281,7 +293,7 @@ pub fn start(navigate: impl Fn() -> bool + Send + 'static, signal: impl Fn(Signa
             }
             let busy = !input.buttons.is_empty() || input.left.0.abs().max(input.left.1.abs()) >= STICK_PRESS || input.right_y.abs() > SCROLL_DEAD;
             let navigate = config.navigation && busy && navigate();
-            for s in machine.step(&input, &config, navigate, Instant::now()) {
+            for s in machine.step(&input, &config, navigate, popup(), Instant::now()) {
                 signal(s);
             }
         }
@@ -416,14 +428,14 @@ mod tests {
         let c = config(&["LB", "A"]);
         let mut m = Machine::new();
         let t = Instant::now();
-        assert!(m.step(&input(&["LB"]), &c, true, t).is_empty());
-        assert_eq!(m.step(&input(&["LB", "A"]), &c, true, t), vec![Signal::Hotkey]);
-        assert!(m.step(&input(&["LB", "A"]), &c, true, t).is_empty(), "held, it does not repeat");
-        assert!(m.step(&input(&["A"]), &c, true, t).is_empty(), "A does not confirm while the combination is let go");
-        assert!(m.step(&input(&[]), &c, true, t).is_empty());
+        assert!(m.step(&input(&["LB"]), &c, true, false, t).is_empty());
+        assert_eq!(m.step(&input(&["LB", "A"]), &c, true, false, t), vec![Signal::Hotkey]);
+        assert!(m.step(&input(&["LB", "A"]), &c, true, false, t).is_empty(), "held, it does not repeat");
+        assert!(m.step(&input(&["A"]), &c, true, false, t).is_empty(), "A does not confirm while the combination is let go");
+        assert!(m.step(&input(&[]), &c, true, false, t).is_empty());
         // A is also in LB + A, so Confirm waits for A to be let go alone.
-        assert!(m.step(&input(&["A"]), &c, true, t).is_empty());
-        assert_eq!(m.step(&input(&[]), &c, true, t), vec![Signal::Act(Action::Confirm)]);
+        assert!(m.step(&input(&["A"]), &c, true, false, t).is_empty());
+        assert_eq!(m.step(&input(&[]), &c, true, false, t), vec![Signal::Act(Action::Confirm)]);
     }
 
     #[test]
@@ -432,14 +444,14 @@ mod tests {
         c.save = vec!["LT".into()];
         let mut m = Machine::new();
         let t = Instant::now();
-        assert!(m.step(&input(&["B"]), &c, false, t).is_empty(), "nothing on screen");
-        m.step(&input(&[]), &c, true, t);
-        assert_eq!(m.step(&input(&["B"]), &c, true, t), vec![Signal::Act(Action::Close)]);
-        m.step(&input(&[]), &c, true, t);
-        assert_eq!(m.step(&input(&["LT"]), &c, true, t), vec![Signal::Act(Action::Save)]);
-        assert!(m.step(&input(&["X"]), &c, true, t).is_empty(), "X saves no more");
+        assert!(m.step(&input(&["B"]), &c, false, false, t).is_empty(), "nothing on screen");
+        m.step(&input(&[]), &c, true, false, t);
+        assert_eq!(m.step(&input(&["B"]), &c, true, false, t), vec![Signal::Act(Action::Close)]);
+        m.step(&input(&[]), &c, true, false, t);
+        assert_eq!(m.step(&input(&["LT"]), &c, true, false, t), vec![Signal::Act(Action::Save)]);
+        assert!(m.step(&input(&["X"]), &c, true, false, t).is_empty(), "X saves no more");
         c.navigation = false;
-        assert!(m.step(&input(&["Y"]), &c, true, t).is_empty(), "navigation turned off");
+        assert!(m.step(&input(&["Y"]), &c, true, false, t).is_empty(), "navigation turned off");
     }
 
     fn combo(buttons: &[&str]) -> Vec<String> {
@@ -453,16 +465,16 @@ mod tests {
         c.anki = combo(&["LB"]);
         let mut m = Machine::new();
         let t = Instant::now();
-        assert!(m.step(&input(&["LB"]), &c, true, t).is_empty(), "LB alone waits: it starts LB + A");
-        assert_eq!(m.step(&input(&["LB", "A"]), &c, true, t), vec![Signal::Act(Action::Save)], "the longer binding wins over A alone");
-        assert!(m.step(&input(&["LB"]), &c, true, t).is_empty());
-        assert!(m.step(&input(&[]), &c, true, t).is_empty(), "LB was used in a combination");
-        m.step(&input(&["LB"]), &c, true, t);
-        assert_eq!(m.step(&input(&[]), &c, true, t), vec![Signal::Act(Action::Anki)], "LB pressed and let go alone");
-        assert_eq!(m.step(&input(&["RB"]), &c, true, t), vec![Signal::Act(Action::Explain)]);
+        assert!(m.step(&input(&["LB"]), &c, true, false, t).is_empty(), "LB alone waits: it starts LB + A");
+        assert_eq!(m.step(&input(&["LB", "A"]), &c, true, false, t), vec![Signal::Act(Action::Save)], "the longer binding wins over A alone");
+        assert!(m.step(&input(&["LB"]), &c, true, false, t).is_empty());
+        assert!(m.step(&input(&[]), &c, true, false, t).is_empty(), "LB was used in a combination");
+        m.step(&input(&["LB"]), &c, true, false, t);
+        assert_eq!(m.step(&input(&[]), &c, true, false, t), vec![Signal::Act(Action::Anki)], "LB pressed and let go alone");
+        assert_eq!(m.step(&input(&["RB"]), &c, true, false, t), vec![Signal::Act(Action::Explain)]);
         c.meme = combo(&["View"]);
-        m.step(&input(&[]), &c, true, t);
-        assert_eq!(m.step(&input(&["View"]), &c, true, t), vec![Signal::Act(Action::Meme)]);
+        m.step(&input(&[]), &c, true, false, t);
+        assert_eq!(m.step(&input(&["View"]), &c, true, false, t), vec![Signal::Act(Action::Meme)]);
     }
 
     #[test]
@@ -471,10 +483,10 @@ mod tests {
         c.anki = combo(&["LB"]);
         let mut m = Machine::new();
         let t = Instant::now();
-        assert!(m.step(&input(&["LB"]), &c, true, t).is_empty());
-        assert_eq!(m.step(&input(&["LB", "Y"]), &c, true, t), vec![Signal::Hotkey]);
-        m.step(&input(&[]), &c, true, t);
-        assert!(m.step(&input(&[]), &c, true, t).is_empty(), "no Anki after the look-up");
+        assert!(m.step(&input(&["LB"]), &c, true, false, t).is_empty());
+        assert_eq!(m.step(&input(&["LB", "Y"]), &c, true, false, t), vec![Signal::Hotkey]);
+        m.step(&input(&[]), &c, true, false, t);
+        assert!(m.step(&input(&[]), &c, true, false, t).is_empty(), "no Anki after the look-up");
     }
 
     #[test]
@@ -483,9 +495,9 @@ mod tests {
         c.pronounce = combo(&["LB", "Up"]);
         let mut m = Machine::new();
         let t = Instant::now();
-        m.step(&input(&["LB"]), &c, true, t);
-        assert_eq!(m.step(&input(&["LB", "Up"]), &c, true, t), vec![Signal::Act(Action::Pronounce)]);
-        assert_eq!(m.step(&input(&["Up"]), &c, true, t), vec![Signal::Move(Direction::Up)], "Up alone moves again");
+        m.step(&input(&["LB"]), &c, true, false, t);
+        assert_eq!(m.step(&input(&["LB", "Up"]), &c, true, false, t), vec![Signal::Act(Action::Pronounce)]);
+        assert_eq!(m.step(&input(&["Up"]), &c, true, false, t), vec![Signal::Move(Direction::Up)], "Up alone moves again");
     }
 
     #[test]
@@ -493,15 +505,15 @@ mod tests {
         let c = config(&[]);
         let mut m = Machine::new();
         let t = Instant::now();
-        assert_eq!(m.step(&input(&["Down"]), &c, true, t), vec![Signal::Move(Direction::Down)]);
-        assert!(m.step(&input(&["Down"]), &c, true, t + Duration::from_millis(300)).is_empty());
-        assert_eq!(m.step(&input(&["Down"]), &c, true, t + Duration::from_millis(410)), vec![Signal::Move(Direction::Down)]);
-        assert_eq!(m.step(&input(&["Down"]), &c, true, t + Duration::from_millis(540)), vec![Signal::Move(Direction::Down)]);
-        m.step(&input(&[]), &c, true, t + Duration::from_millis(600));
+        assert_eq!(m.step(&input(&["Down"]), &c, true, false, t), vec![Signal::Move(Direction::Down)]);
+        assert!(m.step(&input(&["Down"]), &c, true, false, t + Duration::from_millis(300)).is_empty());
+        assert_eq!(m.step(&input(&["Down"]), &c, true, false, t + Duration::from_millis(410)), vec![Signal::Move(Direction::Down)]);
+        assert_eq!(m.step(&input(&["Down"]), &c, true, false, t + Duration::from_millis(540)), vec![Signal::Move(Direction::Down)]);
+        m.step(&input(&[]), &c, true, false, t + Duration::from_millis(600));
         let stick = Input { left: (0.9, 0.2), ..Input::default() };
-        assert_eq!(m.step(&stick, &c, true, t + Duration::from_millis(620)), vec![Signal::Move(Direction::Right)]);
+        assert_eq!(m.step(&stick, &c, true, false, t + Duration::from_millis(620)), vec![Signal::Move(Direction::Right)]);
         let scroll = Input { right_y: -1.0, ..Input::default() };
-        assert_eq!(m.step(&scroll, &c, true, t + Duration::from_millis(700)), vec![Signal::Scroll(SCROLL_SPEED)]);
+        assert_eq!(m.step(&scroll, &c, true, false, t + Duration::from_millis(700)), vec![Signal::Scroll(SCROLL_SPEED)]);
     }
 
     #[cfg(target_os = "linux")]
@@ -533,11 +545,46 @@ mod tests {
         let mut m = Machine::new();
         let t = Instant::now();
         m.start_capture(t);
-        assert_eq!(m.step(&input(&["LT"]), &c, true, t), vec![Signal::Capture { buttons: vec!["LT".into()], done: false }]);
-        assert_eq!(m.step(&input(&["LT", "Y"]), &c, true, t), vec![Signal::Capture { buttons: vec!["LT".into(), "Y".into()], done: false }]);
-        assert!(m.step(&input(&["Y"]), &c, true, t).is_empty(), "the old combination does not fire during a capture");
-        assert_eq!(m.step(&input(&[]), &c, true, t), vec![Signal::Capture { buttons: vec!["LT".into(), "Y".into()], done: true }]);
+        assert_eq!(m.step(&input(&["LT"]), &c, true, false, t), vec![Signal::Capture { buttons: vec!["LT".into()], done: false }]);
+        assert_eq!(m.step(&input(&["LT", "Y"]), &c, true, false, t), vec![Signal::Capture { buttons: vec!["LT".into(), "Y".into()], done: false }]);
+        assert!(m.step(&input(&["Y"]), &c, true, false, t).is_empty(), "the old combination does not fire during a capture");
+        assert_eq!(m.step(&input(&[]), &c, true, false, t), vec![Signal::Capture { buttons: vec!["LT".into(), "Y".into()], done: true }]);
         m.start_capture(t);
-        assert_eq!(m.step(&input(&[]), &c, true, t + CAPTURE_TIMEOUT + TICK), vec![Signal::Capture { buttons: vec![], done: true }]);
+        assert_eq!(m.step(&input(&[]), &c, true, false, t + CAPTURE_TIMEOUT + TICK), vec![Signal::Capture { buttons: vec![], done: true }]);
+    }
+
+    #[test]
+    fn the_pop_up_keeps_a_shared_look_up_button_for_itself() {
+        // The user's report (2026-11-24): a look-up combination sharing A with Confirm scanned the
+        // screen again at every confirmation, so the pop-up never received the click.
+        let c = config(&["A"]);
+        let mut m = Machine::new();
+        let t = Instant::now();
+        assert_eq!(m.step(&input(&["A"]), &c, true, true, t), vec![Signal::Act(Action::Confirm)]);
+        m.step(&input(&[]), &c, true, true, t);
+        assert_eq!(m.step(&input(&["A"]), &c, true, true, t), vec![Signal::Act(Action::Confirm)], "still the pop-up's");
+        // Closed, the same button looks the word up again.
+        m.step(&input(&[]), &c, true, false, t);
+        assert_eq!(m.step(&input(&["A"]), &c, true, false, t), vec![Signal::Hotkey]);
+    }
+
+    #[test]
+    fn a_button_held_while_the_pop_up_closes_does_not_scan_until_pressed_again() {
+        let c = config(&["A"]);
+        let mut m = Machine::new();
+        let t = Instant::now();
+        assert_eq!(m.step(&input(&["A"]), &c, true, true, t), vec![Signal::Act(Action::Confirm)]);
+        assert!(m.step(&input(&["A"]), &c, true, false, t).is_empty(), "held from the pop-up: no scan");
+        assert!(m.step(&input(&[]), &c, true, false, t).is_empty());
+        assert_eq!(m.step(&input(&["A"]), &c, true, false, t), vec![Signal::Hotkey]);
+    }
+
+    #[test]
+    fn with_navigation_off_the_gamepad_keeps_looking_up_with_the_pop_up_open() {
+        let mut c = config(&["A"]);
+        c.navigation = false;
+        let mut m = Machine::new();
+        let t = Instant::now();
+        assert_eq!(m.step(&input(&["A"]), &c, false, true, t), vec![Signal::Hotkey], "actions are off; the combination scans as before");
     }
 }

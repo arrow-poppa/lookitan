@@ -2851,8 +2851,9 @@ pub fn run() {
             }
             apply_mouse_hotkey(&handle, &mouse);
             {
-                let (visible, signal) = (handle.clone(), handle.clone());
-                gamepad::start(move || gamepad_target(&visible).is_some(), move |s| on_gamepad(&signal, s));
+                let (visible, up, signal) = (handle.clone(), handle.clone(), handle.clone());
+                gamepad::start(move || gamepad_target(&visible).is_some(),
+                    move || gamepad_target(&up) == Some("popup"), move |s| on_gamepad(&signal, s));
             }
 
             #[cfg(target_os = "linux")]
