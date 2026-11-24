@@ -98,6 +98,11 @@ impl Machine {
         self.capture = None;
     }
 
+    /// Whether an action waits for its buttons to be let go (the release tick that must still step).
+    pub fn pending_action(&self) -> bool {
+        self.pending.is_some()
+    }
+
     /// `navigate` is false when nothing is on screen to navigate, so buttons pass through.
     /// `popup` is true while the pop-up is up; with navigation on it owns every button until it
     /// closes, so the look-up combination does not start a new scan (it may share a button with
@@ -251,6 +256,18 @@ pub fn connected() -> Option<String> {
     shared().lock().connected.clone()
 }
 
+/// Whether the pad is being used: a button held, the left stick pushed, or the right stick scrolling.
+fn busy(input: &Input) -> bool {
+    !input.buttons.is_empty() || input.left.0.abs().max(input.left.1.abs()) >= STICK_PRESS || input.right_y.abs() > SCROLL_DEAD
+}
+
+/// Whether this tick reaches `Machine::step`: a pad in use, or an action waiting for its buttons'
+/// release. That release tick holds no button, and the old `busy` gate skipped it, dropping the
+/// pending action instead of firing it (review, 2026-11-24).
+fn navigating(input: &Input, pending: bool) -> bool {
+    busy(input) || pending
+}
+
 /// Reads the controllers on a thread of its own. `navigate()` says whether a pop-up or an overlay
 /// is on screen, `popup()` whether what is up is the pop-up; `signal` receives what the buttons
 /// mean.
@@ -291,9 +308,9 @@ pub fn start(navigate: impl Fn() -> bool + Send + 'static, popup: impl Fn() -> b
             for extra in raw.values().chain(hid.as_ref().map(|(_, input)| input)) {
                 merge(&mut input, extra);
             }
-            // Actions run on every tick, release ticks included: a button let go leaves nothing
-            // "busy", and a pending action must fire then (the old gate cleared it instead).
-            let navigate = config.navigation && navigate();
+            // Idle ticks are skipped, but a release tick must still step: an action may wait for
+            // its buttons to be let go with nothing held (`pending_action`).
+            let navigate = config.navigation && navigating(&input, machine.pending_action()) && navigate();
             for s in machine.step(&input, &config, navigate, popup(), Instant::now()) {
                 signal(s);
             }
@@ -555,17 +572,22 @@ mod tests {
     }
 
     #[test]
-    fn a_pending_action_fires_on_the_release_tick_with_no_button_held() {
-        // The gamepad thread used to step with navigate = false whenever nothing was held, which
-        // cleared the action waiting for its buttons' release instead of firing it (review,
-        // 2026-11-24).
+    fn a_pending_action_keeps_a_release_tick_running() {
+        // The gamepad thread used to gate every tick on busy input, so the release tick of an
+        // action waiting inside a longer binding was skipped and the action dropped instead of
+        // firing (review, 2026-11-24). `navigating` is the gate `start` uses.
         let mut c = config(&[]);
         c.confirm = combo(&["A"]);
         c.save = combo(&["A", "X"]);
         let mut m = Machine::new();
         let t = Instant::now();
+        assert!(!navigating(&input(&[]), m.pending_action()), "an idle tick is skipped");
         assert!(m.step(&input(&["A"]), &c, true, false, t).is_empty(), "A starts Save's A + X and waits");
+        assert!(m.pending_action());
+        assert!(navigating(&input(&[]), m.pending_action()), "the release tick still runs");
         assert_eq!(m.step(&input(&[]), &c, true, false, t), vec![Signal::Act(Action::Confirm)], "released alone: Confirm");
+        assert!(!m.pending_action());
+        assert!(!navigating(&input(&[]), m.pending_action()), "idle again");
     }
 
     #[test]
