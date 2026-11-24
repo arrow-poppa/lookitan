@@ -32,6 +32,11 @@ const ENTRY_BYTES: usize = 24;
 /// Upper bounds that keep a damaged index from allocating without limit.
 const MAX_ENTRIES: usize = 50_000_000;
 const MAX_KEY_BYTES: usize = 1024;
+/// Memory a build may use, once, while the index is made (as `mdict::MAX_BUILD_BYTES`): entries,
+/// titles and keys; afterwards the index is only mapped.
+const MAX_BUILD_BYTES: usize = 1024 * 1024 * 1024;
+/// What one key costs in a build besides its text: (start, length, entry id).
+const KEY_BYTES: usize = 12;
 
 /// Where an entry's bytes are: `length` bytes at `offset` of source file `file`; `kind` is the
 /// reader's own tag (for Yomitan: term, kanji, term meta, kanji meta).
@@ -63,10 +68,15 @@ impl Stamp {
     }
 }
 
+/// Builds an index in memory, compactly: every key's folded text in one buffer, and per key only
+/// (start, length, entry id), 12 bytes. Until 2026-11-24 each key was a String of its own (about
+/// 48 bytes), so a big dictionary (reader.dict EN: 1.5 million keys) took twice the memory and a
+/// huge one could exhaust it with no clear error; now a build over `MAX_BUILD_BYTES` stops with one.
 pub struct Builder {
     entries: Vec<(Location, u32, u32)>,
     titles: String,
-    keys: Vec<(String, u32)>,
+    key_text: Vec<u8>,
+    keys: Vec<(u32, u32, u32)>,
     hidden: u32,
 }
 
@@ -76,7 +86,7 @@ pub const HIDDEN: char = '\u{1}';
 
 impl Builder {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), titles: String::new(), keys: Vec::new(), hidden: 0 }
+        Self { entries: Vec::new(), titles: String::new(), key_text: Vec::new(), keys: Vec::new(), hidden: 0 }
     }
 
     pub fn len(&self) -> usize {
@@ -93,17 +103,37 @@ impl Builder {
         self.entries.push((location, start, title.len() as u32));
         for word in std::iter::once(title).chain(aliases.iter().copied()) {
             let key = folded(word);
-            if !key.is_empty() && key.len() <= MAX_KEY_BYTES && !self.keys.iter().rev().take(4).any(|(k, i)| *i == id && *k == key) {
-                self.keys.push((key, id));
-            }
+            let key = key.as_bytes();
+            if key.is_empty() || key.len() > MAX_KEY_BYTES { continue; }
+            let repeated = self.keys.iter().rev().take(4).any(|&(start, len, i)| i == id && self.key(start, len) == key);
+            if repeated { continue; }
+            ensure!(self.key_text.len() + key.len() <= u32::MAX as usize, "dictionary headwords exceed 4 GiB");
+            let start = self.key_text.len() as u32;
+            self.key_text.extend_from_slice(key);
+            self.keys.push((start, key.len() as u32, id));
         }
+        ensure!(self.memory() <= MAX_BUILD_BYTES,
+            "Dicionário grande demais para indexar: montar o índice usaria mais de 1 GiB de memória ({} verbetes, {} chaves até aqui)",
+            self.entries.len(), self.keys.len());
         Ok(id)
+    }
+
+    /// The memory the build holds: entries, titles, key texts and key records.
+    pub fn memory(&self) -> usize {
+        self.entries.len() * std::mem::size_of::<(Location, u32, u32)>() + self.titles.len() + self.key_text.len() + self.keys.len() * KEY_BYTES
+    }
+
+    fn key(&self, start: u32, len: u32) -> &[u8] {
+        &self.key_text[start as usize..(start + len) as usize]
     }
 
     /// Writes the index next to the dictionary, atomically: a reader never sees half a file.
     pub fn write(mut self, path: &Path, format: &str, title: &str, description: &str, stamp: &Stamp) -> Result<()> {
-        self.keys.sort_unstable();
-        self.keys.dedup();
+        // By text, then entry id: the order the String pairs had, so homographs keep their order.
+        let text = std::mem::take(&mut self.key_text);
+        let slice = |key: &(u32, u32, u32)| key_slice(&text, key);
+        self.keys.sort_unstable_by(|a, b| key_slice(&text, a).cmp(key_slice(&text, b)).then(a.2.cmp(&b.2)));
+        self.keys.dedup_by(|a, b| a.2 == b.2 && key_slice(&text, a) == key_slice(&text, b));
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         let tmp = path.with_extension(format!("lkidx.{}-{unique}.tmp", std::process::id()));
         let result = (|| -> Result<()> {
@@ -130,20 +160,20 @@ impl Builder {
                 w.write_all(&len.to_le_bytes())?;
             }
             put_str(&mut w, &self.titles)?;
-            let words: usize = self.keys.iter().map(|(k, _)| k.len()).sum();
+            let words: usize = self.keys.iter().map(|&(_, len, _)| len as usize).sum();
             ensure!(words <= u32::MAX as usize, "dictionary headwords exceed 4 GiB");
             w.write_all(&(self.keys.len() as u32).to_le_bytes())?;
             w.write_all(&(words as u32).to_le_bytes())?;
-            for (key, _) in &self.keys {
-                w.write_all(key.as_bytes())?;
+            for key in &self.keys {
+                w.write_all(slice(key))?;
             }
             let mut at = 0u32;
             w.write_all(&at.to_le_bytes())?;
-            for (key, _) in &self.keys {
-                at += key.len() as u32;
+            for &(_, len, _) in &self.keys {
+                at += len;
                 w.write_all(&at.to_le_bytes())?;
             }
-            for (_, id) in &self.keys {
+            for &(_, _, id) in &self.keys {
                 w.write_all(&id.to_le_bytes())?;
             }
             w.into_inner().map_err(|e| anyhow!("{e}"))?.sync_all()?;
@@ -163,6 +193,11 @@ impl Builder {
         }
         Ok(())
     }
+}
+
+/// A key's text in the build's key buffer.
+fn key_slice<'a>(text: &'a [u8], &(start, len, _): &(u32, u32, u32)) -> &'a [u8] {
+    &text[start as usize..(start + len) as usize]
 }
 
 fn put_str(w: &mut impl Write, text: &str) -> Result<()> {
@@ -402,6 +437,36 @@ mod tests {
         assert!(Index::open(&path, "test", &changed).is_err(), "a changed source makes the index stale");
         fs::write(&path, b"LKIDX\x01\0\0garbage").unwrap();
         assert!(Index::open(&path, "test", &stamp).is_err(), "a damaged index is rejected");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn keys_sort_as_text_then_entry_and_repeats_collapse() {
+        let dir = std::env::temp_dir().join(format!("lkt-lkidx-keys-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.txt"), "x").unwrap();
+        let files = vec![PathBuf::from("a.txt")];
+        let stamp = Stamp::of(&dir, &files).unwrap();
+        let at = Location { file: 0, kind: 0, offset: 0, length: 1 };
+        let mut b = Builder::new();
+        // Keys that share a prefix, a longer one first, and repeats within and across entries.
+        b.add("abc", at, &["ab", "ABC", "abc"]).unwrap();
+        b.add("ab", at, &["b", "ab"]).unwrap();
+        b.add("a", at, &["ab"]).unwrap();
+        b.add("é", at, &["e\u{301}"]).unwrap();
+        assert!(b.memory() < 4096);
+        let path = dir.join("a.txt.lkidx");
+        b.write(&path, "test", "T", "", &stamp).unwrap();
+        let index = Index::open(&path, "test", &stamp).unwrap();
+        let words: Vec<&[u8]> = (0..index.words_count).map(|i| index.word(i)).collect();
+        let mut sorted = words.clone();
+        sorted.sort();
+        assert_eq!(words, sorted, "byte order, as the lookup's binary search needs");
+        assert_eq!(index.find("ab", 10), vec![0, 1, 2], "one hit per entry, in entry order");
+        assert_eq!(index.find("abc", 10), vec![0]);
+        assert_eq!(index.find("b", 10), vec![1]);
+        drop(index);
         fs::remove_dir_all(&dir).unwrap();
     }
 }

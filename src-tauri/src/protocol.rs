@@ -17,6 +17,11 @@ const ENTRY_SCRIPT: &str = include_str!("../../src/lib/dictionaries/article.js")
 // the white page inverted in the dark theme that came before.
 const ENTRY_STYLE: &str = include_str!("../../src/lib/dictionaries/entry.css");
 
+/// The font of flag emoji the entry style names (/f/flags.woff2), for Windows, whose emoji font has
+/// no flags: "Twemoji Country Flags", 78 KB (country-flag-emoji-polyfill 0.1.10; art by Twemoji,
+/// CC-BY 4.0; see NOTICE.md).
+const FLAGS_FONT: &[u8] = include_bytes!("../../src/assets/fonts/TwemojiCountryFlags.woff2");
+
 /// The page an entry is served as: its HTML with the entry style and script, in the look its
 /// dictionary calls for (see ENTRY_STYLE).
 fn entry_document(dict_id: &str, html: &str, styles: &str, own_look: bool) -> String {
@@ -116,6 +121,8 @@ pub fn handle(app: &AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> 
                 None => not_found(),
             };
         }
+        // /f/flags.woff2: the font of flag emoji the entry style uses.
+        "f" if dict_id == "flags.woff2" => return respond(200, "font/woff2", FLAGS_FONT.to_vec()),
         // /m/<file>: screenshot of a saved word.
         "m" => {
             return match state.cards.media(dict_id) {
@@ -180,5 +187,6 @@ mod tests {
         // Since 2026-11-14 no look paints a page of its own or inverts it: colours are rewritten.
         assert!(!ENTRY_STYLE.contains("invert(") && !ENTRY_STYLE.contains("background:#fff"));
         assert!(ENTRY_STYLE.contains("color-scheme: light dark"));
+        assert!(ENTRY_STYLE.contains("url('/f/flags.woff2')") && FLAGS_FONT.starts_with(b"wOF2"), "the flags font is served and is WOFF2");
     }
 }

@@ -89,7 +89,9 @@ mostra como *Frequency* e *Pitch accent*, viram um artigo por linha; assim dicio
 frequência ou só de acento também podem ser adicionados.
 O IPA é listado como no Yomitan: um item por transcrição, com as tags dela antes (os dicionários
 IPA do wty marcam cada uma com bandeiras, 🇺🇸 🇬🇧, nomeadas no `tag_bank`); até 2026-11-24 cada
-linha tinha um rótulo "IPA" e as tags eram descartadas.
+linha tinha um rótulo "IPA" e as tags eram descartadas. As bandeiras usam a fonte "Twemoji Country
+Flags" (78 KB, só bandeiras, por `unicode-range`), servida em `/f/flags.woff2` pelo protocol.rs e
+empacotada pelo Vite no `shared.css`: a fonte de emoji do Windows não tem bandeiras e mostra "US".
 O `.syn` do StarDict fica na memória só durante a indexação, compacto (`StarDictAliases`: o texto
 num buffer e 12 bytes por alias, ordenados por verbete), com limite de 512 MiB. Até 2026-11-24
 eram Strings num mapa, contadas a 128 bytes e limitadas a 32 MiB, o que recusava o reader.dict EN
@@ -139,6 +141,12 @@ RAM a cada início. Agora (`mdict.rs`, `KeyBuilder`/`KeyTable`):
   ordem, offsets e ids, mais onde está cada verbete no arquivo original. O índice é mapeado na
   memória; na consulta, só o verbete é lido do original e convertido em HTML. Arquivos `.dz` são
   lidos por bloco; gzip/bzip2 sem blocos são descompactados uma vez para o cache.
+- A montagem do `.lkidx` (`lkidx::Builder`) é compacta desde 2026-11-24: o texto de todas as chaves
+  num buffer só e 12 bytes por chave (início, tamanho, id), mais 24 bytes por verbete e os títulos.
+  Antes cada chave era uma String própria (~48 bytes), o dobro de memória, e um dicionário enorme
+  podia esgotar a RAM sem erro claro. Agora a montagem tem teto de 1 GiB (`MAX_BUILD_BYTES`, como o
+  MDict) e para com uma mensagem ao passar dele. Estimativa: reader.dict EN (1,5 milhão de chaves)
+  ~70 MB de pico; 10 milhões ~350 MB. O arquivo gerado é o mesmo de antes (ordem por bytes, depois id).
 - Índices incompletos, corrompidos ou cuja fonte mudou (tamanho ou data de cada arquivo) são
   reconstruídos. Os originais nunca são alterados.
 - Recursos soltos aceitam subpastas, separadores Windows e nomes com caixa diferente no Linux.
