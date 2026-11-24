@@ -37,8 +37,31 @@ export const CONTEXT_VOICE_TYPES = [
 
 const TYPES = new Set(AUDIO_SOURCE_TYPES.map((t) => t.value));
 const REQUEST_TIMEOUT_MS = 10000;
-// Wikimedia asks API clients to name themselves.
-const WIKIMEDIA_HEADERS = {'User-Agent': 'Lookitan (https://github.com/arrow-poppa/lookitan)'};
+/* global __LOOKITAN_VERSION__ */
+/** The app's version (vite.config.js defines it from package.json; 'dev' in the Node tests). */
+const VERSION = typeof __LOOKITAN_VERSION__ === 'string' ? __LOOKITAN_VERSION__ : 'dev';
+
+/**
+ * Wikimedia's User-Agent policy: every client names itself, with a version and a way to reach its
+ * makers, and generic library agents are rate limited hard since 2025. Lingua Libre and Wiktionary
+ * recordings come from Commons (the API) and upload.wikimedia.org (the files); until 2026-11-24 only
+ * the API calls named the app, and the file downloads went out as "tauri-plugin-http/2.8.2", so some
+ * of them got 429 at random (the user saw the ✗; Harbor had the same problem). Nothing about the
+ * user is in it: the app's name, version and public page.
+ */
+export const WIKIMEDIA_USER_AGENT = `Lookitan/${VERSION} (https://github.com/arrow-poppa/lookitan)`;
+const WIKIMEDIA_HEADERS = {'User-Agent': WIKIMEDIA_USER_AGENT};
+
+/** Whether `url` is on a Wikimedia server (Commons, upload.wikimedia.org, the Wikis). */
+export function isWikimedia(url) {
+    try {
+        const host = new URL(url).hostname.toLowerCase();
+        return ['wikimedia.org', 'wikipedia.org', 'wiktionary.org', 'wikidata.org', 'mediawiki.org']
+            .some((domain) => host === domain || host.endsWith(`.${domain}`));
+    } catch (_e) {
+        return false;
+    }
+}
 const KANA = /^[぀-ゟ゠-ヿ]+$/;
 // JapanesePod101's "the audio for this clip is currently not available" recording (as in Yomitan).
 const JPOD101_MISSING_SHA256 = 'ae6398b5a27bc8c0a771df6c907ade794be15518174773c58c7c7ddd17098906';
@@ -202,21 +225,23 @@ function regionName(code) {
 
 const COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
 
-/** Files on Wikimedia Commons whose title matches `search`, checked with `valid(title, user)`. */
+/**
+ * Files on Wikimedia Commons whose title matches `search`, checked with `valid(title, user)`, in
+ * the search's order. One request: the search as a generator with each file's uploader and URL
+ * (until 2026-11-24 a search and then one request per file, eleven at once, which Wikimedia's rate
+ * limit answered with 429).
+ */
 async function wikimediaCommons(io, search, valid, name) {
-    const query = new URLSearchParams({action: 'query', format: 'json', list: 'search', srsearch: search, srnamespace: '6', origin: '*'});
+    const query = new URLSearchParams({action: 'query', format: 'json', generator: 'search', gsrsearch: search, gsrnamespace: '6',
+        gsrlimit: '10', prop: 'imageinfo', iiprop: 'user|url', origin: '*'});
     const found = await (await request(io, `${COMMONS_API}?${query}`, {headers: WIKIMEDIA_HEADERS})).json();
-    const titles = (found?.query?.search || []).map((r) => r?.title).filter((t) => typeof t === 'string').slice(0, 10);
-    const files = await Promise.all(titles.map(async (title) => {
-        const info = new URLSearchParams({action: 'query', format: 'json', titles: title, prop: 'imageinfo', iiprop: 'user|url', origin: '*'});
-        const pages = (await (await request(io, `${COMMONS_API}?${info}`, {headers: WIKIMEDIA_HEADERS})).json())?.query?.pages || {};
-        return Object.values(pages).flatMap((page) => {
-            const file = page?.imageinfo?.[0];
-            const user = String(file?.user || '');
-            return file && typeof file.url === 'string' && valid(title, user) ? [{kind: 'url', name: name(title, user), url: file.url}] : [];
-        });
-    }));
-    return files.flat();
+    const pages = Object.values(found?.query?.pages || {}).filter((page) => typeof page?.title === 'string');
+    pages.sort((x, y) => (Number(x.index) || 0) - (Number(y.index) || 0));
+    return pages.flatMap((page) => {
+        const file = page.imageinfo?.[0];
+        const user = String(file?.user || '');
+        return file && typeof file.url === 'string' && valid(page.title, user) ? [{kind: 'url', name: name(page.title, user), url: file.url}] : [];
+    });
 }
 
 async function linguaLibre(io, term, iso) {
@@ -412,11 +437,26 @@ export async function findAudio(options, word, io) {
     return lists.flat();
 }
 
+/**
+ * A GET through the app (the Tauri HTTP plugin). A Wikimedia URL always carries the app's
+ * User-Agent, and a 429 from Wikimedia is tried once more after the wait it asks (at most 3 s).
+ */
 async function request(io, url, init = {}) {
     const doFetch = io.fetch || (await import('@tauri-apps/plugin-http')).fetch;
-    const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
-    try { return await doFetch(url, {method: 'GET', ...init, signal: timeout.signal}); } finally { clearTimeout(timer); }
+    const wikimedia = isWikimedia(url);
+    const headers = wikimedia ? {...WIKIMEDIA_HEADERS, ...(init.headers || {})} : init.headers;
+    const once = async () => {
+        const timeout = new AbortController();
+        const timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
+        try {
+            return await doFetch(url, {method: 'GET', ...init, ...(headers ? {headers} : {}), signal: timeout.signal});
+        } finally { clearTimeout(timer); }
+    };
+    const response = await once();
+    if (!wikimedia || response?.status !== 429) { return response; }
+    const after = Number(response.headers?.get?.('retry-after'));
+    await new Promise((done) => setTimeout(done, Number.isFinite(after) && after > 0 ? Math.min(after, 3) * 1000 : 1000));
+    return once();
 }
 
 const EXTENSIONS = {'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/ogg': 'ogg', 'audio/opus': 'ogg', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/x-m4a': 'm4a',

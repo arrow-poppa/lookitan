@@ -195,10 +195,13 @@ test('Yomitan audio sources: JapanesePod101, LanguagePod101, Jisho, Lingua Libre
     assert.equal(audio.parseJisho(jisho, 'https://jisho.org/search/x', '読む'), 'https://cdn.example/y.mp3', 'any reading when none is known');
     assert.equal(audio.parseJisho(jisho, 'https://jisho.org/search/x', '読む', 'どく'), null);
 
-    const commons = (titles, user) => async (url) => {
+    const sent = [];
+    const commons = (titles, user) => async (url, init) => {
         const u = new URL(url);
-        if (u.searchParams.get('list') === 'search') { return {ok: true, json: async () => ({query: {search: titles.map((title) => ({title}))}})}; }
-        return {ok: true, json: async () => ({query: {pages: {1: {imageinfo: [{url: `https://upload.example/${u.searchParams.get('titles')}`, user}]}}}})};
+        sent.push({generator: u.searchParams.get('generator'), agent: init?.headers?.['User-Agent']});
+        // Pages come keyed by id, not in search order; "index" gives the order.
+        const pages = Object.fromEntries(titles.map((title, i) => [String(900 - i), {title, index: i + 1, imageinfo: [{url: `https://upload.example/${title}`, user}]}]));
+        return {ok: true, json: async () => ({query: {pages}})};
     };
     const wiki = await audio.findAudio({sources: [{type: 'wiktionary'}]}, {term: 'water', language: 'en'},
         {invoke: async () => [], fetch: commons(['File:En-us-water.ogg', 'File:En-us-watery.ogg'], 'Ann')});
@@ -207,6 +210,8 @@ test('Yomitan audio sources: JapanesePod101, LanguagePod101, Jisho, Lingua Libre
     const libre = await audio.findAudio({sources: [{type: 'lingua-libre'}]}, {term: 'livre', language: 'fr'},
         {invoke: async () => [], fetch: commons(['File:LL-Q150 (fra)-Bob-livre.wav', 'File:LL-Q150 (fra)-Eve-livre.wav'], 'Bob')});
     assert.deepEqual(libre.map((f) => f.name), ['Lingua Libre · Bob'], 'the speaker must be the uploader');
+    assert(sent.every((r) => r.generator === 'search'), 'one request per source: the search with each file\'s uploader and URL');
+    assert(sent.every((r) => /^Lookitan\/\S+ \(https:\/\/github\.com\/arrow-poppa\/lookitan\)$/.test(r.agent)), 'the app names itself, as Wikimedia asks');
 
     const io = {invoke: async () => [], fetch: async (url) => {
         if (url.includes('/api/v1/search/words')) { return {ok: true, json: async () => ({data: [{japanese: [{word: '読む', reading: 'よむ'}]}]})}; }
@@ -216,6 +221,26 @@ test('Yomitan audio sources: JapanesePod101, LanguagePod101, Jisho, Lingua Libre
     assert.deepEqual(jpod.map((f) => f.name), ['JapanesePod101', 'Voz do sistema'], 'a failing Jisho page is skipped');
     assert(jpod[0].url.includes(`kana=${encodeURIComponent('よむ')}`), 'the reading comes from Jisho');
     assert.deepEqual(await audio.findAudio({sources: [{type: 'jpod101'}, {type: 'jisho'}]}, {term: 'run', language: 'en'}, io), [], 'Japanese only');
+});
+
+test('Wikimedia file downloads name the app and wait once on a 429; other sites are left alone', async () => {
+    const {audioFile, isWikimedia, WIKIMEDIA_USER_AGENT} = await import('../src/lib/audio.js');
+    assert(isWikimedia('https://upload.wikimedia.org/a.ogg') && isWikimedia('https://commons.wikimedia.org/w/api.php') && !isWikimedia('https://notwikimedia.org/x'));
+    const bytes = new TextEncoder().encode('ogg audio');
+    const calls = [];
+    let status = 429;
+    const io = {fetch: async (url, init) => {
+        calls.push(init.headers?.['User-Agent']);
+        const answer = {ok: status === 200, status, headers: {get: (h) => (h === 'retry-after' ? '0.01' : 'application/ogg')}, arrayBuffer: async () => bytes.buffer};
+        status = 200;
+        return answer;
+    }};
+    assert.equal((await audioFile({kind: 'url', url: 'https://upload.wikimedia.org/a.ogg'}, io)).extension, 'ogg', 'the second try gets it');
+    assert.deepEqual(calls, [WIKIMEDIA_USER_AGENT, WIKIMEDIA_USER_AGENT]);
+    calls.length = 0;
+    status = 429;
+    assert.equal(await audioFile({kind: 'url', url: 'https://cdn.example/a.mp3'}, io), null, 'another site\'s 429 is not retried');
+    assert.deepEqual(calls, [undefined], 'and gets no User-Agent of ours');
 });
 
 test('a JapanesePod101 "not available" clip counts as no audio, and application/ogg is audio', async () => {
