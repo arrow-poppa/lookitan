@@ -519,368 +519,19 @@ export class AIProvider {
     }
 }
 
-/**
- * OpenAI provider implementation
- */
-export class OpenAIProvider extends AIProvider {
-    /**
-     * @param {import('settings').AIProviderConfig} config
-     */
-    constructor(config) {
-        super('openai', config);
-    }
-
-    /**
-     * Whether this provider can deliver a response incrementally.
-     * @returns {boolean}
-     */
-    supportsStreaming() {
-        return true;
-    }
-
-    /**
-     * Builds everything the request needs, shared by the streaming and non-streaming paths.
-     * @param {string} term
-     * @param {string} sentence
-     * @param {string} customPrompt
-     * @param {string|AbortSignal} [systemPromptOrAbort]
-     * @param {AbortSignal} [abortSignal]
-     * @returns {{url: string, headers: Record<string, string>, requestBody: Record<string, unknown>, signal: (AbortSignal|undefined), prompt: string, systemPrompt: string}}
-     * @throws {Error} If the provider is not configured.
-     */
-    _buildRequest(term, sentence, customPrompt, systemPromptOrAbort, abortSignal) {
-        if (!this.isConfigured()) {
-            throw new Error('OpenAI provider is not configured');
-        }
-
-        const {prompt, systemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
-
-        return {
-            url: 'https://api.openai.com/v1/chat/completions',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this._config.apiKey}`,
-            },
-            requestBody: {
-                model: this._config.model || 'gpt-4o-mini',
-                messages: (
-                    systemPrompt ?
-[
-    {role: 'system', content: systemPrompt},
-    {role: 'user', content: prompt},
-] :
-[
-    {role: 'user', content: prompt},
-]
-                ),
-                temperature: this._getTemperature(),
-            },
-            signal,
-            prompt,
-            systemPrompt,
-        };
-    }
-
-    /**
-     * @param {string} term
-     * @param {string} sentence
-     * @param {string} customPrompt
-     * @param {string} [systemPrompt]
-     * @param {AbortSignal} [abortSignal]
-     * @param {(chunk: string, full: string) => void} [onChunk]
-     * @returns {Promise<string>}
-     */
-    async generateExplanationStream(term, sentence, customPrompt, systemPrompt, abortSignal, onChunk) {
-        const request = this._buildRequest(term, sentence, customPrompt, systemPrompt, abortSignal);
-        request.requestBody.stream = true;
-        const text = await this._streamOpenAICompatibleRequest('OpenAI', request.url, request.headers, request.requestBody, request.signal, onChunk);
-        return text.trim() || 'No explanation available.';
-    }
-
-    /**
-     * @param {string} term
-     * @param {string} sentence
-     * @param {string} customPrompt
-     * @param {string|AbortSignal} [systemPromptOrAbort]
-     * @param {AbortSignal} [abortSignal]
-     * @returns {Promise<string>}
-     */
-    async generateExplanation(term, sentence, customPrompt, systemPromptOrAbort, abortSignal) {
-        const {url, headers, requestBody, signal} = this._buildRequest(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
-        const response = await fetch(url, {
-            method: 'POST',
-            headers,
-            signal,
-            body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-            throw await this._responseError('OpenAI', response);
-        }
-
-        const data = await readResponseJson(response);
-        this._logCacheUsage(data);
-        if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('OpenAI', data.error); }
-        const choice = this._getFirstChoice(data);
-        const message = choice !== null && isObjectNotArray(choice.message) ? choice.message : null;
-        const plain = this._stringifyMessageContent(message?.content ?? choice?.text ?? '');
-        return plain.trim() || 'No explanation available.';
-    }
-}
+/** The Anthropic Messages API version sent in `anthropic-version`. */
+const ANTHROPIC_VERSION = '2023-06-01';
+/** Room for the reply (and the thinking before it) in an Anthropic request, which requires it. */
+const ANTHROPIC_MAX_TOKENS = 16000;
+/** The effort levels the Anthropic API takes in `output_config.effort`. */
+const ANTHROPIC_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
 /**
- * Gemini provider implementation
- */
-export class GeminiProvider extends AIProvider {
-    /**
-     * @param {import('settings').AIProviderConfig} config
-     */
-    constructor(config) {
-        super('gemini', config);
-    }
-
-    /**
-     * Whether this provider can deliver a response incrementally.
-     * @returns {boolean}
-     */
-    supportsStreaming() {
-        return true;
-    }
-
-    /**
-     * Builds the request body for either route.
-     * @param {string} promptText
-     * @param {string} systemPromptText
-     * @param {string} thinkingLevel
-     * @param {boolean} isGemini3Model
-     * @param {boolean} useVertexExpressRoute
-     * @returns {Record<string, unknown>}
-     */
-    _buildRequestBody(promptText, systemPromptText, thinkingLevel, isGemini3Model, useVertexExpressRoute) {
-        const generationConfig = /** @type {Record<string, unknown>} */ ({
-            temperature: this._getTemperature(),
-        });
-        if (thinkingLevel && thinkingLevel !== '' && isGemini3Model) {
-            generationConfig.thinkingConfig = {
-                thinkingLevel: thinkingLevel,
-            };
-        }
-
-        if (useVertexExpressRoute) {
-            const body = /** @type {Record<string, unknown>} */ ({
-                contents: [{
-                    role: 'user',
-                    parts: [{text: promptText}],
-                }],
-                generationConfig,
-            });
-            if (systemPromptText) {
-                body.systemInstruction = {
-                    parts: [{text: systemPromptText}],
-                };
-            }
-            return body;
-        }
-
-        const body = /** @type {Record<string, unknown>} */ ({
-            contents: [{
-                parts: [{text: promptText}],
-            }],
-            generationConfig,
-        });
-
-        // System Instruction (suportado em 1.5+ e 3.0)
-        if (systemPromptText) {
-            body.systemInstruction = {parts: [{text: systemPromptText}]};
-        }
-
-        return body;
-    }
-
-    /**
-     * Resolves the endpoint and body for a model id, for either the streaming or the
-     * single-response method.
-     * @param {string} modelIdRaw
-     * @param {string} prompt
-     * @param {string} systemPrompt
-     * @param {boolean} [stream]
-     * @returns {{url: string, body: Record<string, unknown>}}
-     */
-    _resolveRoute(modelIdRaw, prompt, systemPrompt, stream = false) {
-        const vertexExpressBaseUrl = 'https://aiplatform.googleapis.com/v1/publishers/google/models';
-
-        // Sanitização: remove prefixo 'models/' se existir
-        const raw = modelIdRaw || 'gemini-2.5-flash';
-        let modelId = raw.replace(/^models\//, '');
-        let useVertexExpressRoute = false;
-
-        // Normalizar modelos com sufixo -latest para o ID base
-        if (modelId.endsWith('-latest')) {
-            modelId = modelId.replace(/-latest$/, '');
-        }
-
-        if (modelId.endsWith('-vertex')) {
-            modelId = modelId.replace(/-vertex$/, '');
-            useVertexExpressRoute = true;
-        }
-
-        // Se for low-thinking, remove o sufixo customizado
-        // ID Real: gemini-3-flash-preview (ou o que estiver configurado sem o sufixo)
-        const isLowThinking = modelId.includes('low-thinking');
-        const apiModelId = isLowThinking ? 'gemini-3-flash-preview' : modelId;
-        if (isLowThinking) {
-            useVertexExpressRoute = true;
-        }
-
-        // Compatibilidade com configuração antiga do Pro preview.
-        if (apiModelId === 'gemini-3-pro-preview' || apiModelId === 'gemini-3-pro-image-preview') {
-            useVertexExpressRoute = true;
-        }
-
-        // Verificar se é um modelo Gemini 3.x (apenas esses suportam thinking config)
-        const isGemini3Model = apiModelId.includes('gemini-3');
-
-        // Obter e sanitizar thinking level da configuração.
-        let thinkingLevel = typeof this._config.thinkingLevel === 'string' ? this._config.thinkingLevel.toUpperCase() : '';
-
-        // Fallback para modelos low-thinking antigos (compatibilidade)
-        if (isLowThinking && !thinkingLevel) {
-            thinkingLevel = 'LOW';
-        }
-
-        // Gemini 3 Pro aceita apenas LOW e HIGH. Níveis antigos/ambíguos
-        // são convertidos para o equivalente compatível mais próximo.
-        if (apiModelId === 'gemini-3-pro-preview' || apiModelId === 'gemini-3.1-pro-preview') {
-            if (thinkingLevel === 'MINIMAL') {
-                thinkingLevel = 'LOW';
-            } else if (thinkingLevel === 'MEDIUM') {
-                thinkingLevel = 'HIGH';
-            } else if (thinkingLevel !== '' && thinkingLevel !== 'LOW' && thinkingLevel !== 'HIGH') {
-                thinkingLevel = '';
-            }
-        }
-
-        // Se não é modelo 3.x, limpar thinking level (modelos antigos não suportam)
-        // Se é modelo 3.x mas não tem thinking level configurado, também limpar (usar default da API)
-        if (!isGemini3Model || !thinkingLevel) {
-            thinkingLevel = '';
-        }
-
-        const method = stream ? 'streamGenerateContent' : 'generateContent';
-        const query = stream ? `?alt=sse&key=${this._config.apiKey}` : `?key=${this._config.apiKey}`;
-        const url = useVertexExpressRoute ?
-            `${vertexExpressBaseUrl}/${apiModelId}:${method}${query}` :
-            `https://generativelanguage.googleapis.com/v1beta/models/${apiModelId}:${method}${query}`;
-        const body = this._buildRequestBody(prompt, systemPrompt, thinkingLevel, isGemini3Model, useVertexExpressRoute);
-        return {url, body};
-    }
-
-    /**
-     * Extracts the answer text of one streamed Gemini chunk, skipping thinking parts.
-     * @param {unknown} payload
-     * @returns {string}
-     */
-    _extractGeminiText(payload) {
-        if (!isObjectNotArray(payload) || !Array.isArray(payload.candidates)) { return ''; }
-        const candidate = /** @type {unknown[]} */ (payload.candidates)[0];
-        if (!isObjectNotArray(candidate) || !isObjectNotArray(candidate.content)) { return ''; }
-        const {parts} = candidate.content;
-        if (!Array.isArray(parts)) { return ''; }
-        let text = '';
-        for (const part of /** @type {unknown[]} */ (parts)) {
-            if (!isObjectNotArray(part) || part.thought === true) { continue; }
-            if (typeof part.text === 'string') { text += part.text; }
-        }
-        return text;
-    }
-
-    /**
-     * @param {string} term
-     * @param {string} sentence
-     * @param {string} customPrompt
-     * @param {string} [systemPrompt]
-     * @param {AbortSignal} [abortSignal]
-     * @param {(chunk: string, full: string) => void} [onChunk]
-     * @returns {Promise<string>}
-     */
-    async generateExplanationStream(term, sentence, customPrompt, systemPrompt, abortSignal, onChunk) {
-        if (!this.isConfigured()) {
-            throw new Error('Gemini provider is not configured');
-        }
-
-        const {prompt, systemPrompt: resolvedSystemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPrompt, abortSignal);
-
-        const {url, body} = this._resolveRoute(this._config.model || 'gemini-2.5-flash', prompt, resolvedSystemPrompt, true);
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            signal,
-            body: JSON.stringify(body),
-        });
-
-        if (!response.ok) {
-            throw await this._responseError('Gemini', response);
-        }
-
-        let full = '';
-        await this._readSseStream(response, (payload) => {
-            /** @type {unknown} */
-            let parsed;
-            try {
-                parsed = parseJson(payload);
-            } catch (_error) {
-                return;
-            }
-            if (isObjectNotArray(parsed) && typeof parsed.error !== 'undefined') {
-                throw this._providerError('Gemini stream', parsed.error, typeof parsed.error?.code === 'number' ? parsed.error.code : undefined);
-            }
-            const delta = this._extractGeminiText(parsed);
-            if (delta) {
-                full += delta;
-                if (typeof onChunk === 'function') { onChunk(delta, full); }
-            }
-        }, signal);
-        return full.trim() || 'No explanation available.';
-    }
-
-    /**
-     * @param {string} term
-     * @param {string} sentence
-     * @param {string} customPrompt
-     * @param {string|AbortSignal} [systemPromptOrAbort]
-     * @param {AbortSignal} [abortSignal]
-     * @returns {Promise<string>}
-     */
-    async generateExplanation(term, sentence, customPrompt, systemPromptOrAbort, abortSignal) {
-        if (!this.isConfigured()) {
-            throw new Error('Gemini provider is not configured');
-        }
-
-        const {prompt, systemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
-
-        const modelIdRaw = this._config.model || 'gemini-2.5-flash';
-        const {url, body} = this._resolveRoute(modelIdRaw, prompt, systemPrompt, false);
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            signal,
-            body: JSON.stringify(body),
-        });
-        if (!response.ok) {
-            throw await this._responseError('Gemini', response);
-        }
-
-        const data = await readResponseJson(response);
-        this._logCacheUsage(data);
-        if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('Gemini', data.error); }
-        const text = this._extractGeminiText(data);
-        return text.trim() || 'No explanation available.';
-    }
-}
-
-/**
- * Custom provider implementation (OpenAI v1-style API compatible)
- * Works with OpenRouter, Agent Router, and any OpenAI-compatible gateway
+ * The one provider since 2026-11-24 (the user had OpenAI, Gemini and DeepSeek removed): any
+ * endpoint the user gives, in one of two formats (`apiFormat`): OpenAI's chat completions
+ * (OpenRouter, OpenAI, DeepSeek, Gemini's OpenAI-compatible endpoint, Ollama, LM Studio…) or
+ * Anthropic's Messages API (api.anthropic.com, or a gateway that speaks it). Left empty, the
+ * format follows the endpoint: a path ending in "/messages" is Anthropic's.
  */
 export class CustomProvider extends AIProvider {
     /**
@@ -896,6 +547,146 @@ export class CustomProvider extends AIProvider {
      */
     isConfigured() {
         return this._config && !!this._config.apiKey && !!this._config.endpoint;
+    }
+
+    /**
+     * The request format: "anthropic" for the Messages API, else "openai" (chat completions).
+     * @returns {'openai'|'anthropic'}
+     */
+    apiFormat() {
+        const chosen = this._config?.apiFormat;
+        if (chosen === 'openai' || chosen === 'anthropic') { return chosen; }
+        try {
+            return /\/messages\/?$/.test(new URL(this._config?.endpoint || '').pathname) ? 'anthropic' : 'openai';
+        } catch (_error) {
+            return 'openai';
+        }
+    }
+
+    /**
+     * An Anthropic Messages request: the system prompt as a block marked for the prompt cache
+     * (the part every lookup shares), the lookup as the user message, the reply's room
+     * (`max_tokens`, required) and the thinking settings. No temperature: the current Claude
+     * models reject sampling settings.
+     * @param {string} term
+     * @param {string} sentence
+     * @param {string} customPrompt
+     * @param {string|AbortSignal} [systemPromptOrAbort]
+     * @param {AbortSignal} [abortSignal]
+     * @returns {{url: string, headers: Record<string, string>, requestBody: Record<string, unknown>, signal: (AbortSignal|undefined)}}
+     */
+    _buildAnthropicRequest(term, sentence, customPrompt, systemPromptOrAbort, abortSignal) {
+        const {prompt, systemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
+        const requestBody = {
+            model: String(this._config.model || '').trim(),
+            max_tokens: ANTHROPIC_MAX_TOKENS,
+            messages: [{role: 'user', content: prompt}],
+        };
+        if (systemPrompt) {
+            requestBody.system = [{type: 'text', text: systemPrompt, cache_control: {type: 'ephemeral'}}];
+        }
+        this._applyAnthropicThinking(requestBody);
+        this._applyCustomRequestBodyJson(requestBody);
+        requestBody.stream = false;
+        const key = this._config.apiKey.trim();
+        let anthropicHost = false;
+        try { anthropicHost = /(^|\.)anthropic\.com$/.test(new URL(this._config.endpoint).hostname); } catch (_error) { /* checked by isConfigured */ }
+        return {
+            url: this._config.endpoint,
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': key,
+                'anthropic-version': ANTHROPIC_VERSION,
+                // Gateways that speak the Messages API (OpenRouter) read the key as a bearer token;
+                // Anthropic itself reads a bearer as an OAuth token, so it gets only x-api-key.
+                ...(anthropicHost ? {} : {'Authorization': `Bearer ${key}`}),
+            },
+            requestBody,
+            signal,
+        };
+    }
+
+    /**
+     * The thinking settings in the Messages API: "Ligado" asks for adaptive thinking, the effort
+     * goes to `output_config.effort` ("minimal" and "none" become "low"; "Personalizada" takes
+     * an effort name or JSON for `output_config`). "Desligado" sends nothing: the newest models
+     * think adaptively and reject turning it off, so the effort is what lowers it.
+     * @param {Record<string, unknown>} requestBody
+     */
+    _applyAnthropicThinking(requestBody) {
+        const mode = this._config?.thinkingMode || '';
+        const intensity = this._config?.thinkingIntensity || '';
+        if (mode === 'enabled') { requestBody.thinking = {type: 'adaptive'}; }
+        if (intensity === 'custom') {
+            const value = typeof this._config?.customThinkingIntensity === 'string' ? this._config.customThinkingIntensity.trim() : '';
+            if (value.startsWith('{')) {
+                try {
+                    const parsed = parseJson(value);
+                    if (isObjectNotArray(parsed)) { requestBody.output_config = parsed; }
+                } catch (_error) { /* an invalid value sends nothing */ }
+            } else if (ANTHROPIC_EFFORTS.has(value)) {
+                requestBody.output_config = {effort: value};
+            }
+            return;
+        }
+        const effort = intensity === 'minimal' || intensity === 'none' ? 'low' : intensity;
+        if (ANTHROPIC_EFFORTS.has(effort)) { requestBody.output_config = {effort}; }
+    }
+
+    /**
+     * The text of a Messages API reply: its text blocks, without thinking. A refusal is an error.
+     * @param {unknown} data
+     * @returns {string}
+     */
+    _anthropicText(data) {
+        if (!isObjectNotArray(data)) { return ''; }
+        if (data.type === 'error' || typeof data.error !== 'undefined') { throw this._providerError('Anthropic', data.error ?? data); }
+        if (data.stop_reason === 'refusal') { throw new Error('Anthropic API: the model declined this request (refusal).'); }
+        const blocks = Array.isArray(data.content) ? data.content : [];
+        return blocks.filter((b) => isObjectNotArray(b) && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('');
+    }
+
+    /**
+     * Streams a Messages API reply: text comes in `content_block_delta` events with a
+     * `text_delta`; thinking deltas are skipped; an `error` event or a refusal fails the request.
+     * @param {{url: string, headers: Record<string, string>, requestBody: Record<string, unknown>, signal: (AbortSignal|undefined)}} request
+     * @param {(chunk: string, full: string) => void} [onChunk]
+     * @returns {Promise<string>}
+     */
+    async _streamAnthropic(request, onChunk) {
+        const response = await fetch(request.url, {
+            method: 'POST',
+            headers: request.headers,
+            signal: request.signal,
+            body: JSON.stringify(request.requestBody),
+        });
+        if (!response.ok) { throw await this._responseError('Anthropic', response); }
+        let full = '';
+        await this._readSseStream(response, (payload) => {
+            /** @type {unknown} */
+            let event;
+            try { event = parseJson(payload); } catch (_error) { return; }
+            if (!isObjectNotArray(event)) { return; }
+            if (event.type === 'error') { throw this._providerError('Anthropic stream', event.error ?? event); }
+            if (event.type === 'message_delta' && isObjectNotArray(event.delta) && event.delta.stop_reason === 'refusal') {
+                throw new Error('Anthropic API: the model declined this request (refusal).');
+            }
+            if (event.type === 'message_start' && isObjectNotArray(event.message)) { this._logAnthropicCache(event.message.usage); }
+            if (event.type === 'message_stop') { return false; }
+            if (event.type === 'content_block_delta' && isObjectNotArray(event.delta) && event.delta.type === 'text_delta' && typeof event.delta.text === 'string') {
+                full += event.delta.text;
+                if (typeof onChunk === 'function') { onChunk(event.delta.text, full); }
+            }
+        }, request.signal);
+        return full;
+    }
+
+    /** Logs the Messages API's cache use. @param {unknown} usage */
+    _logAnthropicCache(usage) {
+        if (!isObjectNotArray(usage)) { return; }
+        const read = Number(usage.cache_read_input_tokens) || 0;
+        const total = read + (Number(usage.cache_creation_input_tokens) || 0) + (Number(usage.input_tokens) || 0);
+        if (total > 0) { console.info(`AI prompt cache: ${read} of ${total} prompt tokens`); }
     }
 
     /**
@@ -981,6 +772,13 @@ export class CustomProvider extends AIProvider {
      * @returns {Promise<string>}
      */
     async generateExplanationStream(term, sentence, customPrompt, systemPrompt, abortSignal, onChunk) {
+        if (this.apiFormat() === 'anthropic') {
+            if (!this.isConfigured()) { throw new Error('Custom provider is not configured. Please set endpoint, API key, and model.'); }
+            const request = this._buildAnthropicRequest(term, sentence, customPrompt, systemPrompt, abortSignal);
+            request.requestBody.stream = true;
+            const text = await this._streamAnthropic(request, onChunk);
+            return text.trim() || 'No explanation available.';
+        }
         const request = this._buildRequest(term, sentence, customPrompt, systemPrompt, abortSignal);
         // Set after the custom JSON merge so a stored `"stream": false` cannot disable it.
         request.requestBody.stream = true;
@@ -998,6 +796,15 @@ export class CustomProvider extends AIProvider {
      * @returns {Promise<string>}
      */
     async generateExplanation(term, sentence, customPrompt, systemPromptOrAbort, abortSignal) {
+        if (this.apiFormat() === 'anthropic') {
+            if (!this.isConfigured()) { throw new Error('Custom provider is not configured. Please set endpoint, API key, and model.'); }
+            const request = this._buildAnthropicRequest(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
+            const response = await fetch(request.url, {method: 'POST', headers: request.headers, signal: request.signal, body: JSON.stringify(request.requestBody)});
+            if (!response.ok) { throw await this._responseError('Anthropic', response); }
+            const data = await readResponseJson(response);
+            if (isObjectNotArray(data)) { this._logAnthropicCache(data.usage); }
+            return this._anthropicText(data).trim() || 'No explanation available.';
+        }
         const {url, headers, requestBody, signal} = this._buildRequest(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
         const response = await fetch(url, {
             method: 'POST',
@@ -1022,184 +829,27 @@ export class CustomProvider extends AIProvider {
 }
 
 /**
- * DeepSeek provider implementation
- */
-export class DeepSeekProvider extends AIProvider {
-    /**
-     * @param {import('settings').AIProviderConfig} config
-     */
-    constructor(config) {
-        super('deepseek', config);
-    }
-
-    /**
-     * Check if the provider is properly configured
-     * @returns {boolean}
-     */
-    isConfigured() {
-        return this._config && !!this._config.apiKey && !!this._config.model;
-    }
-
-    /**
-     * Whether this provider can deliver a response incrementally.
-     * @returns {boolean}
-     */
-    supportsStreaming() {
-        return true;
-    }
-
-    /**
-     * Builds everything the request needs, shared by the streaming and non-streaming paths.
-     * @param {string} term
-     * @param {string} sentence
-     * @param {string} customPrompt
-     * @param {string|AbortSignal} [systemPromptOrAbort]
-     * @param {AbortSignal} [abortSignal]
-     * @returns {{url: string, headers: Record<string, string>, requestBody: Record<string, unknown>, signal: (AbortSignal|undefined), prompt: string, systemPrompt: string}}
-     * @throws {Error} If the provider is not configured.
-     */
-    _buildRequest(term, sentence, customPrompt, systemPromptOrAbort, abortSignal) {
-        if (!this.isConfigured()) {
-            throw new Error('DeepSeek provider is not configured. Please set API key and model.');
-        }
-
-        const {prompt, systemPrompt, signal} = this._splitPrompts(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
-
-        const messages = systemPrompt ?
-[
-    {role: 'system', content: systemPrompt},
-    {role: 'user', content: prompt},
-] :
-[
-    {role: 'user', content: prompt},
-];
-
-        const requestBody = {
-            model: this._config.model.trim(),
-            messages,
-            stream: false,
-            temperature: this._getTemperature(),
-        };
-
-        this._applyReasoningOptions(requestBody);
-
-        return {
-            url: 'https://api.deepseek.com/chat/completions',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this._config.apiKey.trim()}`,
-            },
-            requestBody,
-            signal,
-            prompt,
-            systemPrompt,
-        };
-    }
-
-    /**
-     * @param {string} term
-     * @param {string} sentence
-     * @param {string} customPrompt
-     * @param {string} [systemPrompt]
-     * @param {AbortSignal} [abortSignal]
-     * @param {(chunk: string, full: string) => void} [onChunk]
-     * @returns {Promise<string>}
-     */
-    async generateExplanationStream(term, sentence, customPrompt, systemPrompt, abortSignal, onChunk) {
-        const request = this._buildRequest(term, sentence, customPrompt, systemPrompt, abortSignal);
-        request.requestBody.stream = true;
-
-        const text = await this._streamOpenAICompatibleRequest('DeepSeek', request.url, request.headers, request.requestBody, request.signal, onChunk);
-        return text.trim() || 'No explanation available.';
-    }
-
-    /**
-     * @param {string} term
-     * @param {string} sentence
-     * @param {string} customPrompt
-     * @param {string|AbortSignal} [systemPromptOrAbort]
-     * @param {AbortSignal} [abortSignal]
-     * @returns {Promise<string>}
-     */
-    async generateExplanation(term, sentence, customPrompt, systemPromptOrAbort, abortSignal) {
-        const {url, headers, requestBody, signal} = this._buildRequest(term, sentence, customPrompt, systemPromptOrAbort, abortSignal);
-        const response = await fetch(url, {
-            method: 'POST',
-            headers,
-            signal,
-            body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-            throw await this._responseError('DeepSeek', response);
-        }
-
-        const data = await readResponseJson(response);
-        this._logCacheUsage(data);
-        if (isObjectNotArray(data) && typeof data.error !== 'undefined') { throw this._providerError('DeepSeek', data.error); }
-        const choice = this._getFirstChoice(data);
-        const message = choice !== null && isObjectNotArray(choice.message) ? choice.message : null;
-        const plain = this._stringifyMessageContent(message?.content ?? choice?.text ?? '');
-        return plain.trim() || 'No explanation available.';
-    }
-}
-
-/**
  * AI provider factory
  */
 export const AIProviderFactory = {
     /**
-     * Create an AI provider instance
-     * @param {string} providerName The name of the provider ('openai', 'gemini', 'deepseek', or 'custom')
+     * The provider for a dictionary. Only the custom one is left (2026-11-24); the name is kept
+     * for the settings, and an old name gets it too.
+     * @param {string} _providerName
      * @param {import('settings').AIProviderConfig} config Provider configuration
      * @returns {AIProvider}
-     * @throws {Error} If the provider name is unknown.
      */
-    createProvider(providerName, config) {
-        switch (providerName) {
-            case 'openai':
-                return new OpenAIProvider(config);
-            case 'gemini':
-                return new GeminiProvider(config);
-            case 'deepseek':
-                return new DeepSeekProvider(config);
-            case 'custom':
-                return new CustomProvider(config);
-            default:
-                throw new Error(`Unknown AI provider: ${providerName}`);
-        }
+    createProvider(_providerName, config) {
+        return new CustomProvider(config);
     },
 
-    /**
-     * Get list of available providers
-     * @returns {string[]}
-     */
+    /** @returns {string[]} */
     getAvailableProviders() {
-        return ['openai', 'gemini', 'deepseek', 'custom'];
+        return ['custom'];
     },
 
-    /**
-     * Get default models for each provider
-     * @returns {{[key: string]: string[]}}
-     */
+    /** @returns {{[key: string]: string[]}} */
     getDefaultModels() {
-        return {
-            openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'],
-            gemini: [
-                'gemini-2.5-flash',
-                'gemini-2.5-flash-lite',
-                'gemini-2.5-flash-lite-preview-09-2025',
-                'gemini-2.5-pro',
-                'gemini-2.0-flash',
-                'gemini-3.1-flash-lite-preview',
-                'gemini-3.1-flash-lite-preview-vertex',
-                'gemini-3.1-pro-preview',
-                'gemini-3.1-pro-preview-vertex',
-                'gemini-3-flash-preview-vertex',
-                'gemini-3-flash-preview',
-            ],
-            deepseek: [],
-            custom: [],
-        };
+        return {custom: []};
     },
 };

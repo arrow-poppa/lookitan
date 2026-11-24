@@ -854,10 +854,10 @@ test('each AI dictionary sends its requests with its own provider', async () => 
     });
     Object.assign(view.ai, {customPrompt: 'explain', contextPrompt: 'translate',
         provider: 'custom', custom: {model: 'word-model'},
-        sectionProviders: {'ai-context': {provider: 'gemini', gemini: {model: 'context-model'}, temperature: 0.2, streamResponse: false, cancelPendingRequests: true, systemPrompt: ''}}});
+        sectionProviders: {'ai-context': {provider: 'custom', custom: {model: 'context-model'}, temperature: 0.2, streamResponse: false, cancelPendingRequests: true, systemPrompt: ''}}});
     await view.popup.runContext(new Element());
     await view.popup.runExplain(new Element());
-    assert.deepEqual(seen, [['gemini', 'context-model'], ['custom', 'word-model']]);
+    assert.deepEqual(seen, [['custom', 'context-model'], ['custom', 'word-model']]);
 });
 
 test('the context translation can stay blurred until clicked, like the word translation', async () => {

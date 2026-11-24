@@ -46,7 +46,7 @@ test('prompts still on an earlier default move to the new one; edited ones stay'
         assert.equal(old.ocrErrorsPrompt, OCR_ERRORS_PROMPT);
     }
     const edited = normalizeAiOptions({cardPrompt: `${LEGACY_CARD_PROMPT} Be brief.`, wordTranslationPrompt: 'mine', ocrErrorsPrompt: 'my OCR note', cardPromptVersion: 3});
-    assert.deepEqual([edited.cardPrompt, edited.wordTranslationPrompt, edited.ocrErrorsPrompt], [`${LEGACY_CARD_PROMPT} Be brief.`, 'mine', 'my OCR note']);
+    assert.deepEqual([edited.cardPrompt, edited.wordTranslationPrompt, edited.ocrErrorsPrompt], [`${LEGACY_CARD_PROMPT} Be brief.`.replace('{"headword"', '{{{selectionField}}"headword"'), 'mine', 'my OCR note']);
 });
 
 test('the OCR note corrects only clear misreadings, and the scripts\' examples are only misread characters', () => {

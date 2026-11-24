@@ -9,8 +9,8 @@ const project = resolve(import.meta.dirname, '..');
 const encoder = new TextEncoder();
 const delta = (content) => ({choices: [{delta: {content}}]});
 const event = (payload) => `data: ${JSON.stringify(payload)}\r\n\r\n`;
-const config = {apiKey: 'test-only-not-a-real-key', model: 'test-model'};
-const options = {provider: 'openai', openai: config, streamResponse: true, customPrompt: '{{target}} {{sentence}}'};
+const config = {apiKey: 'test-only-not-a-real-key', model: 'test-model', endpoint: 'https://example.test/v1/chat/completions'};
+const options = {provider: 'custom', custom: config, streamResponse: true, customPrompt: '{{target}} {{sentence}}'};
 
 async function fixture(fetch) {
     const context = createContext({console, Response, ReadableStream, TextDecoder, AbortController, DOMException, URL, setTimeout, clearTimeout});
@@ -60,7 +60,7 @@ test('SSE reads one-byte fragments including UTF-8, CRLF and a final event witho
         `data: ${JSON.stringify(delta(' 日本語'))}`;
     const {provider} = await fixture(async (_url, init) => { request = JSON.parse(init.body); return serverResponse(text, {fragmented: true}); });
     const chunks = [];
-    const result = await new provider.OpenAIProvider(config).generateExplanationStream('word', 'context', '{{target}}', '', undefined,
+    const result = await new provider.CustomProvider(config).generateExplanationStream('word', 'context', '{{target}}', '', undefined,
         (part, full) => chunks.push([part, full]));
     assert.equal(request.stream, true);
     assert.equal(result, 'Olá ação 日本語');
@@ -73,7 +73,7 @@ test('[DONE] completes and cancels a connection that remains open', async () => 
         stayOpen: true, onCancel: () => { cancelled += 1; },
     }));
     const chunks = [];
-    const result = await promptly(new provider.OpenAIProvider(config).generateExplanationStream('word', 'context', '{{target}}', '', undefined,
+    const result = await promptly(new provider.CustomProvider(config).generateExplanationStream('word', 'context', '{{target}}', '', undefined,
         (part) => chunks.push(part)));
     assert.equal(result, 'answer');
     assert.deepEqual(chunks, ['answer']);
@@ -85,7 +85,7 @@ test('aborting after a token closes the reader and rejects without more chunks',
     const controller = new AbortController();
     const {provider} = await fixture(async () => serverResponse(event(delta('partial')) + event(delta('late buffered chunk')) + 'data: [DONE]\n\n', {stayOpen: true, onCancel: () => { cancelled += 1; }}));
     const chunks = [];
-    const request = new provider.OpenAIProvider(config).generateExplanationStream('word', 'context', '{{target}}', '', controller.signal,
+    const request = new provider.CustomProvider(config).generateExplanationStream('word', 'context', '{{target}}', '', controller.signal,
         (part) => { chunks.push(part); controller.abort(); });
     await assert.rejects(promptly(request), {name: 'AbortError'});
     assert.deepEqual(chunks, ['partial']);
@@ -97,16 +97,61 @@ test('stream error frames fail immediately with provider detail and cancel the b
     const {provider} = await fixture(async () => serverResponse(event({error: {code: 429, message: 'Test quota exceeded'}}), {
         stayOpen: true, onCancel: () => { cancelled += 1; },
     }));
-    await assert.rejects(promptly(new provider.OpenAIProvider(config).generateExplanationStream('word', 'context', '{{target}}')),
+    await assert.rejects(promptly(new provider.CustomProvider(config).generateExplanationStream('word', 'context', '{{target}}')),
         (error) => error.status === 429 && error.message.includes('Test quota exceeded'));
     assert.equal(cancelled, 1);
 });
 
-test('Gemini handles fragmented text while ignoring thinking parts', async () => {
-    const text = event({candidates: [{content: {parts: [{thought: true, text: 'private thinking'}, {text: 'Olá'}]}}]}) +
-        event({candidates: [{content: {parts: [{text: ' mundo'}]}}]});
-    const {provider} = await fixture(async () => serverResponse(text, {fragmented: true}));
-    assert.equal(await new provider.GeminiProvider(config).generateExplanationStream('word', 'context', '{{target}}'), 'Olá mundo');
+test('the Anthropic format streams text deltas only, with its headers, cached system block and effort', async () => {
+    let request;
+    const anthropic = {...config, endpoint: 'https://api.anthropic.com/v1/messages', model: 'claude-test', thinkingMode: 'enabled', thinkingIntensity: 'minimal'};
+    const text = 'event: message_start\n' + event({type: 'message_start', message: {usage: {input_tokens: 5, cache_read_input_tokens: 100}}}) +
+        event({type: 'content_block_start', index: 0, content_block: {type: 'thinking', thinking: ''}}) +
+        event({type: 'content_block_delta', index: 0, delta: {type: 'thinking_delta', thinking: 'private'}}) +
+        event({type: 'content_block_delta', index: 1, delta: {type: 'text_delta', text: 'Olá'}}) +
+        ': ping\n\n' + event({type: 'content_block_delta', index: 1, delta: {type: 'text_delta', text: ' mundo'}}) +
+        event({type: 'message_delta', delta: {stop_reason: 'end_turn'}}) + event({type: 'message_stop'}) +
+        event({type: 'content_block_delta', index: 1, delta: {type: 'text_delta', text: 'ignored'}});
+    const {provider} = await fixture(async (url, init) => { request = {url, headers: init.headers, body: JSON.parse(init.body)}; return serverResponse(text, {fragmented: true}); });
+    const instance = new provider.CustomProvider(anthropic);
+    assert.equal(instance.apiFormat(), 'anthropic', 'an endpoint ending in /messages is Anthropic\'s');
+    const chunks = [];
+    assert.equal(await instance.generateExplanationStream('word', 'context', 'Explain it.\n\nTarget: {{target}}', '', undefined, (part) => chunks.push(part)), 'Olá mundo');
+    assert.deepEqual(chunks, ['Olá', ' mundo']);
+    assert.equal(request.url, 'https://api.anthropic.com/v1/messages');
+    assert.equal(request.headers['x-api-key'], config.apiKey);
+    assert.equal(request.headers['anthropic-version'], '2023-06-01');
+    assert.equal(request.headers.Authorization, undefined, 'Anthropic reads a bearer as an OAuth token');
+    assert.equal(request.body.stream, true);
+    assert.equal(request.body.model, 'claude-test');
+    assert.equal(request.body.max_tokens, 16000);
+    assert.equal(request.body.temperature, undefined, 'current Claude models reject sampling settings');
+    assert.deepEqual(request.body.system, [{type: 'text', text: 'Explain it.', cache_control: {type: 'ephemeral'}}]);
+    assert.deepEqual(request.body.messages, [{role: 'user', content: 'Target: word'}]);
+    assert.deepEqual(request.body.thinking, {type: 'adaptive'});
+    assert.deepEqual(request.body.output_config, {effort: 'low'});
+});
+
+test('the Anthropic format reads a whole reply, keeps a gateway\'s bearer, and fails on errors and refusals', async () => {
+    let request;
+    let reply = {content: [{type: 'thinking', thinking: ''}, {type: 'text', text: 'resposta'}], stop_reason: 'end_turn', usage: {input_tokens: 3}};
+    const {provider} = await fixture(async (url, init) => { request = {url, headers: init.headers, body: JSON.parse(init.body)}; return new Response(JSON.stringify(reply)); });
+    const gateway = new provider.CustomProvider({...config, endpoint: 'https://openrouter.ai/api/v1/messages', thinkingIntensity: 'custom', customThinkingIntensity: 'xhigh', requestBodyJson: '{"metadata":{"user_id":"t"}}'});
+    assert.equal(await gateway.generateExplanation('word', 'context', '{{target}}'), 'resposta');
+    assert.equal(request.body.stream, false);
+    assert.equal(request.headers.Authorization, `Bearer ${config.apiKey}`);
+    assert.deepEqual(request.body.output_config, {effort: 'xhigh'});
+    assert.equal(request.body.thinking, undefined);
+    assert.deepEqual(request.body.metadata, {user_id: 't'}, 'the extra JSON is merged');
+    const chosen = new provider.CustomProvider({...config, endpoint: 'https://gateway.test/v1/claude', apiFormat: 'anthropic'});
+    assert.equal(chosen.apiFormat(), 'anthropic', 'the format can be chosen for any endpoint');
+    assert.equal(new provider.CustomProvider({...config, endpoint: 'https://api.anthropic.com/v1/messages', apiFormat: 'openai'}).apiFormat(), 'openai');
+    reply = {content: [], stop_reason: 'refusal'};
+    await assert.rejects(chosen.generateExplanation('word', 'context', '{{target}}'), /refusal/);
+    const failing = await fixture(async () => serverResponse(event({type: 'message_start', message: {}}) +
+        'event: error\n' + event({type: 'error', error: {type: 'overloaded_error', message: 'Overloaded'}})));
+    await assert.rejects(new failing.provider.CustomProvider({...config, endpoint: 'https://api.anthropic.com/v1/messages'})
+        .generateExplanationStream('word', 'context', '{{target}}'), /Overloaded/);
 });
 
 test('empty streams fall back once to a normal response, while partial failures do not retry', async () => {
@@ -118,7 +163,7 @@ test('empty streams fall back once to a normal response, while partial failures 
     });
     const chunks = [];
     assert.equal(await explain(options, 'word', 'context', {onChunk: (part) => chunks.push(part)}), 'fallback answer');
-    assert.deepEqual(requests, [true, undefined]);
+    assert.deepEqual(requests, [true, false]);
     assert.deepEqual(chunks, ['fallback answer']);
 
     let attempts = 0;
@@ -227,7 +272,7 @@ test('fixed instructions go first as the system message and the lookup text last
         requests.push(JSON.parse(init.body));
         return new Response(JSON.stringify({choices: [{message: {content: 'answer'}}]}));
     });
-    const deepseek = new provider.DeepSeekProvider({...config});
+    const deepseek = new provider.CustomProvider({...config, endpoint: 'https://api.deepseek.com/chat/completions'});
     await deepseek.generateExplanation('carro', 'Ele comprou um carro.', 'Word: {{target}}\nContext: {{sentence}}\n\nDescribe the word.\nAs JSON.',
         'Target: {{target}}\n\nSentence: {{sentence}}\nBe brief.');
     assert.deepEqual(requests.at(-1).messages, [

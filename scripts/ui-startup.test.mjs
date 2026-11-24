@@ -199,31 +199,29 @@ async function dictionaryFixture(overrides = {}) {
     return {view, root, list, ai, settings, control, change, saves: () => saves};
 }
 
-test('every BYOK provider option remains reachable when switching AI providers', async () => {
+test('every option of the one AI provider is reachable, with no provider to choose', async () => {
     const fixture = await dictionaryFixture();
-    // All provider fields in yomitan-byok-ai/ext/data/schemas/options-schema.json.
-    const fields = {
-        openai: ['apiKey', 'model'],
-        gemini: ['apiKey', 'model', 'thinkingLevel'],
-        deepseek: ['apiKey', 'model', 'thinkingMode', 'thinkingIntensity'],
-        custom: ['apiKey', 'model', 'endpoint', 'providerRoutingMode', 'providerSlugs',
-            'providerAllowFallbacks', 'thinkingMode', 'thinkingIntensity', 'customThinkingIntensity', 'requestBodyJson'],
-    };
-    for (const [provider, keys] of Object.entries(fields)) {
-        fixture.change('provider', provider);
-        for (const key of keys) { assert(fixture.control(`${provider}.${key}`), `${provider}.${key} must be visible`); }
-        for (const key of ['provider', 'temperature', 'customPrompt', 'systemPrompt', 'autoGenerateOnLookup',
-            'streamResponse', 'cancelPendingRequests', 'autoExplain', 'cardPrompt', 'wordTranslationPrompt']) {
-            assert(fixture.control(key), `${key} must be visible`);
-        }
-        // Removed at the user's request: Lookupper has no such option, and the AI reads the word
-        // without the dictionaries.
-        assert(!fixture.control('unknownWordFallback'));
-        assert(!descendants(fixture.root).some((node) => node.tagName === '#text' && node.textContent === 'null'));
+    // OpenAI, Gemini and DeepSeek were removed on 2026-11-24; the custom provider takes any endpoint.
+    for (const key of ['apiKey', 'model', 'endpoint', 'apiFormat', 'providerRoutingMode', 'providerSlugs',
+        'providerAllowFallbacks', 'thinkingMode', 'thinkingIntensity', 'customThinkingIntensity', 'requestBodyJson']) {
+        assert(fixture.control(`custom.${key}`), `custom.${key} must be visible`);
     }
+    assert(!fixture.control('provider'), 'there is no provider to choose');
+    const formats = fixture.control('custom.apiFormat').children.map((option) => option.value);
+    assert.deepEqual(formats, ['', 'openai', 'anthropic']);
+    fixture.change('custom.apiFormat', 'anthropic');
+    assert.equal(fixture.ai.custom.apiFormat, 'anthropic');
+    for (const key of ['temperature', 'customPrompt', 'systemPrompt', 'autoGenerateOnLookup',
+        'streamResponse', 'cancelPendingRequests', 'autoExplain', 'cardPrompt', 'wordTranslationPrompt']) {
+        assert(fixture.control(key), `${key} must be visible`);
+    }
+    // Removed at the user's request: Lookupper has no such option, and the AI reads the word
+    // without the dictionaries.
+    assert(!fixture.control('unknownWordFallback'));
+    assert(!descendants(fixture.root).some((node) => node.tagName === '#text' && node.textContent === 'null'));
 });
 
-test('custom thinking effort, manual values, routing and JSON survive provider switches', async () => {
+test('custom thinking effort, manual values, routing and JSON are kept as set', async () => {
     const fixture = await dictionaryFixture({provider: 'custom', custom: {model: 'saved-model', apiKey: 'test-only-key',
         endpoint: 'http://localhost:1234/v1/chat/completions', thinkingMode: 'enabled', thinkingIntensity: 'custom',
         customThinkingIntensity: '{"max_tokens":2000}', requestBodyJson: '{"top_p":0.9}'}});
@@ -239,8 +237,6 @@ test('custom thinking effort, manual values, routing and JSON survive provider s
     change('custom.providerRoutingMode', 'only');
     change('custom.providerSlugs', 'deepinfra/turbo, fireworks', 'input');
     change('custom.customThinkingIntensity', '4096', 'input');
-    change('provider', 'gemini');
-    change('provider', 'custom');
     assert.equal(control('custom.thinkingIntensity').value, 'medium');
     assert.equal(control('custom.customThinkingIntensity').value, '4096');
     assert.equal(control('custom.providerRoutingMode').value, 'only');
@@ -249,7 +245,7 @@ test('custom thinking effort, manual values, routing and JSON survive provider s
     assert.equal(ai.custom.apiKey, 'test-only-key');
     assert.equal(ai.custom.endpoint, 'http://localhost:1234/v1/chat/completions');
     assert.equal(ai.custom.requestBodyJson, '{"top_p":0.9}');
-    assert(fixture.saves() >= 6);
+    assert(fixture.saves() >= 4);
 });
 
 test('the context translator has its own provider, which changes only the translator', async () => {
@@ -259,18 +255,19 @@ test('the context translator has its own provider, which changes only the transl
     assert(fixture.control('contextPrompt'));
     assert(fixture.control('autoTranslateContext'), 'the translator has its own automatic switch');
     assert(fixture.control('hideContextTranslation'), 'the translator can hide its translation');
-    for (const key of ['provider', 'custom.model', 'temperature', 'streamResponse', 'cancelPendingRequests', 'systemPrompt']) {
+    for (const key of ['custom.endpoint', 'custom.model', 'custom.apiFormat', 'temperature', 'streamResponse', 'cancelPendingRequests', 'systemPrompt']) {
         assert(fixture.control(`${own}${key}`), `the translator has its own ${key}`);
     }
-    for (const key of ['provider', 'custom.thinkingIntensity', 'autoGenerateOnLookup', 'autoExplain', 'streamResponse']) {
+    for (const key of ['custom.endpoint', 'custom.thinkingIntensity', 'autoGenerateOnLookup', 'autoExplain', 'streamResponse']) {
         assert(!fixture.control(key), `${key} belongs to "IA — palavra no contexto"`);
     }
     assert.equal(fixture.control(`${own}custom.thinkingIntensity`).value, 'low', 'it starts as a copy of the word card provider');
     fixture.change(`${own}custom.model`, 'context-model', 'input');
     fixture.change(`${own}custom.thinkingIntensity`, 'high');
-    fixture.change(`${own}provider`, 'gemini');
+    fixture.change(`${own}custom.apiFormat`, 'anthropic');
     const section = fixture.ai.sectionProviders['ai-context'];
-    assert.equal(section.provider, 'gemini');
+    assert.equal(section.custom.apiFormat, 'anthropic');
+    assert.equal(fixture.ai.custom.apiFormat, '', 'the word card keeps its format');
     assert.equal(section.custom.model, 'context-model');
     assert.equal(section.custom.thinkingIntensity, 'high');
     assert.equal(fixture.ai.provider, 'custom', 'the word card keeps its provider');
@@ -280,21 +277,21 @@ test('the context translator has its own provider, which changes only the transl
 });
 
 test('the images dictionary has its own image query prompts, switch and provider', async () => {
-    const fixture = await dictionaryFixture({provider: 'openai', openai: {model: 'kept-model'}});
+    const fixture = await dictionaryFixture({provider: 'custom', custom: {model: 'kept-model'}});
     fixture.list.children[2].dispatch('click');
     for (const key of ['autoShowImages', 'imageQueryUseAi', 'imageQuerySystemPrompt', 'imageQueryPrompt',
-        'sectionProviders.ai-images.provider', 'sectionProviders.ai-images.openai.model']) {
+        'sectionProviders.ai-images.custom.endpoint', 'sectionProviders.ai-images.custom.model']) {
         assert(fixture.control(key), `${key} must be visible`);
     }
-    for (const key of ['provider', 'openai.model', 'autoGenerateOnLookup', 'autoExplain', 'systemPrompt']) {
+    for (const key of ['custom.endpoint', 'custom.model', 'autoGenerateOnLookup', 'autoExplain', 'systemPrompt']) {
         assert(!fixture.control(key), `${key} belongs to "IA — palavra no contexto"`);
     }
     assert.equal(fixture.control('imageQueryPrompt').value, fixture.ai.imageQueryPrompt);
     fixture.change('imageQueryPrompt', 'Word: {{target}}', 'input');
     assert.equal(fixture.ai.imageQueryPrompt, 'Word: {{target}}');
-    fixture.change('sectionProviders.ai-images.openai.model', 'cheap-model', 'input');
-    assert.equal(fixture.ai.sectionProviders['ai-images'].openai.model, 'cheap-model');
-    assert.equal(fixture.ai.openai.model, 'kept-model');
+    fixture.change('sectionProviders.ai-images.custom.model', 'cheap-model', 'input');
+    assert.equal(fixture.ai.sectionProviders['ai-images'].custom.model, 'cheap-model');
+    assert.equal(fixture.ai.custom.model, 'kept-model');
 });
 
 test('the pop-up order is changed by dragging a row or with Alt+arrows, without HTML drag and drop', async () => {

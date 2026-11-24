@@ -56,7 +56,7 @@ test('the card prompt: one key in four languages, the headword\'s own spelling i
 test('the previous default moves to the new one; edited and emptied prompts stay', () => {
     assert.equal(normalizeAiOptions({cardPrompt: CONTEXT_CARD_PROMPT, cardPromptVersion: 3}).cardPrompt, CARD_PROMPT);
     const edited = `${CONTEXT_CARD_PROMPT} Be brief.`;
-    assert.equal(normalizeAiOptions({cardPrompt: edited, cardPromptVersion: 3}).cardPrompt, edited, 'no marker forced into an edited prompt');
+    assert.equal(normalizeAiOptions({cardPrompt: edited, cardPromptVersion: 3}).cardPrompt, edited.replace('{"headword"', '{{{selectionField}}"headword"'), 'no display marker forced into an edited prompt; only "selection" first, once');
     assert.equal(normalizeAiOptions({cardPrompt: '', cardPromptVersion: 3}).cardPrompt, '');
     assert.equal(normalizeAiOptions({}).cardPrompt, CARD_PROMPT, '"Restaurar padrão" and a missing setting give it');
     assert.equal(cardPrompt('', {ocrLanguage: 'ru-RU'}, {}), '', 'an emptied card prompt asks nothing');

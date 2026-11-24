@@ -8,12 +8,21 @@ test('a saved card prompt gets the synonyms, reading and components once, and co
     assert(!old.includes(COMPONENTS_FIELD) && old.includes(TRANSLATION_FIELD));
     const migrated = normalizeAiOptions({cardPrompt: old});
     assert.equal(migrated.cardPrompt, CARD_PROMPT);
-    assert.equal(migrated.cardPromptVersion, 3);
+    assert.equal(migrated.cardPromptVersion, 4);
     assert.equal(migrated.cardComponents, true);
     const taken = normalizeAiOptions({cardPrompt: old, cardPromptVersion: 3, cardComponents: false});
     assert.equal(taken.cardPrompt, old, 'a prompt the user changed after the migration stays as it is');
     assert.equal(taken.cardComponents, false);
     assert(defaultAiOptions().cardPrompt.includes(READING_FIELD));
+});
+
+test('a card prompt saved before "selection" came first gets its marker once, before "headword"', async () => {
+    const {SELECTION_FIELD, SELECTION_LAST_CARD_PROMPT, CARD_PROMPT} = await import('../src/lib/ai/word-card.js');
+    assert(CARD_PROMPT.includes(`{${SELECTION_FIELD}"headword"`) && CARD_PROMPT.includes('with these keys, in this order'));
+    assert.equal(normalizeAiOptions({cardPrompt: SELECTION_LAST_CARD_PROMPT, cardPromptVersion: 3}).cardPrompt, CARD_PROMPT, 'the old default becomes the new one');
+    const edited = 'Mine: {"headword": x, "ipa": y}';
+    assert.equal(normalizeAiOptions({cardPrompt: edited, cardPromptVersion: 3}).cardPrompt, `Mine: {${SELECTION_FIELD}"headword": x, "ipa": y}`);
+    assert.equal(normalizeAiOptions({cardPrompt: edited, cardPromptVersion: 4}).cardPrompt, edited, 'taken out after the migration, it stays out');
 });
 
 test('a card prompt saved with the components gets the form once, after them', async () => {
@@ -93,9 +102,9 @@ test('the card gets the word analyzer\'s hints with the word, after the cached i
 test('explanation stays manual for new and existing AI settings without autoExplain', () => {
     assert.equal(defaultAiOptions().autoExplain, false);
     assert.equal(normalizeAiOptions(null).autoExplain, false);
-    const previous = normalizeAiOptions({provider: 'gemini', autoGenerateOnLookup: false, streamResponse: false});
+    const previous = normalizeAiOptions({provider: 'custom', autoGenerateOnLookup: false, streamResponse: false});
     assert.equal(previous.autoExplain, false);
-    assert.equal(previous.provider, 'gemini');
+    assert.equal(previous.provider, 'custom');
     assert.equal(previous.autoGenerateOnLookup, false);
     assert.equal(previous.streamResponse, false);
 });
@@ -114,25 +123,52 @@ test('automatic explanation persists independently of automatic cards and restor
 
 test('the context translator and the pictures start from a copy of the word card provider, then keep their own', async () => {
     const {aiOptionsFor} = await import('../src/lib/ai/defaults.js');
-    const old = normalizeAiOptions({provider: 'gemini', gemini: {apiKey: 'test-only-key', model: 'gemini-x'}, temperature: 0.3, streamResponse: false, systemPrompt: 'Be brief.'});
+    const old = normalizeAiOptions({provider: 'custom', custom: {apiKey: 'test-only-key', model: 'model-x', endpoint: 'https://example.test/v1/chat/completions'}, temperature: 0.3, streamResponse: false, systemPrompt: 'Be brief.'});
     for (const id of ['ai-context', 'ai-images']) {
         const options = aiOptionsFor(old, id);
-        assert.equal(options.provider, 'gemini');
-        assert.equal(options.gemini.model, 'gemini-x');
-        assert.equal(options.gemini.apiKey, 'test-only-key', 'the same key keeps working');
+        assert.equal(options.provider, 'custom');
+        assert.equal(options.custom.model, 'model-x');
+        assert.equal(options.custom.apiKey, 'test-only-key', 'the same key keeps working');
         assert.equal(options.temperature, 0.3);
         assert.equal(options.streamResponse, false);
         assert.equal(options.systemPrompt, 'Be brief.');
     }
-    old.sectionProviders['ai-context'].gemini.model = 'other';
-    assert.equal(old.gemini.model, 'gemini-x', 'a copy, not the same object');
-    assert.equal(old.sectionProviders['ai-images'].gemini.model, 'gemini-x');
-    const saved = normalizeAiOptions(JSON.parse(JSON.stringify({provider: 'openai', sectionProviders: {'ai-context': {provider: 'deepseek', deepseek: {model: 'ds'}}}})));
-    assert.equal(aiOptionsFor(saved, 'ai-context').provider, 'deepseek');
-    assert.equal(aiOptionsFor(saved, 'ai-context').deepseek.model, 'ds');
-    assert.equal(aiOptionsFor(saved, 'ai-context').openai.model, 'gpt-4o-mini', 'missing accounts get defaults');
-    assert.equal(aiOptionsFor(saved, 'ai-images').provider, 'openai');
+    old.sectionProviders['ai-context'].custom.model = 'other';
+    assert.equal(old.custom.model, 'model-x', 'a copy, not the same object');
+    assert.equal(old.sectionProviders['ai-images'].custom.model, 'model-x');
+    const saved = normalizeAiOptions(JSON.parse(JSON.stringify({provider: 'custom', custom: {model: 'word'}, sectionProviders: {'ai-context': {provider: 'custom', custom: {model: 'ds'}}}})));
+    assert.equal(aiOptionsFor(saved, 'ai-context').custom.model, 'ds');
+    assert.equal(aiOptionsFor(saved, 'ai-context').custom.apiFormat, '', 'missing fields get defaults');
+    assert.equal(aiOptionsFor(saved, 'ai-images').custom.model, 'word');
     assert.equal(aiOptionsFor(saved, 'ai-word'), saved, 'the word card uses the options as they are');
+});
+
+test('the removed OpenAI, Gemini and DeepSeek providers move into the custom one, per dictionary', async () => {
+    const {aiOptionsFor} = await import('../src/lib/ai/defaults.js');
+    const old = normalizeAiOptions({
+        provider: 'gemini', gemini: {apiKey: 'test-only-g', model: 'gemini-x', thinkingLevel: 'LOW'},
+        openai: {apiKey: 'test-only-o', model: 'gpt-x'},
+        custom: {apiKey: 'test-only-c', model: 'kept', endpoint: 'https://openrouter.ai/api/v1/chat/completions', providerSlugs: 'fireworks'},
+        sectionProviders: {
+            'ai-context': {provider: 'deepseek', deepseek: {apiKey: 'test-only-d', model: '', thinkingMode: 'enabled', thinkingIntensity: 'max'}},
+            'ai-images': {provider: 'openai', openai: {apiKey: '', model: 'gpt-x'}, custom: {apiKey: 'test-only-c2', model: 'own', endpoint: 'https://example.test/v1/chat/completions'}},
+        },
+    });
+    assert.equal(old.provider, 'custom');
+    assert.deepEqual({endpoint: old.custom.endpoint, apiKey: old.custom.apiKey, model: old.custom.model, thinkingIntensity: old.custom.thinkingIntensity, apiFormat: old.custom.apiFormat},
+        {endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', apiKey: 'test-only-g', model: 'gemini-x', thinkingIntensity: 'low', apiFormat: 'openai'},
+        'the provider in use moves in, with its key');
+    assert.equal(old.custom.providerSlugs, 'fireworks', 'the custom provider keeps its other fields');
+    for (const name of ['openai', 'gemini', 'deepseek']) { assert(!(name in old), `${name} is gone`); }
+    const context = aiOptionsFor(old, 'ai-context');
+    assert.equal(context.provider, 'custom');
+    assert.deepEqual([context.custom.endpoint, context.custom.apiKey, context.custom.model, context.custom.thinkingMode, context.custom.thinkingIntensity],
+        ['https://api.deepseek.com/chat/completions', 'test-only-d', 'deepseek-chat', 'enabled', 'max']);
+    const images = aiOptionsFor(old, 'ai-images');
+    assert.equal(images.provider, 'custom');
+    assert.equal(images.custom.model, 'own', 'a removed provider without a key leaves the custom one as it was');
+    assert(!('deepseek' in old.sectionProviders['ai-context']));
+    assert.equal(normalizeAiOptions(JSON.parse(JSON.stringify(old))).custom.apiKey, 'test-only-g', 'a second start changes nothing');
 });
 
 test('the context translator gets its own automatic switch, starting from the old shared one', () => {

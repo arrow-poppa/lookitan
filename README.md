@@ -9,8 +9,9 @@ the word with OCR and shows dictionary entries and an AI explanation in a pop-up
 - **Offline dictionaries:** MDict, Yomitan, StarDict, DSL, Aard2/Slob, CC-CEDICT, JMdict,
   JMnedict, KANJIDIC2, Kaikki, Webster/GCIDE XML and WordNet, with persistent indexes,
   styles, images and audio. See [formats and compatibility](docs/dictionary-engine.md).
-- **Your own AI:** OpenAI, Gemini, DeepSeek or any OpenAI-compatible endpoint (OpenRouter,
-  Ollama, LM Studio), with your key, your model, and your own prompt and system prompt.
+- **Your own AI:** any endpoint in OpenAI's chat completions format (OpenRouter, OpenAI,
+  DeepSeek, Gemini, Ollama, LM Studio) or Anthropic's Messages API, with your key, your model,
+  and your own prompt and system prompt.
 - **Optional Google Lens OCR:** a cloud engine you can switch to in Settings › OCR.
 - **Windows and Linux:** Windows 10/11, Linux X11, and KDE Plasma 6 on Wayland. Packages for
   Windows (`.exe`), Fedora and openSUSE (`.rpm`), Debian and Ubuntu (`.deb`), and any

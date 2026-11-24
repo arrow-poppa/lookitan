@@ -59,7 +59,7 @@ test('earlier default card prompts move to the new one; edited and emptied ones 
         assert.equal(normalizeAiOptions({cardPrompt: old, cardPromptVersion: 3}).cardPrompt, CARD_PROMPT);
     }
     const edited = `${UNIT_CARD_PROMPT} Be brief.`;
-    assert.equal(normalizeAiOptions({cardPrompt: edited, cardPromptVersion: 3}).cardPrompt, edited, 'an edited prompt keeps its old synonyms');
+    assert.equal(normalizeAiOptions({cardPrompt: edited, cardPromptVersion: 3}).cardPrompt, edited.replace('{"headword"', '{{{selectionField}}"headword"'), 'an edited prompt keeps its old synonyms, and gets "selection" first once');
     assert.equal(normalizeAiOptions({cardPrompt: '', cardPromptVersion: 3}).cardPrompt, '', 'emptied stays empty');
     assert.equal(normalizeAiOptions({}).cardPrompt, CARD_PROMPT, 'missing: the default, which "Restaurar padrão" also gives');
     assert.equal(sent({ocrLanguage: 'ko-KR'}, {}), cardPrompt(normalizeAiOptions({cardPrompt: UNIT_CARD_PROMPT, cardPromptVersion: 3}).cardPrompt, {ocrLanguage: 'ko-KR'}, {}));

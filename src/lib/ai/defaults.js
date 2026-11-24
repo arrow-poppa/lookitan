@@ -1,13 +1,48 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FORM_FIELD, LEGACY_EXPRESSIONS_PROMPT, FORM_PROMPT, LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, SENTENCE_CONTEXT_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FIRST_KEY_EXPRESSIONS_PROMPT, FORM_FIELD, LEGACY_EXPRESSIONS_PROMPT, SELECTION_FIELD, SELECTION_LAST_CARD_PROMPT, FORM_PROMPT, LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, SENTENCE_CONTEXT_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
 export const DEFAULT_PROMPT = EXPLAIN_PROMPT;
 
-const PROVIDER_ACCOUNTS = ['openai', 'gemini', 'deepseek', 'custom'];
+const PROVIDER_ACCOUNTS = ['custom'];
+
+/** The providers removed on 2026-11-24, at the user's request: each one's endpoint in the custom
+ * provider (OpenAI's chat completions format). */
+const REMOVED_PROVIDERS = {
+    openai: 'https://api.openai.com/v1/chat/completions',
+    gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    deepseek: 'https://api.deepseek.com/chat/completions',
+};
+
+/**
+ * One dictionary's provider fields with a removed provider moved into the custom one: when it was
+ * the one in use and had a key, its endpoint, key, model and thinking settings become the custom
+ * provider's (Gemini's thinking level as the effort). The removed accounts are dropped.
+ * @param {Record<string, unknown>} fields
+ * @returns {Record<string, unknown>}
+ */
+function withoutRemovedProviders(fields) {
+    const out = {...fields};
+    const old = isObject(out[out.provider]) ? out[out.provider] : null;
+    if (Object.hasOwn(REMOVED_PROVIDERS, out.provider) && old && typeof old.apiKey === 'string' && old.apiKey.trim()) {
+        const custom = isObject(out.custom) ? out.custom : {};
+        const moved = {endpoint: REMOVED_PROVIDERS[out.provider], apiKey: old.apiKey, apiFormat: 'openai',
+            model: typeof old.model === 'string' && old.model.trim() ? old.model : (out.provider === 'openai' ? 'gpt-4o-mini' : out.provider === 'deepseek' ? 'deepseek-chat' : ''),
+            thinkingMode: '', thinkingIntensity: '', customThinkingIntensity: ''};
+        if (out.provider === 'gemini' && typeof old.thinkingLevel === 'string' && old.thinkingLevel) { moved.thinkingIntensity = old.thinkingLevel.toLowerCase(); }
+        if (out.provider === 'deepseek') {
+            moved.thinkingMode = typeof old.thinkingMode === 'string' ? old.thinkingMode : '';
+            moved.thinkingIntensity = typeof old.thinkingIntensity === 'string' ? old.thinkingIntensity : '';
+        }
+        out.custom = {...custom, ...moved};
+    }
+    out.provider = 'custom';
+    for (const name of Object.keys(REMOVED_PROVIDERS)) { delete out[name]; }
+    return out;
+}
 
 /**
  * What each AI dictionary chooses for itself: the provider and its accounts (key, model, thinking,
@@ -49,7 +84,7 @@ export function defaultAiOptions() {
 
 function baseAiOptions() {
     return {
-        provider: 'openai',
+        provider: 'custom',
         customPrompt: DEFAULT_PROMPT,
         cardPrompt: CARD_PROMPT,
         wordTranslationPrompt: WORD_TRANSLATION_PROMPT,
@@ -80,7 +115,7 @@ function baseAiOptions() {
         // The pictures search the word the AI card corrected from the OCR.
         imageUseCardWord: true,
         // Bumped when markers are added to the card prompt, so a saved prompt gets them once.
-        cardPromptVersion: 3,
+        cardPromptVersion: 4,
         // The context translator has its own switch.
         autoTranslateContext: true,
         // Blurs the context translation until it is clicked, like hideWordTranslation.
@@ -89,10 +124,9 @@ function baseAiOptions() {
         streamResponse: true,
         cancelPendingRequests: true,
         temperature: 0.7,
-        openai: {apiKey: '', model: 'gpt-4o-mini'},
-        gemini: {apiKey: '', model: 'gemini-2.5-flash', thinkingLevel: ''},
-        deepseek: {apiKey: '', model: '', thinkingMode: '', thinkingIntensity: ''},
         custom: {
+            // "openai" (chat completions), "anthropic" (Messages API), or '' to follow the endpoint.
+            apiFormat: '',
             apiKey: '',
             model: '',
             endpoint: '',
@@ -115,6 +149,11 @@ export function normalizeAiOptions(stored) {
     const base = baseAiOptions();
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
         return defaultAiOptions();
+    }
+    stored = withoutRemovedProviders(stored);
+    if (isObject(stored.sectionProviders)) {
+        stored.sectionProviders = Object.fromEntries(Object.entries(stored.sectionProviders)
+            .map(([id, fields]) => [id, isObject(fields) ? withoutRemovedProviders(fields) : fields]));
     }
     const out = {...base, ...stored};
     for (const key of ['autoExplain', 'autoShowImages', 'imageQueryUseAi', 'imageMemeMode', 'autoGenerateOnLookup', 'hideContextTranslation', 'cardComponents', 'cardOcrFix', 'contextOcrFix', 'imageUseCardWord']) {
@@ -157,7 +196,7 @@ export function normalizeAiOptions(stored) {
     if (out.contextPrompt.trim() === SENTENCE_CONTEXT_PROMPT) { out.contextPrompt = CONTEXT_PROMPT; }
     // The default note on longer units asks for "selection" first since 2026-11-24, so the card's
     // title, the unit as the text writes it, comes early in the stream.
-    if (out.expressionsPrompt.trim() === LEGACY_EXPRESSIONS_PROMPT) { out.expressionsPrompt = EXPRESSIONS_PROMPT; }
+    if ([LEGACY_EXPRESSIONS_PROMPT, FIRST_KEY_EXPRESSIONS_PROMPT].includes(out.expressionsPrompt.trim())) { out.expressionsPrompt = EXPRESSIONS_PROMPT; }
     // The first default transliteration prompt sometimes got the word back in its own script.
     if (out.transliterationPrompt.trim() === LEGACY_TRANSLITERATION_PROMPT) { out.transliterationPrompt = TRANSLITERATION_PROMPT; }
     // Card prompts saved before the translation had its own field: move the default translation
@@ -175,7 +214,7 @@ export function normalizeAiOptions(stored) {
     if (version < 3 && !out.cardPrompt.includes(FORM_FIELD) && out.cardPrompt.includes(COMPONENTS_FIELD)) {
         out.cardPrompt = out.cardPrompt.replace(COMPONENTS_FIELD, COMPONENTS_FIELD + FORM_FIELD);
     }
-    out.cardPromptVersion = 3;
+    out.cardPromptVersion = 4;
     // The defaults of 2026-10-27 describe the longer unit a word belongs to in every key, ask in the
     // translation for up to two other translations of the same meaning and correct the OCR only
     // when sure; a prompt still on an earlier default moves to it, an edited one stays as written.
@@ -185,7 +224,12 @@ export function normalizeAiOptions(stored) {
     // edited prompt gets no display form unless the user adds the marker or asks for the key. And
     // the one with them, before the definition explained the word rather than the context and the
     // synonyms were told to stay in the text's language.
-    if ([LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT].includes(out.cardPrompt.trim())) { out.cardPrompt = CARD_PROMPT; }
+    if ([LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT, SELECTION_LAST_CARD_PROMPT].includes(out.cardPrompt.trim())) { out.cardPrompt = CARD_PROMPT; }
+    // An edited card prompt saved before "selection" came first in the JSON (2026-11-24) gets its
+    // marker once, so the card's title streams early; a user who later takes it out keeps it out.
+    if (version < 4 && !out.cardPrompt.includes(SELECTION_FIELD) && out.cardPrompt.includes('{"headword"')) {
+        out.cardPrompt = out.cardPrompt.replace('{"headword"', `{${SELECTION_FIELD}"headword"`);
+    }
     if ([LEGACY_WORD_TRANSLATION_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT].includes(out.wordTranslationPrompt.trim())) {
         out.wordTranslationPrompt = WORD_TRANSLATION_PROMPT;
     }

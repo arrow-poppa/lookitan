@@ -228,57 +228,53 @@ function providerSection(ai = store.ai, prefix = '') {
     const wrap = el('div', {class: 'group'});
     const draw = () => {
         wrap.replaceChildren();
+        // One provider since 2026-11-24 (OpenAI, Gemini and DeepSeek removed at the user's
+        // request): any endpoint, in OpenAI's chat completions format or Anthropic's Messages API.
+        ai.provider = 'custom';
+        if (!ai.custom || typeof ai.custom !== 'object') { ai.custom = {apiKey: '', model: '', endpoint: ''}; }
         const models = (DEFAULT_MODELS[ai.provider] || []);
         const modelInput = ctl(`${ai.provider}.model`, 'Modelo', textInput(cfg().model, (v) => { cfg().model = v.trim(); save(); }, {placeholder: models[0] || 'nome-do-modelo'}));
         const listId = `models-${prefix.replace(/\W/g, '-')}${ai.provider}`;
         modelInput.setAttribute('list', listId);
         const datalist = el('datalist', {id: listId}, ...models.map((m) => el('option', {value: m})));
-        wrap.append(...[
-            cardRow({icon: 'cloud', title: 'Provedor', wide: true,
-                control: ctl('provider', 'Provedor', select([
-                    {value: 'openai', label: 'OpenAI'},
-                    {value: 'gemini', label: 'Google Gemini'},
-                    {value: 'deepseek', label: 'DeepSeek'},
-                    {value: 'custom', label: 'Personalizado (OpenRouter, Ollama, LM Studio…)'},
-                ], ai.provider, (v) => { ai.provider = v; save(); draw(); }))}),
-            ai.provider === 'custom' ? cardRow({icon: 'cloud', title: 'Endpoint', desc: 'URL completa da API compatível com OpenAI. Usada exatamente como informada.', wide: true,
-                control: ctl('custom.endpoint', 'Endpoint', textInput(ai.custom.endpoint, (v) => { ai.custom.endpoint = v.trim(); save(); }, {placeholder: 'https://openrouter.ai/api/v1/chat/completions'}))}) : null,
+        wrap.append(
+            cardRow({icon: 'cloud', title: 'Endpoint', desc: 'URL completa da API, usada exatamente como informada. OpenRouter: https://openrouter.ai/api/v1/chat/completions; OpenAI: https://api.openai.com/v1/chat/completions; DeepSeek: https://api.deepseek.com/chat/completions; Anthropic: https://api.anthropic.com/v1/messages.', wide: true,
+                control: ctl('custom.endpoint', 'Endpoint', textInput(ai.custom.endpoint, (v) => { ai.custom.endpoint = v.trim(); save(); }, {placeholder: 'https://openrouter.ai/api/v1/chat/completions'}))}),
+            cardRow({icon: 'cloud', title: 'Formato da API', desc: 'Automático: um endpoint terminado em /messages usa o formato da Anthropic; os outros, o da OpenAI (chat completions), que OpenRouter, DeepSeek, Gemini, Ollama e LM Studio aceitam.', wide: true,
+                control: ctl('custom.apiFormat', 'Formato da API', select([
+                    {value: '', label: 'Automático (pelo endpoint)'},
+                    {value: 'openai', label: 'OpenAI (chat completions)'},
+                    {value: 'anthropic', label: 'Anthropic (Messages API)'},
+                ], ai.custom.apiFormat || '', (v) => { ai.custom.apiFormat = v; save(); }))}),
             cardRow({icon: 'settings', title: 'Chave da API', wide: true,
-                control: ctl(`${ai.provider}.apiKey`, 'Chave da API', textInput(cfg().apiKey, (v) => { cfg().apiKey = v.trim(); save(); }, {type: 'password'}))}),
+                control: ctl('custom.apiKey', 'Chave da API', textInput(cfg().apiKey, (v) => { cfg().apiKey = v.trim(); save(); }, {type: 'password'}))}),
             cardRow({icon: 'sparkle', title: 'Modelo', wide: true, control: el('div', {style: 'width:100%'}, modelInput, datalist)}),
-        ].filter(Boolean));
-        if (ai.provider === 'gemini') {
-            wrap.append(cardRow({icon: 'sparkle', title: 'Nível de raciocínio (Gemini 3)', wide: true,
-                control: ctl('gemini.thinkingLevel', 'Nível de raciocínio (Gemini 3)', select([{value: '', label: 'Padrão do modelo'}, ...['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].map((v) => ({value: v, label: v}))],
-                    ai.gemini.thinkingLevel, (v) => { ai.gemini.thinkingLevel = v; save(); }))}));
-        }
-        if (ai.provider === 'deepseek' || ai.provider === 'custom') {
-            const intensities = ai.provider === 'custom' ? [
+        );
+        {
+            const intensities = [
                 {value: '', label: 'Padrão do modelo'}, {value: 'none', label: 'Nenhuma (none)'},
                 {value: 'minimal', label: 'Mínima (minimal)'}, {value: 'low', label: 'Baixa (low)'},
                 {value: 'medium', label: 'Média (medium)'}, {value: 'high', label: 'Alta (high)'},
                 {value: 'xhigh', label: 'Muito alta (xhigh)'}, {value: 'max', label: 'Máxima (max)'},
                 {value: 'custom', label: 'Personalizada'},
-            ] : [{value: '', label: 'Padrão do modelo'}, {value: 'high', label: 'Alta'}, {value: 'max', label: 'Máxima'}];
+            ];
             wrap.append(
                 cardRow({icon: 'sparkle', title: 'Raciocínio (thinking)', wide: true,
-                    desc: 'Use o padrão do modelo ou escolha se o raciocínio deve ficar ligado ou desligado.',
-                    control: ctl(`${ai.provider}.thinkingMode`, 'Raciocínio (thinking)', select([
+                    desc: 'Use o padrão do modelo ou escolha se o raciocínio deve ficar ligado ou desligado. Na Anthropic, os modelos mais novos sempre raciocinam: lá, Desligado não envia nada e o esforço é que o diminui.',
+                    control: ctl('custom.thinkingMode', 'Raciocínio (thinking)', select([
                         {value: '', label: 'Padrão'}, {value: 'enabled', label: 'Ligado'}, {value: 'disabled', label: 'Desligado'},
                     ], cfg().thinkingMode, (v) => { cfg().thinkingMode = v; save(); }))}),
                 cardRow({icon: 'sparkle', title: 'Esforço do raciocínio (thinking)', wide: true,
-                    desc: 'O modelo precisa aceitar o nível escolhido. Máxima equivale a xhigh no OpenRouter.',
-                    control: ctl(`${ai.provider}.thinkingIntensity`, 'Esforço do raciocínio (thinking)', select(intensities, cfg().thinkingIntensity,
+                    desc: 'O modelo precisa aceitar o nível escolhido. Máxima equivale a xhigh no OpenRouter. Na Anthropic vai em output_config.effort (Nenhuma e Mínima viram low).',
+                    control: ctl('custom.thinkingIntensity', 'Esforço do raciocínio (thinking)', select(intensities, cfg().thinkingIntensity,
                         (v) => { cfg().thinkingIntensity = v; save(); draw(); }))}),
-            );
-            if (ai.provider === 'custom') {
-                wrap.append(cardRow({icon: 'sparkle', title: 'Valor personalizado de thinking',
-                    desc: 'Usado quando o esforço é Personalizada. OpenRouter: medium, 2000 ou {"max_tokens":2000}. Outras APIs: reasoning_effort.', wide: true,
+                cardRow({icon: 'sparkle', title: 'Valor personalizado de thinking',
+                    desc: 'Usado quando o esforço é Personalizada. OpenRouter: medium, 2000 ou {"max_tokens":2000}. Anthropic: um nível (low…max) ou o JSON de output_config. Outras APIs: reasoning_effort.', wide: true,
                     control: ctl('custom.customThinkingIntensity', 'Valor personalizado de thinking', textInput(ai.custom.customThinkingIntensity,
-                        (v) => { ai.custom.customThinkingIntensity = v; save(); }, {placeholder: 'medium, 2000 ou {"max_tokens":2000}'}))}));
-            }
+                        (v) => { ai.custom.customThinkingIntensity = v; save(); }, {placeholder: 'medium, 2000 ou {"max_tokens":2000}'}))}),
+            );
         }
-        if (ai.provider === 'custom') {
+        {
             wrap.append(
                 cardRow({icon: 'list', title: 'Roteamento de provedores (OpenRouter)', wide: true,
                     control: ctl('custom.providerRoutingMode', 'Roteamento de provedores (OpenRouter)', select([
@@ -300,7 +296,7 @@ function providerSection(ai = store.ai, prefix = '') {
         const tempLabel = el('span', {class: 'muted', style: 'width:40px;text-align:right'}, Number(ai.temperature).toFixed(2));
         temp.addEventListener('input', () => { ai.temperature = Number(temp.value); tempLabel.textContent = ai.temperature.toFixed(2); save(); });
         wrap.append(
-            cardRow({icon: 'settings', title: 'Temperatura', control: el('div', {style: 'display:flex;gap:10px;align-items:center'}, temp, tempLabel)}),
+            cardRow({icon: 'settings', title: 'Temperatura', desc: 'Não é enviada no formato da Anthropic: os modelos Claude atuais recusam esse ajuste.', control: el('div', {style: 'display:flex;gap:10px;align-items:center'}, temp, tempLabel)}),
             cardRow({icon: 'play', title: 'Mostrar a resposta enquanto é gerada (streaming)', control: ctl('streamResponse', 'Streaming', toggle(ai.streamResponse, (v) => { ai.streamResponse = v; save(); }))}),
             cardRow({icon: 'close', title: 'Cancelar pedidos pendentes ao consultar outra palavra', control: ctl('cancelPendingRequests', 'Cancelar pedidos pendentes', toggle(ai.cancelPendingRequests, (v) => { ai.cancelPendingRequests = v; save(); }))}),
         );
@@ -380,7 +376,7 @@ function renderAiWord(root) {
         providerSection(),
         el('h3', {}, 'Prompts'),
         el('div', {class: 'group'},
-            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada; ${escapeHtml('{{readingField}}')} pede a leitura só no chinês (pinyin) e no japonês (kana); ${escapeHtml('{{componentsField}}')} pede os componentes só com a opção Componentes ligada; ${escapeHtml('{{formField}}')} pede os traços da forma e, nas escritas não latinas, a transliteração; ${escapeHtml('{{displayField}}')} pede, só em russo, ucraniano e búlgaro (sílaba tônica) e em latim (mácrons), a palavra da tela e o verbete com essas marcas, mostrados apenas quando conferem letra por letra com eles (o título do card é sempre a palavra da tela).`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt',
+            promptCard('Prompt do card', `Pede o JSON com os campos do card. Variáveis: ${vars}. ${escapeHtml('{{selectionField}}')} pede primeiro as partes da expressão no texto ("selection"), para o título do card aparecer logo, e fica vazio quando o prompt das expressões está vazio; ${escapeHtml('{{translationField}}')} recebe a tradução da palavra (o campo abaixo) ou fica vazio quando ela está desligada; ${escapeHtml('{{readingField}}')} pede a leitura só no chinês (pinyin) e no japonês (kana); ${escapeHtml('{{componentsField}}')} pede os componentes só com a opção Componentes ligada; ${escapeHtml('{{formField}}')} pede os traços da forma e, nas escritas não latinas, a transliteração; ${escapeHtml('{{displayField}}')} pede, só em russo, ucraniano e búlgaro (sílaba tônica) e em latim (mácrons), a palavra da tela e o verbete com essas marcas, mostrados apenas quando conferem letra por letra com eles (o título do card é a palavra da tela, ou a expressão como está no texto).`, () => ai.cardPrompt, (v) => { ai.cardPrompt = v; }, CARD_PROMPT, 'cardPrompt',
                 'Vazio, o card não é pedido à IA, e o popup avisa. Use Restaurar padrão para voltar a usá-lo.'),
             promptCard('Prompt da tradução da palavra', `O que a IA põe no campo "translation" do card: a melhor tradução e, separadas por vírgula, até duas outras com o mesmo sentido no contexto ("terminou, concluiu"), só quando houver. Só é enviado com a tradução da palavra ligada. Variáveis: ${vars}.`, () => ai.wordTranslationPrompt, (v) => { ai.wordTranslationPrompt = v; }, WORD_TRANSLATION_PROMPT, 'wordTranslationPrompt'),
             promptCard('Prompt da leitura', `O que a IA põe no campo "reading" do card. Só é enviado no chinês e no japonês. ${escapeHtml('{{readingSystem}}')} vira "pinyin with tone marks" no chinês e "hiragana" no japonês.`, () => ai.readingPrompt, (v) => { ai.readingPrompt = v; }, READING_PROMPT, 'readingPrompt'),
