@@ -92,7 +92,7 @@ impl Yomitan {
         match kind {
             TERM => yomitan_term_html(&row, self.version, &self.tags),
             KANJI => yomitan_kanji_html(&row, self.version, &self.tags),
-            _ => Ok(yomitan_meta_html(&row, kind == KANJI_META)?.map(|(_, _, html)| html).unwrap_or_default()),
+            _ => Ok(yomitan_meta_html(&row, kind == KANJI_META, &self.tags)?.map(|(_, _, html)| html).unwrap_or_default()),
         }
     }
 }
@@ -131,7 +131,7 @@ fn build(dir: &Path, files: &[PathBuf], kinds: &[u16], progress: &dyn Fn(usize))
                 _ => {
                     // Rows of a mode Lookupper does not show are left out of the index.
                     let row: Vec<Value> = serde_json::from_str(json)?;
-                    if let Some((word, reading, _)) = yomitan_meta_html(&row, kind == KANJI_META)? {
+                    if let Some((word, reading, _)) = yomitan_meta_html(&row, kind == KANJI_META, &HashMap::new())? {
                         let aliases: Vec<&str> = if !reading.is_empty() && reading != word { vec![reading.as_str()] } else { Vec::new() };
                         builder.add(&word, location, &aliases)?;
                     }

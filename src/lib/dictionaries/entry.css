@@ -74,6 +74,9 @@ pre { white-space: pre-wrap; }
 .gloss-content { display: block; }
 .kanji-readings, .kanji-stats { margin: 2px 0; color: var(--muted); font-size: 13.5px; }
 .meta-row { margin: 2px 0 0; }
+/* IPA transcriptions (display.css: Pronunciations): each one's tags, often flags, before it */
+.pronunciation-tag-list .tag { font-size: 13px; font-weight: 400; padding: 0 4px; margin-right: 4px; }
+.pronunciation-tag-list { margin-right: 2px; }
 
 /* Lookitan's parts for the other formats: examples, their translations, notes, cross-references */
 .lk-example { color: var(--muted); font-style: italic; }

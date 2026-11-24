@@ -29,6 +29,8 @@ const MAX_BANKS: usize = 100_000;
 const MAX_INDEX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_UNPACKED_DICT: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_ALIAS_MEMORY: usize = 32 * 1024 * 1024;
+/// A StarDict .syn's aliases while its .idx is read (StarDictAliases: text plus 12 bytes each).
+const MAX_SYNONYM_MEMORY: usize = 512 * 1024 * 1024;
 const MAX_VARIANTS: usize = 64;
 const MAX_DEPTH: usize = 64;
 
@@ -473,20 +475,44 @@ fn read_be32(reader: &mut dyn Read) -> Result<u32> {
     Ok(u32::from_be_bytes(buf))
 }
 
-fn stardict_aliases(path: &Path) -> Result<(HashMap<u32, Vec<String>>, u64)> {
+/// A .syn file's aliases, held compactly while the .idx is read: their text in one buffer and,
+/// sorted by entry, (entry, start, end) into it; about 12 bytes plus the text per alias. Until
+/// 2026-11-24 they were a map of Strings counted at 128 bytes each and capped at 32 MiB, which
+/// refused reader.dict EN (630,369 aliases).
+struct StarDictAliases { text: String, items: Vec<(u32, u32, u32)>, next: usize }
+
+impl StarDictAliases {
+    /// The aliases of `entry`; entries must be asked for in increasing order.
+    fn take(&mut self, entry: u32) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Some(&(e, start, end)) = self.items.get(self.next) {
+            if e > entry { break; }
+            if e == entry { out.push(self.text[start as usize..end as usize].to_string()); }
+            self.next += 1;
+        }
+        out
+    }
+
+    /// Whether an alias points past the last entry.
+    fn has_rest(&self) -> bool { self.next < self.items.len() }
+}
+
+fn stardict_aliases(path: &Path) -> Result<(StarDictAliases, u64)> {
     let path = sibling(path, ".syn");
-    if !path.is_file() { return Ok((HashMap::new(), 0)); }
+    let mut aliases = StarDictAliases { text: String::new(), items: Vec::new(), next: 0 };
+    if !path.is_file() { return Ok((aliases, 0)); }
     let mut reader = BufReader::new(File::open(path)?);
-    let mut aliases: HashMap<u32, Vec<String>> = HashMap::new();
-    let mut memory = 0usize;
-    let mut count = 0u64;
     while let Some((alias, _)) = zero_string(&mut reader, MAX_HEADWORD)? {
         let entry = read_be32(&mut reader)?;
-        memory += alias.len() + 128;
-        ensure!(memory <= MAX_ALIAS_MEMORY, "Aliases StarDict excedem o limite de memória de 32 MiB");
-        aliases.entry(entry).or_default().push(alias);
-        count += 1;
+        let start = aliases.text.len();
+        aliases.text.push_str(&alias);
+        let memory = aliases.text.len() + (aliases.items.len() + 1) * 12;
+        ensure!(memory <= MAX_SYNONYM_MEMORY && aliases.text.len() <= u32::MAX as usize, "Aliases StarDict excedem o limite de memória de 512 MiB");
+        aliases.items.push((entry, start as u32, aliases.text.len() as u32));
     }
+    // Stable: an entry's aliases keep the .syn's order.
+    aliases.items.sort_by_key(|item| item.0);
+    let count = aliases.items.len() as u64;
     Ok((aliases, count))
 }
 
@@ -560,12 +586,12 @@ pub(super) fn stardict_index(path: &Path, info: &StarDictInfo, data_len: u64,
         ensure!(index_bytes <= MAX_INDEX_BYTES && count < info.count, "Índice StarDict maior que a contagem declarada");
         ensure!(size as usize <= MAX_ARTICLE, "Verbete StarDict excede 16 MiB");
         ensure!(offset.checked_add(size as u64).is_some_and(|end| end <= data_len), "Offset StarDict fora do arquivo .dict");
-        let entry_aliases = aliases.remove(&(count as u32)).unwrap_or_default();
+        let entry_aliases = aliases.take(count as u32);
         entry(&word, offset, size, &entry_aliases)?;
         count += 1;
     }
     ensure!(count == info.count && index_bytes == info.idx_size, "Contagem ou tamanho do índice StarDict não confere");
-    ensure!(aliases.is_empty(), "Alias StarDict aponta para um verbete inexistente");
+    ensure!(!aliases.has_rest(), "Alias StarDict aponta para um verbete inexistente");
     Ok(())
 }
 
@@ -959,12 +985,12 @@ pub(super) fn yomitan_kanji_html(row: &[Value], version: u64, tags: &HashMap<Str
 /// The word, reading and HTML of a term_meta_bank or kanji_meta_bank row (frequency, pitch
 /// accent, IPA), which Lookupper shows as Frequency and Pitch accent articles. `None` for modes
 /// it does not show.
-pub(super) fn yomitan_meta_html(row: &[Value], kanji: bool) -> Result<Option<(String, String, String)>> {
+pub(super) fn yomitan_meta_html(row: &[Value], kanji: bool, tags: &HashMap<String, TagMeta>) -> Result<Option<(String, String, String)>> {
     let (Some(word), Some(mode), Some(data)) = (value_str(row.first()), value_str(row.get(1)), row.get(2)) else {
         bail!("Metadado Yomitan incompleto");
     };
     ensure!(word.len() <= MAX_HEADWORD, "Palavra Yomitan excede 16 KiB");
-    let Some((reading, body)) = yomitan_meta(mode, data, kanji) else { return Ok(None) };
+    let Some((reading, body)) = yomitan_meta(mode, data, kanji, tags) else { return Ok(None) };
     let mut html = format!("<div class=\"entry\" data-type=\"meta\">{}", headword_html(word, &reading, ""));
     html.push_str(&body);
     html.push_str("</div>");
@@ -973,7 +999,7 @@ pub(super) fn yomitan_meta_html(row: &[Value], kanji: bool) -> Result<Option<(St
 }
 
 /// The reading and HTML of a term_meta_bank or kanji_meta_bank row; `None` for unknown modes.
-fn yomitan_meta(mode: &str, data: &Value, kanji: bool) -> Option<(String, String)> {
+fn yomitan_meta(mode: &str, data: &Value, kanji: bool, tags: &HashMap<String, TagMeta>) -> Option<(String, String)> {
     let reading = if kanji { "" } else { data.get("reading").and_then(Value::as_str).unwrap_or("") };
     let html = match mode {
         "freq" => {
@@ -992,13 +1018,23 @@ fn yomitan_meta(mode: &str, data: &Value, kanji: bool) -> Option<(String, String
             }
             html
         }
+        // As Yomitan's display lists them: one item per transcription, its tags first (wty's IPA
+        // dictionaries tag each with the flags of where it is said, 🇺🇸 🇬🇧, named in their tag
+        // bank), then the transcription. Until 2026-11-24 each line had an "IPA" label and no tags.
         "ipa" if !kanji => {
-            let mut html = String::new();
-            for item in data.get("transcriptions")?.as_array()?.iter().take(MAX_VARIANTS) {
+            let items: Vec<String> = data.get("transcriptions")?.as_array()?.iter().take(MAX_VARIANTS).filter_map(|item| {
                 let ipa = item.get("ipa").and_then(Value::as_str)?;
-                html.push_str(&format!("<div class=\"meta-row\">{} {}</div>", tag_pill("IPA", "pronunciation-dictionary", ""), escape_html(ipa)));
-            }
-            html
+                let names: Vec<&str> = item.get("tags").and_then(Value::as_array)
+                    .map(|t| t.iter().filter_map(Value::as_str).filter(|n| n.len() <= MAX_HEADWORD).collect()).unwrap_or_default();
+                let pills: String = names.iter().map(|name| {
+                    let meta = tags.get(*name).cloned().unwrap_or_default();
+                    tag_pill(name, &meta.category, &meta.notes)
+                }).collect();
+                let pills = if pills.is_empty() { pills } else { format!("<span class=\"pronunciation-tag-list\">{pills}</span>") };
+                Some(format!("<li class=\"gloss-item pronunciation\">{pills}<span class=\"pronunciation-text\">{}</span></li>", escape_html(ipa)))
+            }).collect();
+            if items.is_empty() { return None; }
+            format!("<ul class=\"gloss-list pronunciation-list\" data-count=\"{}\">{}</ul>", items.len(), items.concat())
         }
         _ => return None,
     };
@@ -1274,6 +1310,39 @@ mod tests {
         assert!(html.contains(&format!("href=\"{}\"", entry_link("C++"))));
         assert!(html.contains(&format!("href=\"{}\"", entry_link("literal%20"))));
         assert!(!html.contains("javascript:"));
+    }
+
+    #[test]
+    fn stardict_aliases_are_given_by_entry_in_the_syn_order() {
+        let dir = std::env::temp_dir().join(format!("lkt-syn-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut syn = Vec::new();
+        for (alias, entry) in [("kitty", 2u32), ("feline", 0), ("puss", 2), ("hound", 1), ("ghost", 9)] {
+            syn.extend_from_slice(alias.as_bytes()); syn.push(0); syn.extend_from_slice(&entry.to_be_bytes());
+        }
+        std::fs::write(dir.join("demo.syn"), syn).unwrap();
+        let (mut aliases, count) = stardict_aliases(&dir.join("demo.ifo")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(count, 5);
+        assert_eq!(aliases.take(0), vec!["feline"]);
+        assert_eq!(aliases.take(1), vec!["hound"]);
+        assert_eq!(aliases.take(2), vec!["kitty", "puss"]);
+        assert!(aliases.has_rest(), "the alias of entry 9 points past the last one");
+        assert!(aliases.take(3).is_empty());
+    }
+
+    #[test]
+    fn ipa_transcriptions_are_listed_with_their_flag_tags() {
+        let row: Vec<Value> = serde_json::from_str(r#"["customize","ipa",{"reading":"customize","transcriptions":[{"ipa":"/ˈkʌs.tə.maɪ̯z/","tags":["🇨🇦","🇺🇸"]},{"ipa":"/ˈkas.tə.mɑɪ̯z/","tags":["🇦🇺"]},{"ipa":"/x/"}]}]"#).unwrap();
+        let mut tags = HashMap::new();
+        tags.insert("🇺🇸".to_string(), TagMeta { category: "variety".into(), notes: "US".into() });
+        let (word, _, html) = yomitan_meta_html(&row, false, &tags).unwrap().unwrap();
+        assert_eq!(word, "customize");
+        assert!(html.contains("<ul class=\"gloss-list pronunciation-list\" data-count=\"3\">"), "{html}");
+        assert!(html.contains("<span class=\"tag\" data-category=\"variety\" title=\"US\">🇺🇸</span>"), "{html}");
+        assert!(html.contains("title=\"\">🇨🇦</span>"), "a flag the tag bank lacks still shows");
+        assert!(html.contains("<li class=\"gloss-item pronunciation\"><span class=\"pronunciation-text\">/x/</span></li>"), "{html}");
+        assert!(!html.contains(">IPA<"));
     }
 
     #[test]

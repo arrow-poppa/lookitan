@@ -87,6 +87,13 @@ O nome `.json` em Kaikki significa JSONL, um objeto por linha, não um único ar
 Os bancos `term_meta_bank`/`kanji_meta_bank` (frequência, acento tonal e IPA), que o Lookupper
 mostra como *Frequency* e *Pitch accent*, viram um artigo por linha; assim dicionários só de
 frequência ou só de acento também podem ser adicionados.
+O IPA é listado como no Yomitan: um item por transcrição, com as tags dela antes (os dicionários
+IPA do wty marcam cada uma com bandeiras, 🇺🇸 🇬🇧, nomeadas no `tag_bank`); até 2026-11-24 cada
+linha tinha um rótulo "IPA" e as tags eram descartadas.
+O `.syn` do StarDict fica na memória só durante a indexação, compacto (`StarDictAliases`: o texto
+num buffer e 12 bytes por alias, ordenados por verbete), com limite de 512 MiB. Até 2026-11-24
+eram Strings num mapa, contadas a 128 bytes e limitadas a 32 MiB, o que recusava o reader.dict EN
+(630.369 aliases, `.syn` de 10 MB).
 
 ## Busca, memória e recursos
 
