@@ -291,8 +291,9 @@ pub fn start(navigate: impl Fn() -> bool + Send + 'static, popup: impl Fn() -> b
             for extra in raw.values().chain(hid.as_ref().map(|(_, input)| input)) {
                 merge(&mut input, extra);
             }
-            let busy = !input.buttons.is_empty() || input.left.0.abs().max(input.left.1.abs()) >= STICK_PRESS || input.right_y.abs() > SCROLL_DEAD;
-            let navigate = config.navigation && busy && navigate();
+            // Actions run on every tick, release ticks included: a button let go leaves nothing
+            // "busy", and a pending action must fire then (the old gate cleared it instead).
+            let navigate = config.navigation && navigate();
             for s in machine.step(&input, &config, navigate, popup(), Instant::now()) {
                 signal(s);
             }
@@ -551,6 +552,20 @@ mod tests {
         assert_eq!(m.step(&input(&[]), &c, true, false, t), vec![Signal::Capture { buttons: vec!["LT".into(), "Y".into()], done: true }]);
         m.start_capture(t);
         assert_eq!(m.step(&input(&[]), &c, true, false, t + CAPTURE_TIMEOUT + TICK), vec![Signal::Capture { buttons: vec![], done: true }]);
+    }
+
+    #[test]
+    fn a_pending_action_fires_on_the_release_tick_with_no_button_held() {
+        // The gamepad thread used to step with navigate = false whenever nothing was held, which
+        // cleared the action waiting for its buttons' release instead of firing it (review,
+        // 2026-11-24).
+        let mut c = config(&[]);
+        c.confirm = combo(&["A"]);
+        c.save = combo(&["A", "X"]);
+        let mut m = Machine::new();
+        let t = Instant::now();
+        assert!(m.step(&input(&["A"]), &c, true, false, t).is_empty(), "A starts Save's A + X and waits");
+        assert_eq!(m.step(&input(&[]), &c, true, false, t), vec![Signal::Act(Action::Confirm)], "released alone: Confirm");
     }
 
     #[test]

@@ -754,17 +754,17 @@ function drawViewer(from = '') {
     box.innerHTML = `
         <div class="img-frame">
             <img class="full${from ? ` from-${from}` : ''}${item.path !== undefined ? ' light' : ''}" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.title || gallery.query)}" draggable="false" referrerpolicy="no-referrer">
-            ${several ? `<button class="img-nav prev" title="Anterior (←)" aria-label="Anterior">${icon('chevronLeft')}</button>
-            <button class="img-nav next" title="Próxima (→)" aria-label="Próxima">${icon('chevronRight')}</button>` : ''}
+            ${several ? `<button class="img-nav prev" data-gp-key="img-prev" title="Anterior (←)" aria-label="Anterior">${icon('chevronLeft')}</button>
+            <button class="img-nav next" data-gp-key="img-next" title="Próxima (→)" aria-label="Próxima">${icon('chevronRight')}</button>` : ''}
         </div>
         <div class="img-bar">
             ${several ? `<span class="img-count">${i + 1}/${items.length}</span>` : ''}
             <span class="img-caption">${escapeHtml(item.title || gallery.query)}</span>
-            <button class="ghost icon img-zoom-out" title="Diminuir (−)" aria-label="Diminuir">${icon('zoomOut')}</button>
-            <button class="ghost icon img-zoom-in" title="Ampliar (+, roda do mouse ou clique duplo)" aria-label="Ampliar">${icon('zoomIn')}</button>
-            ${host ? `<button class="ghost img-page" title="${escapeHtml(item.page)}">${icon('open', 'sm')}${escapeHtml(host)}</button>` : ''}
-            <button class="ghost img-pick${selected ? ' on' : ''}" aria-pressed="${selected}" title="${checkLabel(selected)}">${icon('check', 'sm')}${selected ? 'Marcada para o Anki' : 'Marcar para o Anki'}</button>
-            <button class="ghost icon img-close" title="Fechar (Esc)">${icon('close')}</button>
+            <button class="ghost icon img-zoom-out" data-gp-key="img-zoom-out" title="Diminuir (−)" aria-label="Diminuir">${icon('zoomOut')}</button>
+            <button class="ghost icon img-zoom-in" data-gp-key="img-zoom-in" title="Ampliar (+, roda do mouse ou clique duplo)" aria-label="Ampliar">${icon('zoomIn')}</button>
+            ${host ? `<button class="ghost img-page" data-gp-key="img-page" title="${escapeHtml(item.page)}">${icon('open', 'sm')}${escapeHtml(host)}</button>` : ''}
+            <button class="ghost img-pick${selected ? ' on' : ''}" data-gp-key="img-pick" aria-pressed="${selected}" title="${checkLabel(selected)}">${icon('check', 'sm')}${selected ? 'Marcada para o Anki' : 'Marcar para o Anki'}</button>
+            <button class="ghost icon img-close" data-gp-key="img-close" title="Fechar (Esc)">${icon('close')}</button>
         </div>`;
     const full = box.querySelector('.full');
     viewer.zoom = {scale: 1, x: 0, y: 0, full, frame: box.querySelector('.img-frame')};
@@ -1163,7 +1163,7 @@ async function drawSavedCards() {
         <div class="saved-bar">
             <strong dir="auto">${escapeHtml(word)}</strong><span class="muted">${cards.length === 1 ? '1 card salvo' : `${cards.length} cards salvos`}</span>
             <span class="spacer"></span>
-            <button class="ghost icon saved-close" title="Fechar (Esc)" aria-label="Fechar">${icon('close')}</button>
+            <button class="ghost icon saved-close" data-gp-key="saved-close" title="Fechar (Esc)" aria-label="Fechar">${icon('close')}</button>
         </div>
         <div class="saved-list">${cards.length ? cards.map((c, i) => `
             <article class="saved-card${c.id === lookup.savedId ? ' current' : ''}" data-i="${i}">
@@ -1622,6 +1622,8 @@ void listen('popup-open', (event) => {
 // really on screen. Before 2026-11-24 a redraw left it on a removed button, so Confirm clicked
 // nothing (the user's "não é possível confirmar a seleção").
 let gamepadFocus = null;
+/** A stable name for the outlined control, so a redraw can keep the outline on its counterpart. */
+let gamepadFocusKey = null;
 /** "card" (the pop-up's own controls), "pictures" or "saved": where the controller is now. */
 let gamepadLayer = null;
 /** The control a view was opened from, to go back to when it closes. */
@@ -1629,6 +1631,19 @@ let gamepadReturn = null;
 
 function gamepadLayerNow() {
     return viewer ? 'pictures' : savedView ? 'saved' : 'card';
+}
+
+/** A control's stable name: the generated ones carry `data-gp-key`, the rest their id or tile. */
+function gamepadControlKey(el) {
+    if (!el) { return null; }
+    const key = el.dataset?.gpKey;
+    if (key) { return key; }
+    if (el.id) { return `#${el.id}`; }
+    if (el.classList?.contains('img-tile')) {
+        const strip = el.closest?.('.img-strip');
+        return strip ? `tile:${strip.dataset.gallery}:${el.dataset.i}` : null;
+    }
+    return null;
 }
 
 /** The layer's visible controls, in DOM order: buttons and the pictures themselves. */
@@ -1649,6 +1664,7 @@ function gamepadStart(layer, controls) {
 function gamepadMark(el) {
     gamepadFocus?.classList.remove('gp-focus');
     gamepadFocus = el || null;
+    gamepadFocusKey = gamepadControlKey(gamepadFocus);
     if (!gamepadFocus) { return; }
     gamepadFocus.classList.add('gp-focus');
     gamepadFocus.scrollIntoView?.({block: 'nearest', inline: 'nearest'});
@@ -1669,15 +1685,16 @@ function gamepadRestart() {
     if (controls.length) { gamepadMark(gamepadStart(gamepadLayer, controls)); }
 }
 
-/** After a redraw: the outline moves to the layer's start when its control is gone. */
+/** After a redraw: the outline keeps its control when it was redrawn, else moves to the layer's start. */
 function gamepadRefresh() {
     if (gamepadLayer !== gamepadLayerNow()) { return; }
     const controls = gamepadControls();
     if (gamepadFocus && controls.includes(gamepadFocus)) { return; }
-    gamepadMark(controls.length ? gamepadStart(gamepadLayer, controls) : null);
+    const same = gamepadFocusKey && controls.find((el) => gamepadControlKey(el) === gamepadFocusKey);
+    gamepadMark(same || (controls.length ? gamepadStart(gamepadLayer, controls) : null));
 }
 
-/** The controls of the layer that is up; a control that vanished from a redraw is let go. */
+/** The controls of the layer that is up; a control that vanished from a redraw is restored or let go. */
 function gamepadEnsure() {
     const layer = gamepadLayerNow();
     const controls = gamepadControls();
@@ -1685,7 +1702,10 @@ function gamepadEnsure() {
         gamepadLayer = layer;
         gamepadMark(null);
     }
-    if (gamepadFocus && !controls.includes(gamepadFocus)) { gamepadMark(null); }
+    if (gamepadFocus && !controls.includes(gamepadFocus)) {
+        const same = gamepadFocusKey && controls.find((el) => gamepadControlKey(el) === gamepadFocusKey);
+        gamepadMark(same || null);
+    }
     return controls;
 }
 
@@ -1716,10 +1736,16 @@ void listen('gamepad', ({payload}) => {
         const before = gamepadLayerNow();
         const from = gamepadFocus;
         from.click();
-        if (gamepadLayerNow() !== before) {
-            // A view opened (the enlarged picture, the saved cards): its own controls from now on.
-            gamepadReturn = from;
-            gamepadRestart();
+        const after = gamepadLayerNow();
+        if (after !== before) {
+            if (before === 'card') {
+                // A view opened (the enlarged picture, the saved cards): its own controls from now on.
+                gamepadReturn = from;
+                gamepadRestart();
+            } else {
+                // A view was closed from its own X: back where it was opened from.
+                gamepadBack();
+            }
         } else {
             gamepadRefresh();
         }
