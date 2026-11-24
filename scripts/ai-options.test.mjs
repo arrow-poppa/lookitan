@@ -55,6 +55,13 @@ test('the context translator has its own "Corrigir erros de OCR com IA", and the
     assert.equal(imageWord('تابة', card, {...ai, imageUseCardWord: false}), 'تابة', 'switched off: as the OCR read it');
 });
 
+test('the old default note on longer units becomes the one that asks for "selection" first', async () => {
+    const {EXPRESSIONS_PROMPT, LEGACY_EXPRESSIONS_PROMPT} = await import('../src/lib/ai/word-card.js');
+    assert(EXPRESSIONS_PROMPT.includes('"selection", as the first key of the JSON, before "headword"'));
+    assert.equal(normalizeAiOptions({expressionsPrompt: LEGACY_EXPRESSIONS_PROMPT}).expressionsPrompt, EXPRESSIONS_PROMPT);
+    assert.equal(normalizeAiOptions({expressionsPrompt: 'my note'}).expressionsPrompt, 'my note', "the user's own prompt stays");
+});
+
 test('the first default transliteration prompt becomes the one that asks for Latin letters only', async () => {
     const {LEGACY_TRANSLITERATION_PROMPT, TRANSLITERATION_PROMPT} = await import('../src/lib/ai/word-card.js');
     assert(TRANSLITERATION_PROMPT.includes('Latin letters only') && TRANSLITERATION_PROMPT.includes('never the original script'));

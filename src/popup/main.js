@@ -11,7 +11,7 @@ import {AiResponseCache} from '../lib/ai/response-cache.js';
 import {EXPLAIN_PROMPT, cardHints, cardPrompt, contextPrompt, fillLanguages, markSentence, parseCard, parseCardProgress, promptText, sameWord, splitContextTranslation, validDisplayHeadword, validDisplaySurface} from '../lib/ai/word-card.js';
 import {buildNote, cleanGlossaryHtml, createConnection, formatUsesMarker, glossaryDictionaryNames, isFormatReady, orderNoteFields} from '../lib/anki/notes.js';
 import {cardFromLookup, savedDisplayHeadword, savedDisplaySurface} from '../lib/cards.js';
-import {clozeRange, headwordRanges, locateSelection, namesUnit, selectedSpan, unitText} from '../lib/ai/selection.js';
+import {clozeRange, headwordRanges, locateSelection, selectedSpan, unitText} from '../lib/ai/selection.js';
 import {invoke} from '@tauri-apps/api/core';
 import {audioFile, audioQuery, edgeEntry, findAudio, normalizeAudioOptions, sentenceAudioFile, wordAudio} from '../lib/audio.js';
 import {hydrateIcons, icon} from '../lib/icons.js';
@@ -321,21 +321,20 @@ function cardExtrasHtml(card, components) {
 
 function renderCard(body, card, pending = false) {
     const p = state.payload;
-    // The title is the word as the OCR read it (with its stress marked when the card gave a valid
-    // display form of it), or, when the card describes a longer unit (a phrasal verb, idiom,
-    // expression), that unit's headword: "turn off" for "turned", "Catch-22" for "22" (2026-11-24,
-    // at the user's request: the lemma, not "turned … off", and as soon as the headword has
-    // streamed). While streaming, `namesUnit` judges from the headword alone once a later key has
-    // begun (so a half-written headword never shows); at the end, the unit must have been found in
-    // the text. The headword goes below the title when it differs. Lookups, audio and Anki's
-    // {expression} never use the title.
-    const lemma = validDisplayHeadword(card, settings.ocrLanguage) || card.headword;
-    const settled = Boolean(card.ipa || card.cefr || card.reading || card.definition || card.translation ||
-        card.partOfSpeech?.length || card.labels?.length);
+    // The title is what the text says: the whole unit as written when the card describes one (a
+    // phrasal verb, idiom, expression: "turning up", "Catch 22"; its pieces joined by a space),
+    // else the word as the OCR read it (with its stress marked when the card gave a valid display
+    // form of it). The headword, the lemma as a learner's dictionary shows it, goes below it when it
+    // differs. The prompt asks for "selection" before "headword" (EXPRESSIONS_PROMPT), so while
+    // the card streams the unit is placed as soon as "headword" has begun, i.e. once the selection
+    // is complete (2026-11-24, at the user's request: fast, and without " … "). Lookups, audio and
+    // Anki's {expression} never use the title.
     const text = p.context || p.sentence || '';
-    const unit = !card.headword ? false : pending ? settled && namesUnit(p.word, card.headword)
-        : !sameWord(unitText(text, state.contextMarks) || p.word, p.word, settings.ocrLanguage);
-    const headword = (unit && lemma) || validDisplaySurface(card, p.word, settings.ocrLanguage) || p.word || card.headword;
+    const marks = pending ? (card.headword && card.selection ? selectionRanges(p, card) : null) : state.contextMarks;
+    const written = unitText(text, marks);
+    const unit = written && !sameWord(written, p.word, settings.ocrLanguage) ? written : '';
+    const headword = unit || validDisplaySurface(card, p.word, settings.ocrLanguage) || p.word || card.headword;
+    const lemma = validDisplayHeadword(card, settings.ocrLanguage) || card.headword;
     const lemmaLine = lemma && !sameWord(lemma, headword, settings.ocrLanguage) ? `<div class="muted saved-form">Forma de dicionário: <bdi>${escapeHtml(lemma)}</bdi></div>` : '';
     const chips = [];
     if (card.ocrFix) { chips.push(ocrFixHtml(card.ocrFix)); }
@@ -1231,9 +1230,9 @@ function savedCardHtml(c, current) {
         current ? '<span class="chip">esta consulta</span>' : '',
     ].join('');
     const text = c.context && c.context.includes(c.sentence || '') ? c.context : c.sentence;
-    // As the pop-up's card: the unit's headword when the card described one, else the word.
+    // As the pop-up's card: the unit as written when the card described one, else the word.
     const unit = c.context && validMarks(c.contextMarks, c.context) ? unitText(c.context, c.contextMarks) : '';
-    const title = (unit && c.dictionaryForm && !sameWord(unit, c.word, c.language) && savedHeadword(c)) || savedDisplaySurface(c) || c.word || c.dictionaryForm;
+    const title = unit || savedDisplaySurface(c) || c.word || c.dictionaryForm;
     const glossaries = (c.glossaries || []).filter((g) => g?.html).map((g) => `
         <details class="saved-gloss"><summary>${escapeHtml(g.name || 'Dicionário')}</summary><div class="gloss">${cleanGlossaryHtml(g.html)}</div></details>`).join('');
     return `

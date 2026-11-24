@@ -252,21 +252,10 @@ test('the headword of an expression is found where the text writes it, over the 
     const at = [...text].indexOf('2');
     assert.deepEqual(headwordRanges(text, at, '22', 'Catch-22'), [[19, 27]]);
     assert.equal(unitText(text, [[19, 27]]), 'Catch 22');
-    assert.equal(unitText('She turned the light off.', [[4, 10], [21, 24]]), 'turned … off');
+    assert.equal(unitText('She turned the light off.', [[4, 10], [21, 24]]), 'turned off', 'the pieces joined by a space');
     assert.equal(headwordRanges('rock and roll music', 5, 'and', "rock 'n' roll"), null, 'other letters are no match');
     assert.equal(headwordRanges('the catch was 22 metres', 14, '22', 'Catch-22'), null, 'words between are no joiners');
     assert.equal(headwordRanges('Catch 22 ig', 6, '22', '22'), null, 'not longer than the word');
     assert.equal(headwordRanges('Catch 22x', 6, '22x', 'Catch-22'), null, 'the word must be inside it');
     assert.deepEqual(headwordRanges('Catch 22 then Catch 22', 6, '22', 'Catch-22'), [[0, 8]], 'only the place over the word counts');
-});
-
-test('a headword names a longer unit from the word and itself alone, for the streaming title', async () => {
-    const {namesUnit} = await import('../src/lib/ai/selection.js');
-    assert.equal(namesUnit('turned', 'turn off'), true);
-    assert.equal(namesUnit('22', 'Catch-22'), true);
-    assert.equal(namesUnit('学', '学习'), true);
-    assert.equal(namesUnit('up', 'turn up'), true);
-    assert.equal(namesUnit('Socrates', 'Nobel Prize'), false, 'an unrelated unit');
-    assert.equal(namesUnit('ran', 'run'), false, 'a lemma of one word');
-    assert.equal(namesUnit('Running', 'running'), false);
 });

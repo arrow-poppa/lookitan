@@ -1,7 +1,7 @@
 // Default AI options: the `ai` object of yomitan-byok-ai's options schema, plus Lookitan's prompts
 // for the word card and the context translator.
 
-import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FORM_FIELD, FORM_PROMPT, LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, SENTENCE_CONTEXT_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
+import {CARD_PROMPT, COMPONENTS_FIELD, COMPONENTS_PROMPT, CONTEXT_OCR_PROMPT, CONTEXT_PROMPT, EXPLAIN_PROMPT, EXPRESSIONS_PROMPT, FORM_FIELD, LEGACY_EXPRESSIONS_PROMPT, FORM_PROMPT, LEGACY_CARD_PROMPT, UNIT_CARD_PROMPT, CONTEXT_CARD_PROMPT, DISPLAY_CARD_PROMPT, LEGACY_CONTEXT_PROMPT, LEGACY_EXPLAIN_PROMPT, LEGACY_OCR_ERRORS_PROMPT, LEGACY_TRANSLATION_FIELD, LEGACY_TRANSLITERATION_PROMPT, LEGACY_WORD_TRANSLATION_PROMPT, OCR_ERRORS_PROMPT, SENTENCE_CONTEXT_PROMPT, SINGLE_WORD_TRANSLATION_PROMPT, READING_PROMPT, SYNONYMS_READING_AND_COMPONENTS, TRANSLATION_FIELD, TRANSLATION_LANGUAGE_EXPLAIN_PROMPT, TRANSLITERATION_PROMPT, WORD_TRANSLATION_PROMPT} from './word-card.js';
 import {IMAGE_QUERY_PROMPT, IMAGE_QUERY_SYSTEM_PROMPT} from '../images.js';
 
 /** Default for the explanation prompt (the fork's `customPrompt`), used by "Explain". */
@@ -155,6 +155,9 @@ export function normalizeAiOptions(stored) {
     // The default context prompt then translated the sentence alone; it translates the paragraph
     // now, keeping the sentence's marks, so a prompt still on it moves to the new one.
     if (out.contextPrompt.trim() === SENTENCE_CONTEXT_PROMPT) { out.contextPrompt = CONTEXT_PROMPT; }
+    // The default note on longer units asks for "selection" first since 2026-11-24, so the card's
+    // title, the unit as the text writes it, comes early in the stream.
+    if (out.expressionsPrompt.trim() === LEGACY_EXPRESSIONS_PROMPT) { out.expressionsPrompt = EXPRESSIONS_PROMPT; }
     // The first default transliteration prompt sometimes got the word back in its own script.
     if (out.transliterationPrompt.trim() === LEGACY_TRANSLITERATION_PROMPT) { out.transliterationPrompt = TRANSLITERATION_PROMPT; }
     // Card prompts saved before the translation had its own field: move the default translation

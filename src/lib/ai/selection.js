@@ -264,38 +264,18 @@ export function selectedSpan(text, ranges) {
 }
 
 /**
- * The unit as it is written in the text, from its ranges: its pieces with " … " where other words
- * come between them ("Catch 22", "turned … off"); '' when there are no ranges. It tells whether the
- * unit found is longer than the word (the card's title then shows the unit's headword).
+ * The unit as it is written in the text, from its ranges: its pieces joined by `between`
+ * ("Catch 22", "turning up" for "turning the volume up"); '' when there are no ranges. The card's
+ * title shows it, with the lemma as "Forma de dicionário" below (since 2026-11-24 without " … "
+ * between the pieces, at the user's request).
  * @param {string} text
  * @param {[number, number][]|null|undefined} ranges from locateSelection or headwordRanges
+ * @param {string} [between]
  */
-export function unitText(text, ranges) {
+export function unitText(text, ranges, between = ' ') {
     if (!text || !Array.isArray(ranges) || !ranges.length) { return ''; }
     const chars = [...text];
-    return ranges.map(([s, e]) => chars.slice(s, e).join('')).join(' … ');
-}
-
-/** Letters and digits only, lower case. */
-const lettersOf = (text) => String(text || '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}\p{M}]/gu, '');
-const tokensOf = (text) => String(text || '').split(/[\s\-\u2010\u2011\u2013]+/u).filter((t) => lettersOf(t));
-
-/**
- * Whether `headword` names a longer unit the word belongs to, judged from the two alone, so the
- * title can show it while the card still streams: more words than the word and sharing its
- * beginning ("turn off" for "turned", "Catch-22" for "22"), or the word's letters inside longer
- * ones (学习 for 学). Not "Nobel Prize" for "Socrates", nor "run" for "ran".
- * @param {string} word
- * @param {string} headword
- */
-export function namesUnit(word, headword) {
-    const w = lettersOf(word);
-    const h = lettersOf(headword);
-    if (!w || !h || h === w) { return false; }
-    if (h.length > w.length && h.includes(w)) { return true; }
-    if (tokensOf(headword).length <= Math.max(1, tokensOf(word).length)) { return false; }
-    const stem = [...w].slice(0, 3).join('');
-    return tokensOf(headword).some((t) => lettersOf(t).startsWith(stem) || w.startsWith(lettersOf(t)));
+    return ranges.map(([s, e]) => chars.slice(s, e).join('')).join(between);
 }
 
 /** Characters that may join the pieces of a written expression and its dictionary form: spaces,

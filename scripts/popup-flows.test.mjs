@@ -128,6 +128,30 @@ test('popup forwards the streaming option and renders a safe card before complet
     assert(!body.innerHTML.includes('Gerando'));
 });
 
+test('the unit as written heads the card while it streams, once its selection is complete', async () => {
+    const finish = deferred();
+    let chunk;
+    const view = await fixture({explain: async (_options, _word, _sentence, request) => {
+        chunk = request.onChunk;
+        request.onChunk('', '{"selection":{"parts":["turning","u');
+        return finish.promise;
+    }});
+    const context = 'She was turning the volume up.';
+    view.lookup.payload = {word: 'turning', sentence: context, context, contextAt: 8, entries: []};
+    const body = new Element();
+    const pending = view.popup.runCard(body);
+    await flush();
+    assert(!body.innerHTML.includes('<span class="word" dir="auto">turning u'), 'a half-written piece never shows');
+    chunk('', '{"selection":{"parts":["turning","up"],"type":"phrasal_verb"},"headword":"tu');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">turning up</span>'), 'the unit as written, before the rest: ' + body.innerHTML);
+    const full = '{"selection":{"parts":["turning","up"],"type":"phrasal_verb"},"headword":"turn up","definition":"increase"}';
+    chunk('', full);
+    finish.resolve(full);
+    await pending;
+    assert(body.innerHTML.includes('<span class="word" dir="auto">turning up</span>'));
+    assert(body.innerHTML.includes('Forma de dicionário: <bdi>turn up</bdi>'));
+});
+
 test('local dictionaries and AI sections follow the same configured order', async () => {
     const dictionaries = [
         {id: 'local-a', kind: 'mdict', name: 'Dictionary A', enabled: true},
@@ -208,8 +232,8 @@ test('the card marks each piece of the longer unit it describes, safely, and the
     const body = new Element();
     await view.popup.runCard(body);
     assert.equal(calls, 1, 'one request');
-    assert(body.innerHTML.includes('<span class="word" dir="auto">turn off</span>'), 'the title is the unit\'s headword');
-    assert(!body.innerHTML.includes('Forma de dicionário'), 'not repeated under it');
+    assert(body.innerHTML.includes('<span class="word" dir="auto">turned off</span>'), 'the title is the unit as written, without " … "');
+    assert(body.innerHTML.includes('Forma de dicionário: <bdi>turn off</bdi>'), 'the unit\'s headword under it');
     assert(body.innerHTML.includes('She <mark>turned</mark> the light <mark>off</mark>.'), 'both pieces are marked');
     assert.deepEqual(view.lookup.payload.word, 'turned', 'the word as read is kept');
     answer = '{"headword":"x","selection":{"parts":["<b>bold</b> text"]}}';
@@ -229,7 +253,8 @@ test('the card marks each piece of the longer unit it describes, safely, and the
     view.lookup.payload = lookupOf('it feels shitty so Catch 22 ig', '22');
     const catch22 = new Element();
     await view.popup.runCard(catch22);
-    assert(catch22.innerHTML.includes('<span class="word" dir="auto">Catch-22</span>'), 'the expression\'s headword is the title: ' + catch22.innerHTML);
+    assert(catch22.innerHTML.includes('<span class="word" dir="auto">Catch 22</span>'), 'the expression is the title: ' + catch22.innerHTML);
+    assert(catch22.innerHTML.includes('Forma de dicionário: <bdi>Catch-22</bdi>'), 'its lemma below it');
     assert(catch22.innerHTML.includes('so <mark>Catch 22</mark> ig'), 'and the expression is marked');
 });
 
