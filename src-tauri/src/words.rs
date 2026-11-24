@@ -440,8 +440,8 @@ fn pick_analyzed(lines: &[OcrLine], para: &[usize], idx: usize, ci: usize, seg: 
     let run: Vec<char> = word.chars().take(MAX_RUN).collect();
     let shorter = run.first().is_some_and(|&c| is_unspaced_script(c));
     let lemmas: Vec<String> = w.lemmas.into_iter().filter(|l| *l != word).collect();
-    // The OCR's form first, its dictionary forms as fallbacks (dict::lookup takes, per dictionary,
-    // the first that it has).
+    // The OCR's form first, its dictionary forms after it (dict::lookup takes, per dictionary, the
+    // first that it has, then the next dictionary form's entries when the first was the OCR's form).
     for c in [word.clone()].into_iter().chain(lemmas.iter().cloned()).chain((1..run.len()).rev().filter(|_| shorter).map(|n| run[..n].iter().collect::<String>())) {
         if !candidates.contains(&c) {
             candidates.push(c);

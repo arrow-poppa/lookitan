@@ -211,16 +211,23 @@ fn companion_mdds(path: &Path) -> Result<Vec<PathBuf>> {
 pub type DictList = Vec<Arc<Dictionary>>;
 
 /// Looks up the candidate forms in every dictionary, in dictionary order. Within one dictionary the
-/// first candidate that matches wins, so the form on screen beats a guessed base form.
+/// first candidate that matches wins, so the form on screen beats a guessed base form. When that
+/// first match is the word as written ("spanning"), the dictionary's entries for its dictionary
+/// form ("span", the next later candidate it has) follow, as Yomitan shows a result for each form:
+/// a dictionary that has both no longer hides the lemma's entry (2026-11-24, at the user's
+/// request). In a script written without spaces, a shorter prefix of the word is no dictionary
+/// form of it and is not added.
 pub fn lookup(dicts: &DictList, candidates: &[String]) -> Vec<EntryRef> {
+    let surface = candidates.first().map(String::as_str).unwrap_or("");
+    let spellings = candidate_forms(surface);
+    let unspaced = surface.trim().chars().next().is_some_and(unspaced_script);
     let mut out = Vec::new();
     for d in dicts {
-        for cand in candidates {
-            let hits = d.find(cand);
-            if hits.is_empty() {
-                continue;
-            }
+        let mut found: Vec<u32> = Vec::new();
+        let mut push = |cand: &String, hits: Vec<u32>, out: &mut Vec<EntryRef>| {
             for idx in hits {
+                if found.contains(&idx) { continue; }
+                found.push(idx);
                 out.push(EntryRef {
                     dict_id: d.id.clone(),
                     dict_name: d.name.clone(),
@@ -229,10 +236,31 @@ pub fn lookup(dicts: &DictList, candidates: &[String]) -> Vec<EntryRef> {
                     matched: cand.clone(),
                 });
             }
+        };
+        for (i, cand) in candidates.iter().enumerate() {
+            let hits = d.find(cand);
+            if hits.is_empty() { continue; }
+            push(cand, hits, &mut out);
+            let written = cand == surface || spellings.contains(cand);
+            if written {
+                let lemma = candidates[i + 1..].iter()
+                    .filter(|c| !spellings.contains(*c) && c.as_str() != surface)
+                    .filter(|c| !(unspaced && surface.trim().starts_with(c.as_str())))
+                    .find_map(|c| { let hits = d.find(c); (!hits.is_empty()).then(|| (c, hits)) });
+                if let Some((c, hits)) = lemma { push(c, hits, &mut out); }
+            }
             break;
         }
     }
     out
+}
+
+/// Scripts written without spaces between words (as `ocr::is_unspaced_script`, which this module
+/// cannot reach in the reader harness): their candidates include the word's shorter prefixes.
+fn unspaced_script(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF | 0x31F0..=0x31FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF
+        | 0xFF66..=0xFF9F | 0x0E00..=0x0E7F | 0x0E80..=0x0EFF | 0x1000..=0x109F | 0x1780..=0x17FF)
 }
 
 /// Surface and Unicode-normalized spellings only. The lookup engine expands these with the

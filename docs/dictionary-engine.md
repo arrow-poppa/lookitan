@@ -100,7 +100,12 @@ eram Strings num mapa, contadas a 128 bytes e limitadas a 32 MiB, o que recusava
 ## Busca, memória e recursos
 
 - A grafia consultada tem prioridade sobre a forma normalizada ou flexionada. A primeira forma
-  encontrada em cada dicionário vence; homógrafos dessa forma são preservados, até 128 resultados.
+  encontrada em cada dicionário vem primeiro; homógrafos dessa forma são preservados, até 128 resultados.
+  Desde 2026-11-24 (pedido do usuário, como o Yomitan): quando essa primeira forma é a palavra como
+  escrita ("spanning"), os verbetes da forma de dicionário seguinte que o dicionário tiver ("span")
+  vêm logo depois, sem repetir um verbete já mostrado. Antes, um dicionário com as duas escondia a
+  do lema (o wty-en-ipa tem "spanning" sem bandeiras e "span" com elas). Em escrita sem espaços
+  (chinês, japonês, tailandês…) um prefixo mais curto da palavra não conta como forma de dicionário.
 - Os artigos seguem a ordem configurada, inclusive quando fontes locais e IA estão intercaladas.
   A exportação para o Anki agrupa todos os homógrafos da fonte, sem duplicar o mesmo artigo.
 - Como no Lookupper, não há banco de dados. Um ZIP importado é extraído para

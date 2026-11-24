@@ -347,12 +347,20 @@ test('the pop-up order is changed by dragging a row or with Alt+arrows, without 
     }
     const last = list.children[2];
     const pointer = (type, clientY) => last.listeners[type][0]({type, clientY, pointerId: 7, button: 0, target: {closest: () => null}});
+    let captured = 0;
+    last.setPointerCapture = () => { captured++; };
     pointer('pointerdown', 100);
+    assert.equal(captured, 1, 'the pointer is captured on the press, so the row keeps getting the moves');
     pointer('pointermove', 98);
-    assert.equal(list.children[2], last, 'a few pixels are not a drag');
+    assert.equal(last.style.transform, undefined, 'a few pixels are not a drag');
     pointer('pointermove', 10);
-    assert.equal(list.children[0], last, 'the row moves among the others while dragged');
+    assert.equal(list.children[2], last, 'nothing moves in the document while dragged, which would drop the capture');
+    assert.equal(last.style.transform, 'translateY(-90px)', 'the row follows the pointer');
+    assert.deepEqual(list.children.slice(0, 2).map((r) => r.style.transform), ['translateY(40px)', 'translateY(40px)'], 'the others slide aside');
+    assert.deepEqual(list.children.map((r) => r.querySelector('.num').textContent), ['2', '3', '1'], 'the numbers show the order being made');
     pointer('pointerup', 10);
+    assert.equal(list.children[0], last, 'dropped, the row takes its place at once');
+    assert.deepEqual(list.children.map((r) => r.style.transform), ['', '', '']);
     await new Promise((done) => setImmediate(done));
     assert.deepEqual(moves.at(-1), ['local', 0]);
     assert.deepEqual(order.map((d) => d.id), ['local', 'ai-context', 'ai-word']);

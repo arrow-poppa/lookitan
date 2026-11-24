@@ -47,11 +47,15 @@ fn dsl_lookup_preserves_homographs_aliases_candidate_precedence_and_dictionary_o
     assert_eq!(one.find("running"), vec![run[0]]);
     assert!(one.entry_html(run[0]).unwrap().contains("<b>move fast</b>"));
     let hits = dict::lookup(&vec![two.clone(), one.clone()], &["running".into(), "run".into()]);
-    assert_eq!(hits.len(), 2, "first matching form wins independently in each dictionary");
+    assert_eq!(hits.len(), 3, "the written form first, then the dictionary form's other entries, per dictionary");
     assert_eq!(hits[0].dict_id, "second");
     assert_eq!(hits[0].matched, "run");
     assert_eq!(hits[1].dict_id, "first");
     assert_eq!(hits[1].matched, "running");
+    assert_eq!((hits[2].dict_id.as_str(), hits[2].matched.as_str(), hits[2].entry), ("first", "run", run[1]),
+        "\"run\" adds its other homograph; the one \"running\" already found is not repeated");
+    let lemma_first = dict::lookup(&vec![one.clone()], &["ran".into(), "run".into()]);
+    assert_eq!(lemma_first.len(), 2, "a word not in the dictionary gets its dictionary form's entries, as before");
     drop(hits); drop(one); drop(two);
     let reopened = Dictionary::open_cached("first", &first, &cache, &|_| panic!("warm open reimported DSL")).unwrap();
     assert_eq!(reopened.find("run").len(), 2);

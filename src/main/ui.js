@@ -198,44 +198,103 @@ export function dropIndex(mids, y, from) {
     return to;
 }
 
+/** The nearest ancestor of `node` that scrolls vertically, or null. */
+function scrollParent(node) {
+    const style = globalThis.getComputedStyle;
+    for (let at = node?.parentElement; at && style; at = at.parentElement) {
+        const overflow = style(at).overflowY;
+        if ((overflow === 'auto' || overflow === 'scroll') && at.scrollHeight > at.clientHeight) { return at; }
+    }
+    return null;
+}
+
 /**
  * Lets a row of `list` be dragged to another place, as Yomitan's lists are. It uses pointer events,
  * not HTML drag and drop: Tauri's native file drop handler (on by default) keeps WebView2 on Windows
- * from delivering HTML drag events, and they are unreliable in WebKitGTK too. The row moves among
- * the others while dragged and the `.num` labels follow; `onDrop(from, to)` gets the old and new
- * index. A press on something matching `ignore` (a switch, a field) never starts a drag.
+ * from delivering HTML drag events, and they are unreliable in WebKitGTK too. The pointer is
+ * captured on the press, and the row follows it with a transform while the others slide aside to
+ * open its place; nothing moves in the document until the drop. (Until 2026-11-24 the row itself was
+ * moved among the others while dragged, which released the pointer capture: the row then lagged,
+ * stuck or missed the release. The user found it "strange".) Near the top or bottom of a scrolled
+ * pane the pane scrolls. The `.num` labels show the order being made; `onDrop(from, to)` gets the
+ * old and new index. A press on something matching `ignore` (a switch, a field) never starts a drag.
  */
 export function sortableRow(list, row, {onDrop, ignore = '.switch'}) {
     let drag = null;
+    const rowsOf = () => [...list.children];
+    const scrolled = () => (drag?.scroller ? drag.scroller.scrollTop - drag.scrollTop : 0);
+    const place = (clientY) => {
+        const dy = clientY - drag.y + scrolled();
+        row.style.transform = `translateY(${dy}px)`;
+        const box = drag.boxes[drag.from];
+        const to = dropIndex(drag.mids, box.top + box.height / 2 + dy, drag.from);
+        if (to === drag.to) { return; }
+        drag.to = to;
+        drag.rows.forEach((other, i) => {
+            if (other === row) { return; }
+            const shift = i > drag.from && i <= to ? -drag.step : i < drag.from && i >= to ? drag.step : 0;
+            other.style.transform = shift ? `translateY(${shift}px)` : '';
+        });
+        const order = drag.rows.filter((r) => r !== row);
+        order.splice(to, 0, row);
+        order.forEach((r, i) => { const num = r.querySelector?.('.num'); if (num) { num.textContent = String(i + 1); } });
+    };
+    const autoScroll = () => {
+        if (!drag?.moving || !drag.scroller) { return; }
+        const box = drag.scroller.getBoundingClientRect();
+        const edge = 36;
+        const speed = drag.lastY < box.top + edge ? -(box.top + edge - drag.lastY) / 3
+            : drag.lastY > box.bottom - edge ? (drag.lastY - (box.bottom - edge)) / 3 : 0;
+        if (speed) {
+            drag.scroller.scrollTop += Math.max(-14, Math.min(14, speed));
+            place(drag.lastY);
+        }
+        drag.frame = globalThis.requestAnimationFrame?.(autoScroll);
+    };
     row.addEventListener('pointerdown', (ev) => {
         if (ev.button !== 0 || ev.target.closest?.(ignore)) { return; }
-        const rows = [...list.children];
-        drag = {pointer: ev.pointerId, y: ev.clientY, from: rows.indexOf(row), to: rows.indexOf(row), moving: false,
-            mids: rows.map((r) => { const b = r.getBoundingClientRect(); return b.top + b.height / 2; })};
+        const rows = rowsOf();
+        const boxes = rows.map((r) => r.getBoundingClientRect());
+        const from = rows.indexOf(row);
+        const next = boxes[from + 1] || null;
+        const previous = boxes[from - 1] || null;
+        const step = next ? next.top - boxes[from].top : previous ? boxes[from].top - previous.top : boxes[from].height;
+        const scroller = scrollParent(list);
+        drag = {pointer: ev.pointerId, y: ev.clientY, lastY: ev.clientY, from, to: from, moving: false, rows, boxes, step,
+            mids: boxes.map((b) => b.top + b.height / 2), scroller, scrollTop: scroller ? scroller.scrollTop : 0, frame: 0};
+        // Captured at once, so every move and the release reach this row wherever the pointer goes.
+        try { row.setPointerCapture?.(ev.pointerId); } catch (_e) { /* the pointer is already gone */ }
     });
     row.addEventListener('pointermove', (ev) => {
         if (!drag || ev.pointerId !== drag.pointer) { return; }
+        drag.lastY = ev.clientY;
         if (!drag.moving) {
             if (Math.abs(ev.clientY - drag.y) < 5) { return; }
             drag.moving = true;
-            row.setPointerCapture?.(ev.pointerId);
             row.classList.add('dragging');
+            list.classList.add('sorting');
+            autoScroll();
         }
-        const to = dropIndex(drag.mids, ev.clientY, drag.from);
-        if (to === drag.to) { return; }
-        drag.to = to;
-        const others = [...list.children].filter((r) => r !== row);
-        list.insertBefore(row, others[to] || null);
-        [...list.children].forEach((r, i) => { const num = r.querySelector('.num'); if (num) { num.textContent = String(i + 1); } });
+        ev.preventDefault?.();
+        place(ev.clientY);
     });
     const end = (ev) => {
         if (!drag || ev.pointerId !== drag.pointer) { return; }
-        const {moving, from, to} = drag;
+        const {moving, from, to, rows, frame} = drag;
         drag = null;
+        if (frame) { globalThis.cancelAnimationFrame?.(frame); }
+        try { row.releasePointerCapture?.(ev.pointerId); } catch (_e) { /* already released */ }
         if (!moving) { return; }
         row.classList.remove('dragging');
-        onDrop(from, ev.type === 'pointerup' ? to : from);
+        list.classList.remove('sorting');
+        for (const r of rows) { r.style.transform = ''; }
+        const landed = ev.type === 'pointerup' ? to : from;
+        // The row takes its new place now (the capture is over), so the list shows the new order
+        // while it is saved.
+        if (landed !== from) { list.insertBefore(row, rows.filter((r) => r !== row)[landed] || null); }
+        onDrop(from, landed);
     };
     row.addEventListener('pointerup', end);
     row.addEventListener('pointercancel', end);
+    row.addEventListener('lostpointercapture', (ev) => { if (drag?.moving) { end({...ev, type: 'pointercancel', pointerId: drag.pointer}); } });
 }
